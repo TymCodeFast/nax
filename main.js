@@ -148,6 +148,8 @@ function splitPartition(mode) {
   if (mode === 'private') return 'nax-private-' + (splitSeq++); // en mémoire, stable pour l'onglet → login conservé le temps de la session
   return null; // partagé : session par défaut (même connexion qu'à gauche)
 }
+const isPrivate = (t) => !!(t && t.partition && String(t.partition).startsWith('nax-private')); // navigation privée (jetable)
+const isIsolated = (t) => !!(t && t.partition); // session isolée (privée ou autre profil) → pas d'historique/archive partagés
 function secondaryOf(tab) { return tab ? tabs.find((t) => t.splitParent === tab.id) : null; }
 function pairOf(tab) {
   if (!tab) return null;
@@ -249,7 +251,7 @@ function snapshot() {
     nextId, groups, apps, archive, history, favorites, sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
     homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
     perms: Object.fromEntries(permGrants),
-    tabs: tabs.map(({ view, ...t }) => t),
+    tabs: tabs.filter((t) => !isPrivate(t)).map(({ view, ...t }) => t), // onglets privés non persistés (rien sur le disque)
     currentTabId: current && current.kind === 'tab' ? current.id : null,
   };
 }
@@ -537,9 +539,12 @@ function wakeTab(tab) {
     if (ev === 'page-title-updated') { if (!onErr) tab.title = wc.getTitle(); }
     if (ev === 'did-stop-loading' && !onErr) {
       tab.title = wc.getTitle() || tab.title;
-      const key = normalize(tab.url);
-      const h = history[key] || { count: 0 };
-      history[key] = { title: tab.title, url: tab.url, count: h.count + 1, last: Date.now() };
+      // navigation privée / session isolée : aucune trace dans l'historique
+      if (!isIsolated(tab)) {
+        const key = normalize(tab.url);
+        const h = history[key] || { count: 0 };
+        history[key] = { title: tab.title, url: tab.url, count: h.count + 1, last: Date.now() };
+      }
     }
     if (isCurrentTab(tab.id)) win.setTitle((onErr ? hostOf(tab.url) : tab.title) || 'NaX');
     sendState();
@@ -622,7 +627,8 @@ function closeTab(id, { toArchive = true } = {}) {
   const sec = secondaryOf(tab);
   if (sec) { delete sec.splitParent; delete sec.splitMode; }
   const g = groupById(tab.groupId);
-  if (toArchive && tab.url && normalize(tab.url) !== normalize(homepage)) {
+  // les onglets en session isolée (privée/profil) ne vont pas dans l'archive
+  if (toArchive && !isIsolated(tab) && tab.url && normalize(tab.url) !== normalize(homepage)) {
     archive.unshift({ url: tab.url, title: tab.title, favicon: tab.favicon, closedAt: Date.now(), groupTitle: groupTitle(g) });
     if (archive.length > 2000) archive.length = 2000;
   }
