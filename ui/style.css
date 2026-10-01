@@ -301,6 +301,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 /* ---------- vue divisée ---------- */
 /* en mode divisé, la barre de gauche ne réserve plus la place des boutons système (ils sont au-dessus du volet droit) */
 body.split #navbar { padding-right: 12px; flex: none; }
+#split-btn.hidden { display: none; }
 #split-tb-right { position: absolute; top: 0; right: 0; height: var(--nav-h); display: flex; align-items: center; gap: 8px;
   padding: 0 12px 0 10px; background: var(--bg); -webkit-app-region: drag; z-index: 6; }
 #split-tb-right.hidden { display: none; }

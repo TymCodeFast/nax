@@ -726,6 +726,7 @@ $('resizer').addEventListener('mousedown', (e) => {
 function renderSplit() {
   const active = !!(state.split && state.split.active);
   document.body.classList.toggle('split', active);
+  $('split-btn').classList.toggle('hidden', active); // déjà en vue divisée → on masque le bouton Diviser
   const tbR = $('split-tb-right'), div = $('split-divider'), nav = $('navbar');
   if (!active) { tbR.classList.add('hidden'); div.classList.add('hidden'); nav.style.width = ''; return; }
   const contentW = $('content').clientWidth || 1;
