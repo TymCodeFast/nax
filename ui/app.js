@@ -226,6 +226,7 @@ function pairTile(id) {
   const t = el('div', 'pair-tile'); t.dataset.id = id;
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); t.appendChild(ico);
   t.appendChild(el('span', 'title'));
+  const ses = el('span', 'tab-ses'); ses.title = 'Navigation privée'; ses.appendChild(icon('i-incognito')); t.appendChild(ses);
   t.onclick = () => { if (suppressClick) return; closeOverlay(); api.tabActivate(id); };
   t.oncontextmenu = (e) => { e.preventDefault(); api.tabContext(id); };
   return t;

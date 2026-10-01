@@ -287,7 +287,9 @@ body.private-tab #omni-icon { color: var(--c2); }
 .pair-tile .x svg { width: 12px; height: 12px; }
 .pair-tile:hover .x { opacity: 1; }
 .pair-tile .x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
-.pair-tile.private .ico::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--c2); box-shadow: 0 0 0 2px var(--side); }
+.pair-tile .tab-ses { display: none; }
+.pair-tile.private .tab-ses { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--c2); }
+.pair-tile.private .tab-ses svg { width: 14px; height: 14px; }
 .pair-tile.loading .ico::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid transparent; border-top-color: var(--c1); border-right-color: var(--c2); animation: spin .9s linear infinite; }
 /* une seule croix pour fermer la paire */
 .pair-close { opacity: 0; width: 24px; align-self: stretch; display: grid; place-items: center; color: var(--muted); flex: none; transition: opacity var(--t), background var(--t), color var(--t); }
