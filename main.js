@@ -493,6 +493,7 @@ function sendState() {
         title: wc.getTitle(), loading: wc.isLoading(),
         canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(),
       } : { url: '', title: '', loading: false, canGoBack: false, canGoForward: false },
+      navPrivate: !!(ct && ct.partition && String(ct.partition).startsWith('nax-private')),
       split: (() => {
         const p = ct ? pairOf(ct) : null;
         return p ? { active: true, mode: splitMode, primaryId: p.primary.id, secondaryId: p.secondary.id } : { active: false };
@@ -1332,8 +1333,9 @@ function registerIpc() {
   ipcMain.on('tab-new-private', () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); });
   ipcMain.on('tab-set-session', (_e, { id, private: priv } = {}) => setTabSession(id, !!priv));
   ipcMain.on('newtab-menu', () => popupMenu([
-    { label: 'Nouvel onglet', click: () => { newTab(); uiFocus('focus-url'); } },
-    { label: 'Nouvel onglet privé', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
+    { label: 'Session par défaut', click: () => { newTab(); uiFocus('focus-url'); } },
+    { label: 'Navigation privée', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
+    { label: 'Autre session (conservée)', click: () => { newTab({ partition: 'persist:nax-profile-b' }); uiFocus('focus-url'); } },
   ]));
   ipcMain.on('tab-activate', (_e, id) => activateTab(id));
   ipcMain.on('tab-close', (_e, id) => closeTab(id));

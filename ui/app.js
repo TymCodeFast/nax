@@ -59,6 +59,8 @@ function render() {
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
   renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit();
+  document.body.classList.toggle('private-tab', !!state.navPrivate);
+  $('private-pill').classList.toggle('hidden', !state.navPrivate);
   setText($('archive-count'), state.archiveCount ? String(state.archiveCount) : '');
   const devPane = document.querySelector('.settings-pane[data-pane="dev"]');
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
@@ -233,8 +235,9 @@ function updatePairRow(node, u) {
   const tiles = node.querySelectorAll('.pair-tile');
   updatePairTile(tiles[0], u.primary, sp.active && u.primary.id === sp.primaryId);
   updatePairTile(tiles[1], u.secondary, sp.active && u.secondary.id === sp.secondaryId);
-  const priv = u.secondary.splitMode === 'private' || !!u.secondary.partition;
-  tiles[1].classList.toggle('private', priv);
+  const sk = sessionKind(u.secondary);
+  tiles[1].classList.toggle('private', sk === 'private');
+  tiles[1].classList.toggle('profile', sk === 'profile');
 }
 function updatePairTile(tile, t, isActive) {
   tile.classList.toggle('cur', !!isActive);
@@ -257,7 +260,7 @@ function createTabRow(t) {
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); row.appendChild(ico);
   row.appendChild(el('span', 'title'));
   row.appendChild(el('span', 'sub'));
-  const link = el('span', 'tab-link'); link.title = 'Volets liés'; link.appendChild(icon('i-link')); row.appendChild(link);
+  const ses = el('span', 'tab-ses'); ses.title = 'Navigation privée'; ses.appendChild(icon('i-incognito')); row.appendChild(ses);
   const x = el('button', 'x'); x.title = 'Fermer'; x.appendChild(icon('i-close'));
   x.onclick = (e) => { e.stopPropagation(); api.tabClose(t.id); };
   row.appendChild(x);
@@ -274,7 +277,9 @@ function updateTabRow(row, t) {
   const linked = !!t.splitParent || (state.tabs || []).some((x) => x.splitParent === t.id);
   row.classList.toggle('linked', linked);
   row.classList.toggle('split-secondary', !!t.splitParent);
-  row.classList.toggle('private', !!t.partition); // onglet en navigation privée
+  const sk = sessionKind(t);
+  row.classList.toggle('private', sk === 'private'); // navigation privée
+  row.classList.toggle('profile', sk === 'profile'); // autre session conservée
   row.classList.toggle('dormant', !!t.dormant);
   row.classList.toggle('loading', !!t.loading);
   row.title = t.url;
@@ -488,7 +493,14 @@ api.onSuggestHover((idx) => { omniSel = idx; renderSuggest(); });
 api.onSuggestChoose((idx) => { if (omniItems[idx]) commitOmni(omniItems[idx], false); });
 
 $('tab-new').onclick = () => { closeOverlay(); api.tabNew(); };
-$('tab-new').oncontextmenu = (e) => { e.preventDefault(); api.newtabMenu(); };
+$('tab-new-opts').onclick = () => { closeOverlay(); api.newtabMenu(); };
+// Type de session d'un onglet d'après sa partition.
+function sessionKind(t) {
+  const p = t && t.partition ? String(t.partition) : '';
+  if (p.indexOf('nax-private') === 0) return 'private';
+  if (p.indexOf('persist:nax-profile') === 0) return 'profile';
+  return 'default';
+}
 $('sidebar-toggle').onclick = () => api.sidebarToggle();
 $('dormant-toggle').onclick = () => {
   dormantCollapsed = !dormantCollapsed;
