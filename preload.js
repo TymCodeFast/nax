@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   tabNew: send('tab-new'), tabActivate: send('tab-activate'), tabClose: send('tab-close'), tabContext: send('tab-context'),
   groupRename: send('group-rename'), groupToggle: send('group-toggle'), groupClose: send('group-close'),
   tabMove: send('tab-move'), groupMove: send('group-move'),
+  tabClosePair: send('tab-close-pair'), tabMovePair: send('tab-move-pair'),
   setTheme: send('set-theme'),
   setDevMode: send('set-dev-mode'), devOpen: send('dev-open'),
   browsingDataStats: () => ipcRenderer.invoke('browsing-data-stats'),

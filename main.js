@@ -1315,6 +1315,14 @@ function registerIpc() {
   ipcMain.on('group-close', (_e, id) => tabs.filter((t) => t.groupId === id).forEach((t) => closeTab(t.id)));
   ipcMain.on('tab-move', (_e, opts) => moveTab(opts || {}));
   ipcMain.on('group-move', (_e, opts) => moveGroup(opts || {}));
+  // ferme les deux onglets d'une paire divisée d'un coup
+  ipcMain.on('tab-close-pair', (_e, id) => { const t = tabById(id); const p = t ? pairOf(t) : null; if (p) { closeTab(p.secondary.id); closeTab(p.primary.id); } else closeTab(id); });
+  // déplace une paire divisée (primaire + secondaire restent adjacents et liés)
+  ipcMain.on('tab-move-pair', (_e, o = {}) => {
+    moveTab({ tabId: o.primaryId, afterTabId: o.afterTabId, targetGroupId: o.targetGroupId, makeNewGroup: o.makeNewGroup });
+    const prim = tabById(o.primaryId);
+    if (prim) moveTab({ tabId: o.secondaryId, afterTabId: o.primaryId, targetGroupId: prim.groupId });
+  });
   ipcMain.on('set-theme', (_e, t) => { if (['system', 'light', 'dark'].includes(t)) { theme = t; applyTheme(); sendState(); } });
   ipcMain.on('app-peek', (_e, { id, clientY } = {}) => showPeek(id, clientY));
   ipcMain.on('app-peek-hide-soon', () => hidePeekSoon());

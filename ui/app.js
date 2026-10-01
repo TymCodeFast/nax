@@ -196,7 +196,7 @@ function tabUnits(members) {
     const sec = members.find((x) => x.splitParent === m.id);
     if (sec && !m.splitParent) { out.push({ key: 'pair-' + m.id, pair: true, primary: m, secondary: sec }); used.add(m.id); used.add(sec.id); }
     else if (m.splitParent && members.some((x) => x.id === m.splitParent)) { used.add(m.id); } // rendu via son primaire
-    else { out.push({ key: 't' + m.id, pair: false, tab: m }); used.add(m.id); }
+    else { out.push({ key: String(m.id), pair: false, tab: m }); used.add(m.id); }
   }
   return out;
 }
@@ -205,20 +205,24 @@ function updateUnit(node, u) { if (u.pair) updatePairRow(node, u); else updateTa
 
 function createPairRow(u) {
   const row = el('div', 'pair-row');
+  row.dataset.tabid = u.primary.id;      // représentant pour le groupe
+  row.dataset.afterid = u.secondary.id;  // insérer après = après le dernier onglet de la paire
   row.appendChild(pairTile(u.primary.id));
   const lk = el('span', 'pair-link'); lk.appendChild(icon('i-link')); row.appendChild(lk);
   row.appendChild(pairTile(u.secondary.id));
+  // une seule croix pour fermer les DEUX onglets de la paire
+  const x = el('button', 'pair-close'); x.title = 'Fermer les deux onglets'; x.appendChild(icon('i-close'));
+  x.onclick = (e) => { e.stopPropagation(); api.tabClosePair(u.primary.id); };
+  row.appendChild(x);
+  // glisser la paire entière (déplacer / regrouper)
+  row.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.pair-close')) beginPairDrag(e, u.primary.id, u.secondary.id); });
   return row;
 }
 function pairTile(id) {
   const t = el('div', 'pair-tile'); t.dataset.id = id;
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); t.appendChild(ico);
   t.appendChild(el('span', 'title'));
-  const x = el('button', 'x'); x.title = 'Fermer'; x.appendChild(icon('i-close'));
-  x.onclick = (e) => { e.stopPropagation(); api.tabClose(id); };
-  t.appendChild(x);
   t.onclick = () => { if (suppressClick) return; closeOverlay(); api.tabActivate(id); };
-  t.onauxclick = (e) => { if (e.button === 1) api.tabClose(id); };
   t.oncontextmenu = (e) => { e.preventDefault(); api.tabContext(id); };
   return t;
 }
@@ -249,6 +253,7 @@ function updatePairTile(tile, t, isActive) {
 
 function createTabRow(t) {
   const row = el('div', 'tab');
+  row.dataset.tabid = t.id; row.dataset.afterid = t.id;
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); row.appendChild(ico);
   row.appendChild(el('span', 'title'));
   row.appendChild(el('span', 'sub'));
@@ -549,17 +554,29 @@ function beginTabDrag(startEvent, tabId) {
     onDrop: () => commitTab(plan),
   });
 }
+// Glisser une paire divisée entière (les deux onglets restent liés et adjacents).
+function beginPairDrag(startEvent, primaryId, secondaryId) {
+  const srcRow = startEvent.currentTarget;
+  let plan = null;
+  runDrag(startEvent, srcRow, {
+    kind: 'tab',
+    onStart: () => { dnd.tabId = primaryId; dnd.pairSec = secondaryId; },
+    onMove: (ev) => { plan = tabPlan(ev); paintTabPlan(plan); },
+    onDrop: () => { if (plan) api.tabMovePair({ primaryId, secondaryId, afterTabId: plan.afterTabId, targetGroupId: plan.groupId, makeNewGroup: plan.kind === 'join' ? false : plan.makeNewGroup }); },
+  });
+}
 function tabPlan(ev) {
   const box = tabsBox();
-  const rows = [...box.querySelectorAll('.tab')].filter((r) => +r.dataset.key !== dnd.tabId);
-  const tabOf = (r) => state.tabs.find((t) => t.id === +r.dataset.key);
+  const excluded = new Set([dnd.tabId, dnd.pairSec].filter((x) => x != null));
+  const rows = [...box.querySelectorAll('.tab, .pair-row')].filter((r) => !excluded.has(+r.dataset.tabid) && !excluded.has(+r.dataset.afterid));
+  const tabOf = (r) => state.tabs.find((t) => t.id === +r.dataset.tabid);
   const members = (gid) => state.tabs.filter((t) => t.groupId === gid).length;
   const y = ev.clientY;
   let hover = null, band = 0;
   for (const r of rows) { const b = r.getBoundingClientRect(); if (y >= b.top && y <= b.bottom) { hover = r; band = (y - b.top) / b.height; break; } }
   if (hover) {
     const ht = tabOf(hover);
-    if (band > 0.28 && band < 0.72) return { kind: 'join', groupId: ht.groupId, afterTabId: ht.id, hoverRow: hover, multi: members(ht.groupId) > 1 };
+    if (band > 0.28 && band < 0.72) return { kind: 'join', groupId: ht.groupId, afterTabId: +hover.dataset.afterid, hoverRow: hover, multi: members(ht.groupId) > 1 };
     return reorderPlan(rows, hover, band >= 0.5, tabOf);
   }
   return reorderPlan(rows, rows[rows.length - 1] || null, true, tabOf);
@@ -571,7 +588,7 @@ function reorderPlan(rows, ref, after, tabOf) {
   const gp = prev ? tabOf(prev).groupId : null;
   const gn = next ? tabOf(next).groupId : null;
   const same = (gp != null && gp === gn) ? gp : null;
-  return { kind: 'reorder', afterTabId: prev ? +prev.dataset.key : null, groupId: same, makeNewGroup: same == null, prev, next };
+  return { kind: 'reorder', afterTabId: prev ? +prev.dataset.afterid : null, groupId: same, makeNewGroup: same == null, prev, next };
 }
 function paintTabPlan(plan) {
   clearHints();
