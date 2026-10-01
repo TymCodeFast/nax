@@ -250,7 +250,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .tab .tab-ses { display: none; }
 .tab.private .tab-ses { display: grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--c2); }
 .tab.private .tab-ses svg { width: 15px; height: 15px; }
-.tab.private { background: rgba(154,134,255,.09); box-shadow: inset 2.5px 0 0 var(--c2); }
+.tab.private { background: rgba(154,134,255,.09); }
 .tab.private:hover { background: rgba(154,134,255,.15); }
 .tab.private.active { background: rgba(154,134,255,.2); }
 /* autre session conservée : petite pastille turquoise sur le favicon */
