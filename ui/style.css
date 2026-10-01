@@ -264,7 +264,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .pair-tile .x svg { width: 12px; height: 12px; }
 .pair-tile:hover .x { opacity: 1; }
 .pair-tile .x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
-.pair-tile.private .title::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--c2); margin-left: 6px; vertical-align: middle; }
+.pair-tile.private .ico::after, .tab.private .ico::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--c2); box-shadow: 0 0 0 2px var(--side); }
 .pair-tile.loading .ico::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid transparent; border-top-color: var(--c1); border-right-color: var(--c2); animation: spin .9s linear infinite; }
 /* une seule croix pour fermer la paire */
 .pair-close { opacity: 0; width: 24px; align-self: stretch; display: grid; place-items: center; color: var(--muted); flex: none; transition: opacity var(--t), background var(--t), color var(--t); }

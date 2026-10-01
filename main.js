@@ -171,12 +171,31 @@ function showActive() {
     pair.primary.lastActive = pair.secondary.lastActive = Date.now(); // les deux restent éveillés
     attach(pair.primary.view);
     setSplitView(pair.secondary.view);
-    splitMode = pair.secondary.splitMode || (pair.secondary.partition ? 'private' : 'shared');
+    splitMode = pair.secondary.partition ? 'private' : 'shared';
   } else {
     attach(cur ? cur.view : null);
     setSplitView(null);
     splitMode = null;
   }
+}
+// Change la session d'un onglet (normale ⇄ privée) en recréant sa vue ; la page se recharge.
+function setTabSession(id, makePrivate) {
+  const tab = tabById(id); if (!tab) return;
+  if (!!tab.partition === !!makePrivate) return; // déjà dans l'état voulu
+  if (makePrivate) tab.partition = splitPartition('private'); else delete tab.partition;
+  if (tab.splitMode) tab.splitMode = makePrivate ? 'private' : 'shared';
+  if (tab.view && !tab.view.webContents.isDestroyed()) {
+    tab.url = tab.view.webContents.getURL() || tab.url;
+    if (contentView === tab.view) attach(null);
+    if (splitView === tab.view) setSplitView(null);
+    tab.view.webContents.close();
+  }
+  tab.view = null;
+  wakeTab(tab); // recrée la vue dans la nouvelle session et recharge l'URL
+  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+  const pair = cur ? pairOf(cur) : null;
+  if (isCurrentTab(id) || (pair && (pair.primary.id === id || pair.secondary.id === id))) showActive();
+  sendState();
 }
 function openSplit(mode) {
   const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
@@ -1173,6 +1192,8 @@ function tabContextMenu(id) {
     { label: 'Mettre en veille', enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
     { label: 'Dupliquer', click: () => newTab({ url: tab.url, openerId: tab.id }) },
     { label: "Copier l'adresse", click: () => clipboard.writeText(tab.url) },
+    { type: 'separator' },
+    { label: tab.partition ? 'Revenir à la session normale' : 'Passer en navigation privée', click: () => setTabSession(tab.id, !tab.partition) },
   ];
   if (inGroup) {
     items.push({ type: 'separator' });
@@ -1270,6 +1291,7 @@ function buildMenu() {
     label: 'NaX',
     submenu: [
       { label: 'Nouvel onglet', accelerator: 'CmdOrCtrl+T', click: () => { newTab(); uiFocus('focus-url'); } },
+      { label: 'Nouvel onglet privé', accelerator: 'CmdOrCtrl+Shift+N', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
       { label: "Fermer l'onglet", accelerator: 'CmdOrCtrl+W', click: () => { if (current && current.kind === 'tab') closeTab(current.id); } },
       { label: 'Rouvrir le dernier onglet fermé', accelerator: 'CmdOrCtrl+Shift+T', click: () => { const a = archive.shift(); if (a) newTab({ url: a.url }); } },
       { label: 'Adresse', accelerator: 'CmdOrCtrl+L', click: () => uiFocus('focus-url') },
@@ -1307,6 +1329,12 @@ function registerIpc() {
   ipcMain.on('focus-page', withWC((wc) => wc.focus()));
 
   ipcMain.on('tab-new', () => { newTab(); uiFocus('focus-url'); });
+  ipcMain.on('tab-new-private', () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); });
+  ipcMain.on('tab-set-session', (_e, { id, private: priv } = {}) => setTabSession(id, !!priv));
+  ipcMain.on('newtab-menu', () => popupMenu([
+    { label: 'Nouvel onglet', click: () => { newTab(); uiFocus('focus-url'); } },
+    { label: 'Nouvel onglet privé', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
+  ]));
   ipcMain.on('tab-activate', (_e, id) => activateTab(id));
   ipcMain.on('tab-close', (_e, id) => closeTab(id));
   ipcMain.on('tab-context', (_e, id) => tabContextMenu(id));

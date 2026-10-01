@@ -274,6 +274,7 @@ function updateTabRow(row, t) {
   const linked = !!t.splitParent || (state.tabs || []).some((x) => x.splitParent === t.id);
   row.classList.toggle('linked', linked);
   row.classList.toggle('split-secondary', !!t.splitParent);
+  row.classList.toggle('private', !!t.partition); // onglet en navigation privée
   row.classList.toggle('dormant', !!t.dormant);
   row.classList.toggle('loading', !!t.loading);
   row.title = t.url;
@@ -487,6 +488,7 @@ api.onSuggestHover((idx) => { omniSel = idx; renderSuggest(); });
 api.onSuggestChoose((idx) => { if (omniItems[idx]) commitOmni(omniItems[idx], false); });
 
 $('tab-new').onclick = () => { closeOverlay(); api.tabNew(); };
+$('tab-new').oncontextmenu = (e) => { e.preventDefault(); api.newtabMenu(); };
 $('sidebar-toggle').onclick = () => api.sidebarToggle();
 $('dormant-toggle').onclick = () => {
   dormantCollapsed = !dormantCollapsed;
