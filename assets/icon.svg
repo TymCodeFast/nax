@@ -1,0 +1,46 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.52" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="330" y1="150" x2="182" y2="362" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a5f3fc"/>
+      <stop offset="1" stop-color="#f9a8d4"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- badge -->
+  <rect x="24" y="24" width="464" height="464" rx="132" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="132" fill="url(#sheen)"/>
+  <rect x="30.5" y="30.5" width="451" height="451" rx="126" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="3"/>
+
+  <!-- monogramme : N (deux barres + diagonale) qui intègre un X (diagonale accent) -->
+  <g filter="url(#soft)">
+    <!-- barre gauche -->
+    <path d="M150 150 h48 v212 h-48 z" fill="#0a0f1e"/>
+    <!-- barre droite -->
+    <path d="M314 150 h48 v212 h-48 z" fill="#0a0f1e"/>
+    <!-- diagonale du N (haut-gauche vers bas-droite) -->
+    <path d="M198 150 h34 l82 150 v56 l-116 -186 z" fill="#0a0f1e"/>
+  </g>
+  <!-- diagonale accent du X (haut-droite vers bas-gauche), lumineuse -->
+  <g filter="url(#glow)">
+    <path d="M362 150 v40 L212 362 h-14 v-38 z" fill="url(#accent)"/>
+  </g>
+  <!-- node lumineux -->
+  <circle cx="256" cy="256" r="15" fill="#ffffff"/>
+  <circle cx="256" cy="256" r="15" fill="none" stroke="#0a0f1e" stroke-opacity="0.25" stroke-width="3"/>
+</svg>

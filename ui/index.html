@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>NaX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Sprite d'icônes (traits 1.75px, style Lucide) -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-forward" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4.5"/><path d="M11.2 11.8L20 3M17 6l2 2M14 9l2 2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16"/><path d="M9.5 9.6a3 3 0 0 0 4.2 4.2M6.7 6.8C3.9 8.3 2.5 12 2.5 12s3.5 6.5 9.5 6.5a9.6 9.6 0 0 0 4.2-.95M9.5 5.8A9.9 9.9 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.5 3.3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 4 5-4M5 19h14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 7l2.6 1.5M17.2 15.5l2.6 1.5M4.2 17l2.6-1.5M17.2 8.5l2.6-1.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.7 5.8 6.3.7-4.7 4.2 1.3 6.2-5.6-3.2-5.6 3.2 1.3-6.2-4.7-4.2 6.3-.7z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4 20l4.5-1 9-9-4-4-9 9z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 1 1-1v-3"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 12v4M10 14h4"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+  <symbol id="i-nax" viewBox="0 0 512 512">
+    <path d="M150 150 h48 v212 h-48 z" fill="#0a0f1e"/>
+    <path d="M314 150 h48 v212 h-48 z" fill="#0a0f1e"/>
+    <path d="M198 150 h34 l82 150 v56 l-116 -186 z" fill="#0a0f1e"/>
+    <path d="M362 150 v40 L212 362 h-14 v-38 z" fill="#ffffff"/>
+    <circle cx="256" cy="256" r="15" fill="#ffffff"/>
+  </symbol>
+</svg>
+
+<div id="root">
+  <!-- Colonne 1 : applis permanentes -->
+  <nav id="rail">
+    <div id="brand" title="NaX"><svg><use href="#i-nax"/></svg></div>
+    <div id="apps"></div>
+    <div id="dev-rail" class="hidden">
+      <div class="rail-divider" title="Serveurs de dev en cours"></div>
+      <div id="dev-projects"></div>
+    </div>
+    <div class="rail-grow"></div>
+    <div class="rail-bottom">
+      <button id="app-add" class="rail-btn" title="Ajouter une appli"><svg><use href="#i-plus"/></svg></button>
+      <button id="settings-btn" class="rail-btn" title="Paramètres"><svg><use href="#i-settings"/></svg></button>
+      <button id="sidebar-toggle" class="rail-btn" title="Afficher/masquer la liste (Ctrl+B)"><svg><use href="#i-panel"/></svg></button>
+    </div>
+  </nav>
+
+  <!-- Colonne 2 : onglets -->
+  <aside id="sidebar">
+    <div class="side-head">
+      <span class="side-title">Onglets</span>
+      <button id="tab-new" class="icon-btn" title="Nouvel onglet (Ctrl+T)"><svg><use href="#i-plus"/></svg></button>
+    </div>
+    <div id="tabs"></div>
+    <div id="fav-wrap">
+      <div class="fav-header">
+        <button id="fav-toggle-sec" class="section-title" title="Replier / déplier">
+          <svg class="chev"><use href="#i-forward"/></svg>
+          <svg class="star"><use href="#i-star"/></svg>
+          <span class="label">favoris</span>
+          <span id="fav-count" class="count"></span>
+        </button>
+        <button id="fav-new-folder" class="icon-btn" title="Nouveau dossier"><svg><use href="#i-folder-plus"/></svg></button>
+      </div>
+      <div id="favorites"></div>
+    </div>
+    <div id="dormant-wrap">
+      <button id="dormant-toggle" class="section-title" title="Replier / déplier">
+        <svg class="chev"><use href="#i-forward"/></svg>
+        <svg class="moon"><use href="#i-moon"/></svg>
+        <span class="label">en veille</span>
+        <span id="dormant-count" class="count"></span>
+      </button>
+      <div id="dormant"></div>
+    </div>
+    <div class="sidebar-bottom">
+      <button id="palette-btn" class="row-btn" title="Rechercher (Ctrl+K)"><svg><use href="#i-search"/></svg><span>Rechercher</span><kbd>Ctrl K</kbd></button>
+      <button id="archive-btn" class="row-btn" title="Archive"><svg><use href="#i-archive"/></svg><span>Archive</span><span id="archive-count" class="count"></span></button>
+      <button id="downloads-btn" class="row-btn" title="Téléchargements"><svg><use href="#i-download"/></svg><span>Téléchargements</span><span id="dl-badge" class="count"></span></button>
+      <button id="settings-row" class="row-btn" title="Paramètres"><svg><use href="#i-settings"/></svg><span>Paramètres</span></button>
+    </div>
+    <div id="resizer" title="Glisser pour redimensionner"></div>
+  </aside>
+
+  <!-- Colonne 3 : barre de nav + zone page (la page est une vue native posée par-dessus) -->
+  <main id="main">
+    <div id="navbar">
+      <div class="nav-group">
+        <button id="back" class="nav-btn" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
+        <button id="forward" class="nav-btn" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
+        <button id="reload" class="nav-btn" title="Recharger (Ctrl+R)"><svg><use href="#i-reload"/></svg></button>
+      </div>
+      <div id="omnibox">
+        <span id="omni-icon"><svg><use href="#i-globe"/></svg></span>
+        <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="Rechercher ou saisir une adresse">
+        <span id="omni-host"></span>
+        <button id="fav-star" class="omni-btn" title="Ajouter aux favoris (Ctrl+D)"><svg><use href="#i-star"/></svg></button>
+        <kbd id="omni-hint" title="Rechercher">Ctrl K</kbd>
+      </div>
+      <button id="home" class="nav-btn" title="Accueil (Google)"><svg><use href="#i-home"/></svg></button>
+      <div id="progress"></div>
+    </div>
+    <div id="content">
+      <div class="mesh"></div>
+      <!-- Palette de recherche (Ctrl+K) -->
+      <div id="palette" class="overlay hidden">
+        <div class="panel glow">
+          <div class="palette-field">
+            <svg class="lead"><use href="#i-search"/></svg>
+            <input id="palette-input" type="text" placeholder="Onglets, veille, archive, historique…" spellcheck="false" autocomplete="off">
+            <kbd>Échap</kbd>
+          </div>
+          <div id="palette-results"></div>
+          <div class="hint"><span><kbd>↑</kbd><kbd>↓</kbd> naviguer</span><span><kbd>↵</kbd> ouvrir</span><span><kbd>Ctrl</kbd><kbd>↵</kbd> nouvel onglet</span></div>
+        </div>
+      </div>
+      <!-- Archive -->
+      <div id="archive" class="overlay hidden">
+        <div class="panel wide glow">
+          <div class="panel-head">
+            <div><h2>Archive</h2><span class="muted">Pages fermées, à la main ou automatiquement. Rien ne se perd.</span></div>
+            <button id="archive-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+          </div>
+          <div id="archive-list"></div>
+        </div>
+      </div>
+      <!-- Téléchargements -->
+      <div id="downloads" class="overlay hidden">
+        <div class="panel wide glow">
+          <div class="panel-head">
+            <div><h2>Téléchargements</h2><span class="muted">Fichiers téléchargés dans votre dossier Téléchargements.</span></div>
+            <div class="head-actions">
+              <button id="dl-clear" class="btn ghost"><svg><use href="#i-trash"/></svg> Effacer la liste</button>
+              <button id="downloads-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+            </div>
+          </div>
+          <div id="dl-list"></div>
+        </div>
+      </div>
+      <!-- Paramètres -->
+      <div id="settings" class="overlay hidden">
+        <div class="panel wide glow settings-panel">
+          <nav class="settings-nav">
+            <div class="settings-title">Paramètres</div>
+            <button class="settings-navitem active" data-pane="appearance"><svg><use href="#i-sun"/></svg><span>Apparence</span></button>
+            <button class="settings-navitem" data-pane="startup"><svg><use href="#i-home"/></svg><span>Au démarrage</span></button>
+            <button class="settings-navitem" data-pane="search"><svg><use href="#i-search"/></svg><span>Recherche</span></button>
+            <button class="settings-navitem" data-pane="downloads"><svg><use href="#i-download"/></svg><span>Téléchargements</span></button>
+            <button class="settings-navitem" data-pane="favorites"><svg><use href="#i-star"/></svg><span>Favoris</span></button>
+            <button class="settings-navitem" data-pane="passwords"><svg><use href="#i-key"/></svg><span>Mots de passe</span></button>
+            <button class="settings-navitem" data-pane="languages"><svg><use href="#i-globe"/></svg><span>Langues</span></button>
+            <button class="settings-navitem" data-pane="permissions"><svg><use href="#i-lock"/></svg><span>Autorisations</span></button>
+            <button class="settings-navitem" data-pane="privacy"><svg><use href="#i-shield"/></svg><span>Données de navigation</span></button>
+            <button class="settings-navitem" data-pane="dev"><svg><use href="#i-code"/></svg><span>Développeur</span></button>
+          </nav>
+          <div class="settings-content">
+            <button id="settings-close" class="icon-btn settings-x" title="Fermer"><svg><use href="#i-close"/></svg></button>
+
+            <section class="settings-pane" data-pane="appearance">
+              <h2>Apparence</h2>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Thème</div><div class="setting-desc muted">Clair, sombre, ou selon le système.</div></div>
+                <div id="theme-seg" class="segmented">
+                  <button class="seg" data-theme="system"><svg><use href="#i-monitor"/></svg><span>Système</span></button>
+                  <button class="seg" data-theme="light"><svg><use href="#i-sun"/></svg><span>Clair</span></button>
+                  <button class="seg" data-theme="dark"><svg><use href="#i-moon"/></svg><span>Sombre</span></button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Zoom par défaut</div><div class="setting-desc muted">Appliqué aux nouvelles pages. Chaque site conserve ensuite son propre zoom.</div></div>
+                <div id="zoom-dd" class="dropdown"></div>
+              </div>
+              <div id="zoom-sites"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="search">
+              <h2>Recherche</h2>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Moteur de recherche</div><div class="setting-desc muted">Utilisé par la barre d'adresse et les suggestions.</div></div>
+                <div id="engine-dd" class="dropdown"></div>
+              </div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="startup">
+              <h2>Au démarrage</h2>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">À l'ouverture de NaX</div><div class="setting-desc muted">Reprendre vos onglets ou repartir sur la page d'accueil.</div></div>
+                <div id="startup-dd" class="dropdown"></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Page d'accueil</div><div class="setting-desc muted">Ouverte par le bouton Accueil.</div></div>
+                <input id="homepage-input" class="txt-field" type="text" spellcheck="false" autocomplete="off" placeholder="https://…">
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Nouvel onglet</div><div class="setting-desc muted">Ce qu'affiche un onglet vierge.</div></div>
+                <div id="newtab-dd" class="dropdown"></div>
+              </div>
+              <div class="setting-row" id="newtab-url-row">
+                <div class="setting-label"><div class="setting-name">Adresse du nouvel onglet</div></div>
+                <input id="newtab-input" class="txt-field" type="text" spellcheck="false" autocomplete="off" placeholder="https://…">
+              </div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="downloads">
+              <h2>Téléchargements</h2>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Emplacement</div><div class="setting-desc muted" id="dl-dir-path">Dossier Téléchargements</div></div>
+                <button id="dl-dir-btn" class="btn ghost"><svg><use href="#i-folder"/></svg> Modifier</button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Demander où enregistrer chaque fichier</div><div class="setting-desc muted">Affiche une boîte « Enregistrer sous » à chaque téléchargement.</div></div>
+                <label class="switch"><input id="dl-ask" type="checkbox"><span class="track"></span></label>
+              </div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="languages">
+              <h2>Langues</h2>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Correcteur orthographique</div><div class="setting-desc muted">Souligne les fautes dans les champs de texte.</div></div>
+                <label class="switch"><input id="spell-toggle" type="checkbox"><span class="track"></span></label>
+              </div>
+              <div class="setting-row col">
+                <div class="setting-label"><div class="setting-name">Langues préférées</div><div class="setting-desc muted">Utilisées par le correcteur et pour l'affichage des pages.</div></div>
+                <div id="lang-list" class="lang-list"></div>
+              </div>
+              <div class="setting-desc muted" style="margin-top:14px">L'interface de NaX est en français.</div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="permissions">
+              <h2>Autorisations des sites</h2>
+              <div class="setting-desc muted" style="margin-bottom:10px">Comportement par défaut quand un site demande un accès. Les décisions déjà mémorisées se gèrent dans « Données de navigation ».</div>
+              <div id="perm-list"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="favorites">
+              <div class="pane-head">
+                <div><h2>Favoris</h2><div class="setting-desc muted">Tout est là, à plat. Glisse pour réorganiser ou ranger dans un dossier, double-clic pour renommer.</div></div>
+                <button id="favm-newfolder" class="btn"><svg><use href="#i-folder-plus"/></svg> Nouveau dossier</button>
+              </div>
+              <div class="favm-toolbar">
+                <div class="favm-search">
+                  <svg class="lead"><use href="#i-search"/></svg>
+                  <input id="favm-search" type="text" placeholder="Filtrer par titre ou adresse…" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="favm-tools">
+                  <button id="favm-expand" class="linklike">Tout déplier</button>
+                  <span class="favm-sep">·</span>
+                  <button id="favm-collapse" class="linklike">Tout replier</button>
+                </div>
+              </div>
+              <div id="fav-manager" class="fav-manager"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="passwords">
+              <div class="pane-head">
+                <div><h2>Mots de passe</h2><div class="setting-desc muted">Coffre chiffré localement par Windows. Rien ne sort de ta machine.</div></div>
+                <button id="pw-import" class="btn"><svg><use href="#i-download"/></svg> Importer depuis Chrome</button>
+              </div>
+              <div id="pw-search-wrap" class="pw-search hidden">
+                <svg class="lead"><use href="#i-search"/></svg>
+                <input id="pw-search" type="text" placeholder="Filtrer par site ou identifiant…" spellcheck="false" autocomplete="off">
+              </div>
+              <div id="pw-body"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="privacy">
+              <div class="pane-head">
+                <div><h2>Données de navigation</h2><div class="setting-desc muted">Ouvre une catégorie pour voir et supprimer élément par élément. Rien n'est envoyé ailleurs.</div></div>
+              </div>
+              <div id="bd-list" class="bd-list"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="dev">
+              <h2>Développeur</h2>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <div class="setting-name">Mode développeur</div>
+                  <div class="setting-desc muted">Détecte les serveurs de dev qui tournent en local (Vite, Next, Angular…) et les affiche dans le rail, prêts à ouvrir.</div>
+                </div>
+                <label class="switch"><input id="dev-toggle" type="checkbox"><span class="track"></span></label>
+              </div>
+              <div id="dev-list" class="dev-list"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+      <!-- Guide d'export Chrome -->
+      <div id="pw-guide" class="overlay hidden">
+        <div class="panel small glow">
+          <h2><svg class="h-ico"><use href="#i-shield"/></svg> Exporter depuis Chrome</h2>
+          <p class="muted">Chrome ne laisse aucun logiciel lire ses mots de passe directement (sécurité anti-vol). L'export, autorisé par toi, est la voie propre.</p>
+          <ol class="steps">
+            <li>Ouvre <code>chrome://password-manager/passwords</code> dans Chrome.</li>
+            <li>Icône Paramètres, puis <b>Exporter les mots de passe</b>.</li>
+            <li>Chrome demande ton code Windows, puis enregistre un fichier <code>.csv</code>.</li>
+            <li>Reviens ici et choisis ce fichier.</li>
+          </ol>
+          <p class="warn"><svg><use href="#i-shield"/></svg> Ce CSV est en clair. Supprime-le une fois l'import fait.</p>
+          <div class="actions"><button id="pw-guide-cancel">Plus tard</button><button id="pw-guide-pick" class="primary"><svg><use href="#i-download"/></svg> Choisir le fichier CSV</button></div>
+        </div>
+      </div>
+      <!-- Ajout d'appli -->
+      <div id="addapp" class="overlay hidden">
+        <div class="panel small glow">
+          <h2>Ajouter une appli au rail</h2>
+          <p class="muted">Un site que tu gardes toujours ouvert. Il aura son bouton, jamais d'onglet.</p>
+          <input id="addapp-input" type="text" placeholder="ex. slack.com, jira.exemple.fr" spellcheck="false">
+          <div class="actions"><button id="addapp-cancel">Annuler</button><button id="addapp-ok" class="primary">Ajouter</button></div>
+        </div>
+      </div>
+      <!-- Export Markdown -->
+      <div id="export-md" class="overlay hidden">
+        <div class="panel wide glow">
+          <div class="panel-head">
+            <div><h2><svg class="h-ico"><use href="#i-download"/></svg> Exporter en Markdown</h2><span id="md-sub" class="muted"></span></div>
+            <div class="head-actions">
+              <button id="md-copy" class="btn"><svg><use href="#i-copy"/></svg> Copier</button>
+              <button id="md-download" class="btn ghost"><svg><use href="#i-download"/></svg> Télécharger</button>
+              <button id="md-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+            </div>
+          </div>
+          <div class="md-tabs">
+            <button id="md-tab-preview" class="md-tab active">Aperçu</button>
+            <button id="md-tab-source" class="md-tab">Source .md</button>
+          </div>
+          <div id="md-preview" class="md-body"></div>
+          <textarea id="md-source" class="md-body hidden" spellcheck="false" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="vendor/turndown.js"></script>
+<script src="vendor/turndown-plugin-gfm.js"></script>
+<script src="vendor/marked.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

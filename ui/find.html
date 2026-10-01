@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Rechercher</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root { --bg: #171a21; --fg: #eef1f6; --muted: #8b93a3; --dim: #626a78; --field: rgba(255,255,255,.05);
+    --line: rgba(255,255,255,.12); --hover: rgba(255,255,255,.08); --accent: #7385ff; --shadow: 0 12px 30px rgba(0,0,0,.5); }
+  body.light { --bg: #ffffff; --fg: #12151c; --muted: #616a79; --dim: #98a0ae; --field: rgba(15,23,42,.05);
+    --line: rgba(15,23,42,.11); --hover: rgba(15,23,42,.05); --accent: #4d55e0; --shadow: 0 12px 30px rgba(15,23,42,.2); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; user-select: none; border-radius: 10px;
+    font: 13px Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  #bar { height: 100%; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 12px;
+    border-radius: 10px; background: var(--bg); border: 1px solid var(--line); }
+  #q { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--fg); font-size: 13.5px; outline: none; user-select: text; }
+  #q::placeholder { color: var(--dim); }
+  #count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 4px; }
+  .b { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+  .b:hover { background: var(--hover); color: var(--fg); }
+  .b:disabled { color: var(--dim); cursor: default; background: transparent; }
+  .b svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input id="q" type="text" placeholder="Rechercher dans la page" spellcheck="false" autocomplete="off">
+  <span id="count"></span>
+  <span class="sep"></span>
+  <button class="b" id="prev" title="Précédent" disabled><svg viewBox="0 0 24 24"><path d="M18 15l-6-6-6 6"/></svg></button>
+  <button class="b" id="next" title="Suivant" disabled><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+  <button class="b" id="close" title="Fermer (Échap)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+<script>
+  const q = document.getElementById('q'), count = document.getElementById('count');
+  const prev = document.getElementById('prev'), next = document.getElementById('next');
+  let hasText = false;
+  function focusInput() { try { q.focus(); q.select(); } catch {} }
+  finder.onOpen((d) => {
+    document.body.classList.toggle('light', !d.dark);
+    // le focus ne « prend » pas toujours à l'instant précis de l'affichage : on réessaie brièvement
+    let n = 0; const iv = setInterval(() => { focusInput(); if (document.activeElement === q || ++n > 15) clearInterval(iv); }, 25);
+  });
+  window.addEventListener('focus', focusInput);
+  finder.onResult((r) => {
+    if (r.total > 0) { count.textContent = r.active + ' / ' + r.total; count.style.color = ''; }
+    else { count.textContent = q.value ? 'Aucun résultat' : ''; }
+    prev.disabled = next.disabled = !(r.total > 0);
+  });
+  function run(findNext, forward) { const t = q.value; hasText = !!t; if (!t) { count.textContent = ''; prev.disabled = next.disabled = true; finder.query('', true, false); return; } finder.query(t, forward !== false, findNext); }
+  q.addEventListener('input', () => run(false, true));
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); run(true, !e.shiftKey); }
+    else if (e.key === 'Escape') { e.preventDefault(); finder.close(); }
+  });
+  prev.onclick = () => run(true, false);
+  next.onclick = () => run(true, true);
+  document.getElementById('close').onclick = () => finder.close();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Dépendances et sorties de build (régénérables)
+node_modules/
+dist/
+
+# Journaux et fichiers système
+*.log
+.DS_Store
+Thumbs.db

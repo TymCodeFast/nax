@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Suggestions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+  :root { --panel: #171a21; --fg: #eef1f6; --muted: #8b93a3; --dim: #626a78; --line: rgba(255,255,255,.09);
+    --hover: rgba(255,255,255,.06); --sel: rgba(115,133,255,.15); --c1: #7385ff; --shadow: 0 16px 40px rgba(0,0,0,.5); }
+  body.light { --panel: #ffffff; --fg: #12151c; --muted: #616a79; --dim: #98a0ae; --line: rgba(15,23,42,.09);
+    --hover: rgba(15,23,42,.05); --sel: rgba(77,85,224,.12); --c1: #4d55e0; --shadow: 0 16px 40px rgba(15,23,42,.2); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
+    font: 13px Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  #list { margin: 4px; padding: 5px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
+    box-shadow: var(--shadow); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 12px; border-radius: 10px; cursor: default; color: var(--fg); }
+  .row.sel { background: var(--sel); box-shadow: inset 0 0 0 1px var(--line); }
+  .row:hover { background: var(--hover); }
+  .ic { width: 20px; height: 20px; flex: none; display: grid; place-items: center; color: var(--muted); }
+  .ic img { width: 18px; height: 18px; border-radius: 4px; }
+  .ic svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .primary { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .primary b { color: var(--c1); font-weight: 600; }
+  .secondary { color: var(--dim); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .tag { color: var(--muted); font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: rgba(128,128,128,.14); flex: none; }
+</style>
+</head>
+<body>
+<div id="list"></div>
+<script>
+  const listEl = document.getElementById('list');
+  const esc = (s) => (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
+  const ICONS = {
+    search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>',
+    history: '<svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8.5"/></svg>',
+    tab: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>',
+    favorite: '<svg viewBox="0 0 24 24"><path d="M12 4l2.3 4.7 5.2.8-3.8 3.6.9 5.1L12 15.9 7.4 18.3l.9-5.1L4.5 9.5l5.2-.8z"/></svg>',
+    url: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c3 3 3 14 0 17M12 3.5c-3 3-3 14 0 17"/></svg>',
+  };
+  function mark(text, q) {
+    text = text || ''; if (!q) return esc(text);
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return esc(text);
+    return esc(text.slice(0, i)) + '<b>' + esc(text.slice(i, i + q.length)) + '</b>' + esc(text.slice(i + q.length));
+  }
+  suggestui.onRender((d) => {
+    document.body.classList.toggle('light', !d.dark);
+    const items = d.items || [], q = d.q || '';
+    listEl.innerHTML = '';
+    items.forEach((it, i) => {
+      const row = document.createElement('div'); row.className = 'row' + (i === d.sel ? ' sel' : ''); row.dataset.i = i;
+      const ic = document.createElement('div'); ic.className = 'ic';
+      if (it.favicon || (it.url && it.kind !== 'search')) { const im = document.createElement('img'); im.src = it.favicon || ('https://www.google.com/s2/favicons?domain=' + hostOf(it.url) + '&sz=32'); im.onerror = () => { ic.innerHTML = ICONS[it.kind] || ICONS.url; }; ic.appendChild(im); }
+      else ic.innerHTML = ICONS[it.kind] || ICONS.search;
+      row.appendChild(ic);
+      const txt = document.createElement('div'); txt.className = 'txt';
+      const p = document.createElement('div'); p.className = 'primary'; p.innerHTML = mark(it.title || it.primary || it.url, q); txt.appendChild(p);
+      if (it.secondary) { const s = document.createElement('div'); s.className = 'secondary'; s.textContent = it.secondary; txt.appendChild(s); }
+      row.appendChild(txt);
+      if (it.tag) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = it.tag; row.appendChild(t); }
+      row.onmousemove = () => suggestui.hover(i);
+      row.onmousedown = (e) => { e.preventDefault(); suggestui.choose(i); };
+      listEl.appendChild(row);
+    });
+  });
+</script>
+</body>
+</html>
