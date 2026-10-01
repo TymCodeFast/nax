@@ -579,6 +579,16 @@ function tabPlan(ev) {
     if (band > 0.28 && band < 0.72) return { kind: 'join', groupId: ht.groupId, afterTabId: +hover.dataset.afterid, hoverRow: hover, multi: members(ht.groupId) > 1 };
     return reorderPlan(rows, hover, band >= 0.5, tabOf);
   }
+  // Pas pile sur une ligne mais sur l'encadré d'un groupe (en-tête, marges, zone repliée) → rejoindre ce groupe.
+  for (const gEl of box.querySelectorAll('.group.multi, .group.pair')) {
+    const b = gEl.getBoundingClientRect();
+    if (y >= b.top && y <= b.bottom) {
+      const gid = +gEl.dataset.key;
+      const gm = state.tabs.filter((t) => t.groupId === gid && !excluded.has(t.id));
+      if (!gm.length) continue;
+      return { kind: 'join', groupId: gid, afterTabId: gm[gm.length - 1].id, hoverRow: gEl, multi: true };
+    }
+  }
   return reorderPlan(rows, rows[rows.length - 1] || null, true, tabOf);
 }
 function reorderPlan(rows, ref, after, tabOf) {
