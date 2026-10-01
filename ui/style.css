@@ -296,14 +296,6 @@ body.split #navbar { padding-right: 12px; flex: none; }
 #split-divider.hidden { display: none; }
 #split-divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: var(--line-strong); transition: background var(--t); }
 #split-divider:hover::after, body.resizing #split-divider::after { background: var(--c1); }
-
-/* petit menu de choix de session du volet droit */
-.split-menu { position: fixed; z-index: 300; min-width: 220px; padding: 6px; border-radius: 12px; background: var(--panel);
-  border: 1px solid var(--line-strong); box-shadow: 0 18px 44px rgba(0,0,0,.5); backdrop-filter: blur(20px); animation: pop 130ms var(--ease) both; }
-.split-opt { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 9px; color: var(--fg); transition: background var(--t); }
-.split-opt:hover { background: var(--hover); }
-.split-opt-t { font-weight: 550; font-size: 13px; }
-.split-opt-d { font-size: 11.5px; color: var(--dim); margin-top: 1px; }
 .nav-group { display: flex; gap: 2px; }
 .nav-btn { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: var(--fg-2); transition: background var(--t), color var(--t), transform var(--t); }
 .nav-btn:hover { background: var(--hover); color: var(--fg); }

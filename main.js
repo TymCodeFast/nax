@@ -1426,6 +1426,11 @@ function registerIpc() {
   // ---------- vue divisée ----------
   ipcMain.on('split-open', (_e, mode) => openSplit(mode));
   ipcMain.on('split-close', () => closeSplit());
+  // menu de choix de session (via l'overlay natif, au-dessus des pages web)
+  ipcMain.on('split-menu', () => popupMenu([
+    { label: 'Cookies partagés', click: () => openSplit('shared') },
+    { label: 'Navigation privée', click: () => openSplit('private') },
+  ]));
   const withSplit = (fn) => () => { if (splitView && !splitView.webContents.isDestroyed()) fn(splitView.webContents); };
   ipcMain.on('split-back', withSplit((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
   ipcMain.on('split-forward', withSplit((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));

@@ -655,31 +655,10 @@ $('sp-reload').onclick = () => api.splitReload();
 $('sp-close').onclick = () => api.splitClose();
 $('sp-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { api.splitNavigate(e.target.value); e.target.blur(); } });
 
-// Bouton « Diviser la vue » : bascule ou propose le mode de session.
-let splitMenuEl = null;
-function closeSplitMenu() { if (splitMenuEl) { splitMenuEl.remove(); splitMenuEl = null; document.removeEventListener('mousedown', onSplitOutside, true); } }
-function onSplitOutside(e) { if (splitMenuEl && !splitMenuEl.contains(e.target) && e.target !== $('split-btn')) closeSplitMenu(); }
-function showSplitMenu(btn) {
-  closeSplitMenu();
-  const m = el('div', 'split-menu'); splitMenuEl = m;
-  const opt = (label, desc, mode) => {
-    const o = el('button', 'split-opt');
-    o.appendChild(el('div', 'split-opt-t', label));
-    o.appendChild(el('div', 'split-opt-d', desc));
-    o.onclick = () => { closeSplitMenu(); api.splitOpen(mode); };
-    return o;
-  };
-  m.appendChild(opt('Cookies partagés', 'Même session qu’à gauche.', 'shared'));
-  m.appendChild(opt('Navigation privée', 'Session isolée, non conservée.', 'private'));
-  document.body.appendChild(m);
-  const r = btn.getBoundingClientRect();
-  m.style.top = (r.bottom + 6) + 'px';
-  m.style.right = (window.innerWidth - r.right) + 'px';
-  setTimeout(() => document.addEventListener('mousedown', onSplitOutside, true), 0);
-}
-$('split-btn').onclick = (e) => {
-  if (state && state.split && state.split.active) { api.splitClose(); return; }
-  e.stopPropagation(); showSplitMenu(e.currentTarget);
+// Bouton « Diviser la vue » : bascule ou propose le mode de session (menu natif, au-dessus des pages).
+$('split-btn').onclick = () => {
+  if (state && state.split && state.split.active) api.splitClose();
+  else api.splitMenu();
 };
 
 // Séparateur déplaçable entre les deux volets.
