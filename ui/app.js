@@ -188,6 +188,65 @@ function renderApps() {
     });
 }
 
+// Regroupe les membres en unités : une paire divisée = 1 unité (deux tuiles), sinon 1 onglet.
+function tabUnits(members) {
+  const out = [], used = new Set();
+  for (const m of members) {
+    if (used.has(m.id)) continue;
+    const sec = members.find((x) => x.splitParent === m.id);
+    if (sec && !m.splitParent) { out.push({ key: 'pair-' + m.id, pair: true, primary: m, secondary: sec }); used.add(m.id); used.add(sec.id); }
+    else if (m.splitParent && members.some((x) => x.id === m.splitParent)) { used.add(m.id); } // rendu via son primaire
+    else { out.push({ key: 't' + m.id, pair: false, tab: m }); used.add(m.id); }
+  }
+  return out;
+}
+function createUnit(u) { return u.pair ? createPairRow(u) : createTabRow(u.tab); }
+function updateUnit(node, u) { if (u.pair) updatePairRow(node, u); else updateTabRow(node, u.tab); }
+
+function createPairRow(u) {
+  const row = el('div', 'pair-row');
+  row.appendChild(pairTile(u.primary.id));
+  const lk = el('span', 'pair-link'); lk.appendChild(icon('i-link')); row.appendChild(lk);
+  row.appendChild(pairTile(u.secondary.id));
+  return row;
+}
+function pairTile(id) {
+  const t = el('div', 'pair-tile'); t.dataset.id = id;
+  const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); t.appendChild(ico);
+  t.appendChild(el('span', 'title'));
+  const x = el('button', 'x'); x.title = 'Fermer'; x.appendChild(icon('i-close'));
+  x.onclick = (e) => { e.stopPropagation(); api.tabClose(id); };
+  t.appendChild(x);
+  t.onclick = () => { if (suppressClick) return; closeOverlay(); api.tabActivate(id); };
+  t.onauxclick = (e) => { if (e.button === 1) api.tabClose(id); };
+  t.oncontextmenu = (e) => { e.preventDefault(); api.tabContext(id); };
+  return t;
+}
+function updatePairRow(node, u) {
+  const sp = state.split || {};
+  const active = sp.active && (u.primary.id === sp.primaryId || u.secondary.id === sp.secondaryId);
+  node.classList.toggle('active', active);
+  const tiles = node.querySelectorAll('.pair-tile');
+  updatePairTile(tiles[0], u.primary, sp.active && u.primary.id === sp.primaryId);
+  updatePairTile(tiles[1], u.secondary, sp.active && u.secondary.id === sp.secondaryId);
+  const priv = u.secondary.splitMode === 'private' || !!u.secondary.partition;
+  tiles[1].classList.toggle('private', priv);
+}
+function updatePairTile(tile, t, isActive) {
+  tile.classList.toggle('cur', !!isActive);
+  tile.classList.toggle('dormant', !!t.dormant);
+  tile.classList.toggle('loading', !!t.loading);
+  tile.title = t.title || hostOf(t.url) || t.url;
+  const ico = tile.querySelector('.ico');
+  const src = favicon(t);
+  let img = ico.querySelector('img');
+  if (src) {
+    if (!img) { img = el('img'); img.alt = ''; img.onerror = () => { img.remove(); if (!ico.querySelector('.dot')) ico.appendChild(el('span', 'dot')); }; ico.innerHTML = ''; ico.appendChild(img); }
+    setSrc(img, src);
+  } else if (!ico.querySelector('.dot')) { ico.innerHTML = ''; ico.appendChild(el('span', 'dot')); }
+  setText(tile.querySelector('.title'), t.title || hostOf(t.url) || 'Onglet');
+}
+
 function createTabRow(t) {
   const row = el('div', 'tab');
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); row.appendChild(ico);
@@ -243,7 +302,8 @@ function renderTabs() {
       const head = gEl.querySelector('.group-title');
       head.style.display = multi ? '' : 'none';
       if (multi) renderGroupHead(head, g, collapsed);
-      sync(gEl.querySelector('.group-tabs'), g.members, (t) => t.id, createTabRow, updateTabRow);
+      // une paire divisée (primaire + secondaire) se rend en UNE ligne à deux tuiles côte à côte
+      sync(gEl.querySelector('.group-tabs'), tabUnits(g.members), (u) => u.key, createUnit, updateUnit);
     });
 
   // Ancienne section « en veille » désactivée : les onglets dormants vivent dans la liste.

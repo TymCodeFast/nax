@@ -244,15 +244,28 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .tab.dormant .ico img { opacity: .9; }
 .tab.dormant:hover .ico img { opacity: 1; }
 
-/* onglets liés par la vue divisée */
-.tab .tab-link { display: none; }
-.tab.linked .tab-link { display: grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--c1); }
-.tab.linked .tab-link svg { width: 13px; height: 13px; }
-.tab.linked:hover .tab-link { display: none; } /* laisse la place à la croix au survol */
-.tab.split-secondary { padding-left: 22px; }     /* léger décalage pour montrer le rattachement */
-/* liseré d'accent reliant les deux volets d'une paire */
-.group.pair { position: relative; }
-.group.pair::before { content: ""; position: absolute; left: 2px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--c1); opacity: .6; }
+.tab .tab-link { display: none; } /* ancien indicateur, les paires se rendent désormais en ligne à deux tuiles */
+
+/* paire divisée : les deux onglets côte à côte sur une même ligne, visuellement reliés */
+.pair-row { display: flex; align-items: center; margin-bottom: 4px; border-radius: 10px; overflow: hidden;
+  background: rgba(115,133,255,.07); border: 1px solid var(--line); transition: background var(--t), border-color var(--t); }
+.pair-row.active { border-color: var(--c1); background: rgba(115,133,255,.13); }
+.pair-link { flex: none; width: 20px; height: 100%; display: grid; place-items: center; color: var(--c1); }
+.pair-link svg { width: 13px; height: 13px; }
+.pair-tile { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 5px 0 9px; color: var(--fg-2); cursor: default; transition: background var(--t), color var(--t); }
+.pair-tile:hover { background: var(--hover); color: var(--fg); }
+.pair-tile.cur { color: var(--fg); background: var(--active); }
+.pair-tile .ico { width: 16px; height: 16px; flex: none; position: relative; display: grid; place-items: center; }
+.pair-tile .ico img { width: 16px; height: 16px; border-radius: 4px; }
+.pair-tile .ico .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.pair-tile .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+.pair-tile.dormant { color: var(--fg-2); }
+.pair-tile .x { opacity: 0; width: 20px; height: 20px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; flex: none; transition: opacity var(--t), background var(--t), color var(--t); }
+.pair-tile .x svg { width: 12px; height: 12px; }
+.pair-tile:hover .x { opacity: 1; }
+.pair-tile .x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
+.pair-tile.private .title::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--c2); margin-left: 6px; vertical-align: middle; }
+.pair-tile.loading .ico::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid transparent; border-top-color: var(--c1); border-right-color: var(--c2); animation: spin .9s linear infinite; }
 
 /* entrées / sorties */
 .enter { animation: enter 260ms var(--ease) both; }
