@@ -1230,6 +1230,7 @@ function favContextMenu(id) {
   }
   items.push({ type: 'separator' });
   items.push({ label: 'Renommer', click: () => chrome.webContents.send('rename-fav', id) });
+  if (n.type === 'folder') items.push({ label: 'Personnaliser (icône, couleur)…', click: () => chrome.webContents.send('customize-fav', id) });
   items.push({ label: 'Supprimer', danger: true, click: () => removeFavorite(id) });
   popupMenu(items);
 }
@@ -1460,6 +1461,7 @@ function registerIpc() {
   ipcMain.on('fav-folder', (_e, o = {}) => { const id = createFolder(o); setImmediate(() => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('rename-fav', id); }); });
   ipcMain.on('fav-remove', (_e, id) => removeFavorite(id));
   ipcMain.on('fav-rename', (_e, { id, title }) => renameFavorite(id, title));
+  ipcMain.on('fav-customize', (_e, { id, icon, color } = {}) => { const r = favFind(id); if (r && r.node.type === 'folder') { if (icon === null) delete r.node.icon; else if (icon !== undefined) r.node.icon = icon; if (color === null) delete r.node.color; else if (color !== undefined) r.node.color = color; sendState(); } });
   ipcMain.on('fav-toggle-folder', (_e, id) => toggleFolder(id));
   ipcMain.on('fav-open', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') navigateCurrent(r.node.url); });
   ipcMain.on('fav-open-new', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') newTab({ url: r.node.url }); });
@@ -1513,7 +1515,7 @@ function registerIpc() {
     const open = tabs.filter(match).map((t) => ({ kind: t.view ? 'open' : 'dormant', id: t.id, title: t.title, url: t.url, favicon: t.favicon, group: groupTitle(groupById(t.groupId)) }));
     const arch = archive.map((a, index) => ({ ...a, index })).filter(match).slice(0, 20).map((a) => ({ kind: 'archive', index: a.index, title: a.title, url: a.url, favicon: a.favicon, closedAt: a.closedAt, group: a.groupTitle }));
     const favItem = (n) => n.type === 'folder'
-      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length }
+      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null }
       : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon };
     // sans recherche : favoris de premier niveau (navigables) ; avec recherche : tout l'arbre.
     let favs = [];

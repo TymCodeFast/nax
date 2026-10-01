@@ -89,6 +89,7 @@
           <span class="label">favoris</span>
           <span id="fav-count" class="count"></span>
         </button>
+        <button id="fav-open-big" class="icon-btn" title="Ouvrir les favoris en grand"><svg><use href="#i-expand"/></svg></button>
         <button id="fav-new-folder" class="icon-btn" title="Nouveau dossier"><svg><use href="#i-folder-plus"/></svg></button>
       </div>
       <div id="favorites"></div>
@@ -372,9 +373,28 @@
           <textarea id="md-source" class="md-body hidden" spellcheck="false" readonly></textarea>
         </div>
       </div>
+      <!-- Personnalisation d'un dossier de favoris (icône Lucide + couleur) -->
+      <div id="fav-custom" class="overlay hidden">
+        <div class="panel small glow">
+          <div class="panel-head">
+            <div><h2>Personnaliser le dossier</h2></div>
+            <button id="fc-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+          </div>
+          <div class="fc-body">
+            <div class="fc-preview"><span id="fc-prev" class="fc-prev"></span><span id="fc-prev-name" class="muted">Aperçu</span></div>
+            <div class="fc-label">Couleur</div>
+            <div id="fc-colors" class="fc-colors"></div>
+            <div class="fc-label">Icône</div>
+            <div class="fc-search"><svg class="lead"><use href="#i-search"/></svg><input id="fc-icon-search" type="text" placeholder="Rechercher une icône…" spellcheck="false" autocomplete="off"></div>
+            <div id="fc-icons" class="fc-icons"></div>
+          </div>
+          <div class="actions"><button id="fc-cancel">Annuler</button><button id="fc-save" class="primary">Enregistrer</button></div>
+        </div>
+      </div>
     </div>
   </main>
 </div>
+<script src="vendor/lucide.js"></script>
 <script src="vendor/turndown.js"></script>
 <script src="vendor/turndown-plugin-gfm.js"></script>
 <script src="vendor/marked.js"></script>

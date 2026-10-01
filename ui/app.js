@@ -19,6 +19,23 @@ function hostOf(url) { try { return new URL(url).hostname; } catch { return ''; 
 const favicon = (t) => t.favicon || (hostOf(t.url) ? `https://www.google.com/s2/favicons?domain=${hostOf(t.url)}&sz=32` : null);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function icon(name, cls) { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); if (cls) s.setAttribute('class', cls); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', '#' + name); s.appendChild(u); return s; }
+// Construit une icône Lucide (par nom PascalCase) en SVG inline.
+function lucideSvg(name, cls) {
+  const lib = window.lucide && window.lucide.icons; const data = lib && lib[name];
+  if (!data) return icon('i-folder', cls);
+  const NS = 'http://www.w3.org/2000/svg';
+  const s = document.createElementNS(NS, 'svg'); if (cls) s.setAttribute('class', cls);
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
+  s.setAttribute('stroke-width', '2'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round');
+  for (const part of data) { const tag = part[0], attrs = part[1] || {}; const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); s.appendChild(e); }
+  return s;
+}
+// Remplit un conteneur avec l'icône d'un dossier (Lucide choisie ou dossier par défaut) + sa couleur.
+function setFolderIcon(container, node) {
+  container.innerHTML = '';
+  container.appendChild(node && node.icon ? lucideSvg(node.icon) : icon('i-folder'));
+  container.style.color = (node && node.color) || '';
+}
 function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
 function setSrc(img, src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); }
 function ago(ts) {
@@ -127,7 +144,7 @@ function favRow(n, depth, parentId, index) {
   row.style.paddingLeft = (10 + depth * 15) + 'px';
   if (isFolder) {
     row.appendChild(icon('i-forward', 'fav-chev'));
-    const ico = el('span', 'fav-ico'); ico.appendChild(icon('i-folder')); row.appendChild(ico);
+    const ico = el('span', 'fav-ico'); setFolderIcon(ico, n); row.appendChild(ico);
   } else {
     const img = el('img', 'fav-ico'); img.alt = ''; img.src = n.favicon || `https://www.google.com/s2/favicons?domain=${hostOf(n.url)}&sz=32`; img.onerror = () => { img.style.visibility = 'hidden'; };
     row.appendChild(img);
@@ -401,6 +418,51 @@ $('fav-toggle-sec').onclick = () => {
   $('fav-wrap').classList.toggle('collapsed', favCollapsed);
 };
 $('fav-new-folder').onclick = (e) => { e.stopPropagation(); if (favCollapsed) { favCollapsed = false; $('fav-wrap').classList.remove('collapsed'); } api.favFolder({}); };
+$('fav-open-big').onclick = (e) => { e.stopPropagation(); openFolderInPalette('ROOT'); };
+
+// ---------- personnalisation d'un dossier (icône Lucide + couleur) ----------
+let fcTarget = null, fcIcon = null, fcColor = null;
+const FC_COLORS = ['#f0b429', '#7385ff', '#9a86ff', '#ef5350', '#34d399', '#38bda8', '#60a5fa', '#f472b6', '#f59e0b', '#c084fc', '#94a3b8'];
+function openFavCustom(id) {
+  const f = favFindC(id); if (!f || f.node.type !== 'folder') return;
+  fcTarget = id; fcIcon = f.node.icon || null; fcColor = f.node.color || null;
+  $('fc-icon-search').value = '';
+  renderFcColors(); renderFcIcons(''); updateFcPreview();
+  showOverlay('fav-custom');
+}
+function updateFcPreview() {
+  const p = $('fc-prev'); p.innerHTML = ''; p.appendChild(fcIcon ? lucideSvg(fcIcon) : icon('i-folder')); p.style.color = fcColor || 'var(--gold)';
+  const f = favFindC(fcTarget); setText($('fc-prev-name'), f ? (f.node.title || 'Dossier') : '');
+}
+function renderFcColors() {
+  const box = $('fc-colors'); box.innerHTML = '';
+  const mk = (c) => { const b = el('button', 'fc-color' + (((c === fcColor) || (!c && !fcColor)) ? ' sel' : '')); b.style.background = c || 'var(--gold)'; b.title = c || 'Défaut'; b.onclick = () => { fcColor = c; renderFcColors(); updateFcPreview(); }; return b; };
+  box.appendChild(mk(null));
+  FC_COLORS.forEach((c) => box.appendChild(mk(c)));
+}
+function renderFcIcons(q) {
+  const box = $('fc-icons'); box.innerHTML = '';
+  const lib = window.lucide && window.lucide.icons;
+  // option « dossier par défaut »
+  const def = el('button', 'fc-icon' + (!fcIcon ? ' sel' : '')); def.title = 'Dossier (par défaut)'; def.appendChild(icon('i-folder'));
+  def.onclick = () => { fcIcon = null; renderFcIcons($('fc-icon-search').value); updateFcPreview(); }; box.appendChild(def);
+  if (!lib) { box.appendChild(el('div', 'muted', 'Bibliothèque d’icônes indisponible.')); return; }
+  const ql = (q || '').trim().toLowerCase();
+  let names = Object.keys(lib);
+  if (ql) names = names.filter((n) => n.toLowerCase().includes(ql));
+  names = names.slice(0, 160);
+  for (const name of names) {
+    const b = el('button', 'fc-icon' + (name === fcIcon ? ' sel' : '')); b.title = name;
+    b.appendChild(lucideSvg(name));
+    b.onclick = () => { fcIcon = name; renderFcIcons($('fc-icon-search').value); updateFcPreview(); };
+    box.appendChild(b);
+  }
+}
+$('fc-icon-search').addEventListener('input', (e) => renderFcIcons(e.target.value));
+$('fc-close').onclick = closeOverlay;
+$('fc-cancel').onclick = closeOverlay;
+$('fc-save').onclick = () => { if (fcTarget != null) api.favCustomize({ id: fcTarget, icon: fcIcon, color: fcColor }); closeOverlay(); };
+api.onCustomizeFav((id) => openFavCustom(id));
 // ---------- autocomplétion de la barre d'adresse ----------
 const stripScheme = (u) => (u || '').replace(/^https?:\/\//i, '').replace(/^www\./i, '');
 const isDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
@@ -812,24 +874,29 @@ function openFolderView(id) { pFolder = id; pInput.value = ''; pNavigated = fals
 function openFolderInPalette(id) { showOverlay('palette'); pInput.value = ''; pNavigated = false; pFolder = id; pInput.focus(); runSearch(); }
 // Vue d'un dossier de favoris : son contenu, avec un fil d'ariane et un retour.
 function renderFolder() {
-  const f = favFindC(pFolder);
-  if (!f || f.node.type !== 'folder') { pFolder = null; return runSearch(); }
+  const root = pFolder === 'ROOT';
+  const f = root ? null : favFindC(pFolder);
+  if (!root && (!f || f.node.type !== 'folder')) { pFolder = null; return runSearch(); }
+  const node = root ? null : f.node;
+  const kidsAll = root ? (state.favorites || []) : (node.children || []);
   pItems = []; pRes.innerHTML = '';
   const back = el('div', 'res-back'); back.appendChild(icon('i-back'));
-  const bi = el('span', 'res-back-ico'); bi.appendChild(icon('i-folder')); back.appendChild(bi);
-  back.appendChild(el('span', 'res-back-t', f.node.title || 'Dossier'));
+  const bi = el('span', 'res-back-ico');
+  if (root) bi.appendChild(icon('i-star')); else setFolderIcon(bi, node);
+  back.appendChild(bi);
+  back.appendChild(el('span', 'res-back-t', root ? 'Favoris' : (node.title || 'Dossier')));
   back.onclick = () => { pFolder = null; pInput.value = ''; runSearch(); };
   pRes.appendChild(back);
   const q = pInput.value.trim().toLowerCase();
-  const kids = (f.node.children || []).filter((n) => !q || (n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q));
-  pRes.appendChild(el('div', 'res-section', q ? 'Dans ce dossier' : 'Contenu du dossier'));
+  const kids = kidsAll.filter((n) => !q || (n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q));
+  pRes.appendChild(el('div', 'res-section', q ? 'Résultats' : (root ? 'Tous les favoris' : 'Contenu du dossier')));
   for (const n of kids) {
     const it = n.type === 'folder'
-      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length }
+      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null }
       : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon };
     pItems.push(it); pRes.appendChild(resRow(it, pItems.length - 1));
   }
-  if (!kids.length) pRes.appendChild(el('div', 'empty-msg', q ? 'Rien ne correspond dans ce dossier.' : 'Dossier vide.'));
+  if (!kids.length) pRes.appendChild(el('div', 'empty-msg', q ? 'Rien ne correspond.' : 'Dossier vide.'));
   pSel = 0; markSel();
 }
 async function runSearch() {
@@ -854,7 +921,7 @@ async function runSearch() {
 function resRow(it, i) {
   const row = el('div', 'res'); row.dataset.i = i; row.style.setProperty('--i', Math.min(i, 12));
   const isFolder = it.kind === 'favorite' && it.type === 'folder';
-  if (isFolder) { const ic = el('span', 'res-folder'); ic.appendChild(icon('i-folder')); row.appendChild(ic); }
+  if (isFolder) { const ic = el('span', 'res-folder'); setFolderIcon(ic, { icon: it.icon, color: it.color }); row.appendChild(ic); }
   else { const img = el('img'); img.src = it.favicon || `https://www.google.com/s2/favicons?domain=${hostOf(it.url)}&sz=32`; img.alt = ''; row.appendChild(img); }
   const t = el('div', 't');
   t.appendChild(el('div', 'title', it.title || it.url || 'Dossier'));
@@ -1010,7 +1077,7 @@ function favMgrRow(n, depth, parentId, index) {
   row.style.paddingLeft = (12 + depth * 20) + 'px';
   if (isFolder) row.appendChild(icon('i-forward', 'favm-chev'));
   else row.appendChild(el('span', 'favm-chev spacer'));
-  if (isFolder) { const ic = el('span', 'favm-ico'); ic.appendChild(icon('i-folder')); row.appendChild(ic); }
+  if (isFolder) { const ic = el('span', 'favm-ico'); setFolderIcon(ic, n); row.appendChild(ic); }
   else { const img = el('img', 'favm-ico'); img.alt = ''; img.src = n.favicon || `https://www.google.com/s2/favicons?domain=${hostOf(n.url)}&sz=32`; img.onerror = () => { img.style.visibility = 'hidden'; }; row.appendChild(img); }
   const main = el('div', 'favm-main');
   if (renamingFav === n.id && renamingFavCtx === 'panel') {
@@ -1032,6 +1099,7 @@ function favMgrRow(n, depth, parentId, index) {
   if (isFolder) { const openall = actBtn('i-plus', 'Tout ouvrir'); openall.onclick = (e) => { e.stopPropagation(); api.favOpenAll(n.id); }; acts.appendChild(openall); }
   else { const open = actBtn('i-plus', 'Ouvrir dans un nouvel onglet'); open.onclick = (e) => { e.stopPropagation(); api.favOpenNew(n.id); }; acts.appendChild(open); }
   const ren = actBtn('i-edit', 'Renommer'); ren.onclick = (e) => { e.stopPropagation(); renamingFav = n.id; renamingFavCtx = 'panel'; renderFavPane(); }; acts.appendChild(ren);
+  if (isFolder) { const cust = el('button', 'favm-act'); cust.title = 'Personnaliser (icône, couleur)'; cust.appendChild(lucideSvg('Palette')); cust.onclick = (e) => { e.stopPropagation(); openFavCustom(n.id); }; acts.appendChild(cust); }
   const del = actBtn('i-trash', isFolder ? 'Supprimer le dossier et son contenu' : 'Retirer des favoris'); del.classList.add('danger'); del.onclick = (e) => { e.stopPropagation(); api.favRemove(n.id); }; acts.appendChild(del);
   row.appendChild(acts);
   row.title = isFolder ? (n.title || 'Dossier') : n.url;

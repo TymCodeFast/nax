@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('api', {
   setSearchEngine: send('set-search-engine'),
   favToggle: send('fav-toggle'), favAdd: send('fav-add'), favFolder: send('fav-folder'), favRemove: send('fav-remove'),
   favRename: send('fav-rename'), favToggleFolder: send('fav-toggle-folder'),
+  favCustomize: (o) => ipcRenderer.send('fav-customize', o),
+  onCustomizeFav: on('customize-fav'),
   favOpen: send('fav-open'), favOpenNew: send('fav-open-new'), favOpenAll: send('fav-open-all'),
   favMove: send('fav-move'), favContext: send('fav-context'),
   onRenameFav: on('rename-fav'),
