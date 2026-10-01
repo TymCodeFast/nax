@@ -193,6 +193,7 @@ function createTabRow(t) {
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); row.appendChild(ico);
   row.appendChild(el('span', 'title'));
   row.appendChild(el('span', 'sub'));
+  const link = el('span', 'tab-link'); link.title = 'Volets liés'; link.appendChild(icon('i-link')); row.appendChild(link);
   const x = el('button', 'x'); x.title = 'Fermer'; x.appendChild(icon('i-close'));
   x.onclick = (e) => { e.stopPropagation(); api.tabClose(t.id); };
   row.appendChild(x);
@@ -203,7 +204,12 @@ function createTabRow(t) {
   return row;
 }
 function updateTabRow(row, t) {
-  row.classList.toggle('active', isCurrent('tab', t.id));
+  const sp = state.split || {};
+  const inActivePair = sp.active && (t.id === sp.primaryId || t.id === sp.secondaryId);
+  row.classList.toggle('active', isCurrent('tab', t.id) || inActivePair);
+  const linked = !!t.splitParent || (state.tabs || []).some((x) => x.splitParent === t.id);
+  row.classList.toggle('linked', linked);
+  row.classList.toggle('split-secondary', !!t.splitParent);
   row.classList.toggle('dormant', !!t.dormant);
   row.classList.toggle('loading', !!t.loading);
   row.title = t.url;
@@ -226,9 +232,12 @@ function renderTabs() {
   sync($('tabs'), visibleGroups, (g) => g.id,
     () => { const gEl = el('div', 'group'); gEl.appendChild(el('div', 'group-title')); gEl.appendChild(el('div', 'group-tabs')); return gEl; },
     (gEl, g) => {
-      const multi = g.members.length > 1;
+      // une « paire divisée » (2 onglets liés) n'est pas un vrai groupe : pas d'en-tête de groupe, juste le lien
+      const pairOnly = g.members.length === 2 && g.members.some((m) => m.splitParent && g.members.some((o) => o.id === m.splitParent)) && !g.custom;
+      const multi = g.members.length > 1 && !pairOnly;
       const collapsed = multi && !!g.collapsed;
       gEl.classList.toggle('multi', multi);
+      gEl.classList.toggle('pair', pairOnly);
       gEl.classList.toggle('collapsed', collapsed);
       gEl.classList.toggle('hasactive', collapsed && g.members.some((t) => isCurrent('tab', t.id)));
       const head = gEl.querySelector('.group-title');

@@ -244,6 +244,16 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .tab.dormant .ico img { opacity: .9; }
 .tab.dormant:hover .ico img { opacity: 1; }
 
+/* onglets liés par la vue divisée */
+.tab .tab-link { display: none; }
+.tab.linked .tab-link { display: grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--c1); }
+.tab.linked .tab-link svg { width: 13px; height: 13px; }
+.tab.linked:hover .tab-link { display: none; } /* laisse la place à la croix au survol */
+.tab.split-secondary { padding-left: 22px; }     /* léger décalage pour montrer le rattachement */
+/* liseré d'accent reliant les deux volets d'une paire */
+.group.pair { position: relative; }
+.group.pair::before { content: ""; position: absolute; left: 2px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--c1); opacity: .6; }
+
 /* entrées / sorties */
 .enter { animation: enter 260ms var(--ease) both; }
 @keyframes enter { from { opacity: 0; transform: translateX(-8px) } to { opacity: 1; transform: none } }

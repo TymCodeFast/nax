@@ -137,52 +137,59 @@ function zoomReset(wc) {
   if (host) { delete zoomHosts[host]; persist(); }
 }
 
-// ---------- vue divisée (deux volets côte à côte) ----------
-let splitView = null;   // WebContentsView du volet droit
-let splitMode = null;   // 'shared' | 'private'  (TODO: ajouter 'profile' = profil isolé PERSISTANT plus tard)
+// ---------- vue divisée : le volet droit est un VRAI onglet, lié à son onglet parent ----------
+let splitView = null;   // vue de l'onglet secondaire affichée à droite (null hors paire active)
+let splitMode = null;   // 'shared' | 'private' (déduit de l'onglet secondaire)
 let splitRatio = 0.5;   // largeur relative du volet gauche
+let splitSeq = 1;       // compteur pour des partitions privées uniques
 const SPLIT_GAP = 6;    // écart entre les deux volets (zone du séparateur)
 function splitPartition(mode) {
-  // TODO (profil persistant) : pour un profil conservé, renvoyer `persist:nax-profile-<nom>`.
-  if (mode === 'private') return 'nax-private-' + Date.now(); // pas de préfixe persist: → session en mémoire, jetable
+  // TODO (profil persistant) : pour un profil conservé entre les lancements, renvoyer `persist:nax-profile-<nom>`.
+  if (mode === 'private') return 'nax-private-' + (splitSeq++); // en mémoire, stable pour l'onglet → login conservé le temps de la session
   return null; // partagé : session par défaut (même connexion qu'à gauche)
 }
-function ensureSplitView(mode) {
-  const partition = splitPartition(mode);
-  const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
-  const wc = view.webContents;
-  for (const ev of NAV_EVENTS) wc.on(ev, () => sendState());
-  wc.setWindowOpenHandler(({ url, disposition }) => {
-    if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
-    try { wc.loadURL(url); } catch {}
-    return { action: 'deny' };
-  });
-  wc.on('context-menu', (_e, p) => pageContextMenu(wc, p, null));
-  wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(PIP_INJECT).catch(() => {}); applyZoom(wc); });
-  wc.on('enter-html-full-screen', () => enterHtmlFullscreen());
-  wc.on('leave-html-full-screen', () => leaveHtmlFullscreen());
-  return view;
+function secondaryOf(tab) { return tab ? tabs.find((t) => t.splitParent === tab.id) : null; }
+function pairOf(tab) {
+  if (!tab) return null;
+  if (tab.splitParent) { const p = tabById(tab.splitParent); return p ? { primary: p, secondary: tab } : null; }
+  const s = secondaryOf(tab); return s ? { primary: tab, secondary: s } : null;
+}
+function setSplitView(view) {
+  if (splitView === view) return;
+  if (splitView) { try { win.contentView.removeChildView(splitView); } catch {} } // détache l'affichage sans fermer l'onglet
+  splitView = view || null;
+  if (splitView) { try { win.contentView.addChildView(splitView); } catch {} splitView.setVisible(!overlayOpen); }
+  layout();
+}
+// Affiche l'onglet courant : seul, ou en paire (primaire à gauche, secondaire à droite).
+function showActive() {
+  const cur = current && current.kind === 'tab' ? tabById(current.id) : (current && current.kind === 'app' ? null : null);
+  if (current && current.kind === 'app') { const v = appViews.get(current.id); attach(v || null); setSplitView(null); splitMode = null; return; }
+  const pair = cur ? pairOf(cur) : null;
+  if (pair) {
+    wakeTab(pair.primary); wakeTab(pair.secondary);
+    pair.primary.lastActive = pair.secondary.lastActive = Date.now(); // les deux restent éveillés
+    attach(pair.primary.view);
+    setSplitView(pair.secondary.view);
+    splitMode = pair.secondary.splitMode || (pair.secondary.partition ? 'private' : 'shared');
+  } else {
+    attach(cur ? cur.view : null);
+    setSplitView(null);
+    splitMode = null;
+  }
 }
 function openSplit(mode) {
-  if (!win) return;
+  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+  if (!cur || cur.splitParent || secondaryOf(cur)) return; // pas déjà dans une paire
   mode = mode === 'private' ? 'private' : 'shared';
-  const cur = currentWC();
-  const startUrl = (cur && !cur.isDestroyed() && cur.getURL()) ? cur.getURL() : homepage;
-  if (splitView) closeSplit();
-  splitMode = mode;
-  splitView = ensureSplitView(mode);
-  win.contentView.addChildView(splitView);
-  splitView.setVisible(!overlayOpen);
-  try { splitView.webContents.loadURL(startUrl || homepage); } catch {}
-  layout();
-  sendState();
+  const b = newTab({ url: cur.url, openerId: cur.id, activate: false, partition: splitPartition(mode), splitParent: cur.id });
+  b.splitMode = mode;
+  activateTab(cur.id); // réaffiche en montrant la paire
 }
 function closeSplit() {
-  if (!splitView) return;
-  try { win.contentView.removeChildView(splitView); } catch {}
-  try { splitView.webContents.close(); } catch {}
-  splitView = null; splitMode = null;
-  layout(); sendState();
+  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+  const pair = cur ? pairOf(cur) : null;
+  if (pair) closeTab(pair.secondary.id); // ferme le volet secondaire (c'est un onglet)
 }
 
 // ---------- persistance ----------
@@ -467,7 +474,10 @@ function sendState() {
         title: wc.getTitle(), loading: wc.isLoading(),
         canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(),
       } : { url: '', title: '', loading: false, canGoBack: false, canGoForward: false },
-      split: splitView ? { active: true, mode: splitMode } : { active: false },
+      split: (() => {
+        const p = ct ? pairOf(ct) : null;
+        return p ? { active: true, mode: splitMode, primaryId: p.primary.id, secondaryId: p.secondary.id } : { active: false };
+      })(),
       splitRatio,
       splitNav: (splitView && !splitView.webContents.isDestroyed()) ? {
         url: splitView.webContents.getURL(), title: splitView.webContents.getTitle(),
@@ -489,8 +499,8 @@ function visibleWC() { return contentView && !contentView.webContents.isDestroye
 
 // ---------- onglets ----------
 const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'page-favicon-updated'];
-function createView(onEvent) {
-  const view = new WebContentsView({ webPreferences: { sandbox: true } });
+function createView(onEvent, partition) {
+  const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
   for (const ev of NAV_EVENTS) view.webContents.on(ev, (...args) => onEvent(ev, ...args));
   return view;
 }
@@ -513,7 +523,7 @@ function wakeTab(tab) {
     }
     if (isCurrentTab(tab.id)) win.setTitle((onErr ? hostOf(tab.url) : tab.title) || 'NaX');
     sendState();
-  });
+  }, tab.partition);
   const wc = tab.view.webContents;
   wc.setWindowOpenHandler(({ url, disposition }) => {
     // blocage des pop-ups : uniquement les fenêtres scriptées (window.open avec options), pas les liens _blank
@@ -536,16 +546,22 @@ function wakeTab(tab) {
 
 function sleepTab(tab) {
   if (!tab.view || isCurrentTab(tab.id)) return;
+  // ne pas endormir un volet actuellement affiché dans la vue divisée
+  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+  const pair = cur ? pairOf(cur) : null;
+  if (pair && (tab.id === pair.primary.id || tab.id === pair.secondary.id)) return;
   const v = tab.view; tab.view = null;
   v.webContents.close();
   sendState();
 }
 
-function newTab({ url = newTabTarget(), openerId = null, groupId = null, activate = true } = {}) {
+function newTab({ url = newTabTarget(), openerId = null, groupId = null, activate = true, partition = null, splitParent = null } = {}) {
   const opener = openerId ? tabById(openerId) : null;
   let gid = groupId ?? (opener ? opener.groupId : null);
   if (gid == null) { gid = nextId++; groups.push({ id: gid, title: null }); }
   const tab = { id: nextId++, url, title: hostOf(url), favicon: null, groupId: gid, lastActive: Date.now(), createdAt: Date.now(), view: null };
+  if (partition) tab.partition = partition;
+  if (splitParent) tab.splitParent = splitParent;
   // insérer à la fin de l'îlot de l'ouvreur pour le garder contigu et dans l'ordre d'ouverture
   let idx = tabs.length;
   if (opener) { idx = tabs.indexOf(opener) + 1; while (idx < tabs.length && tabs[idx].groupId === gid) idx++; }
@@ -556,15 +572,18 @@ function newTab({ url = newTabTarget(), openerId = null, groupId = null, activat
 }
 
 function activateTab(id) {
-  const tab = tabById(id);
+  let tab = tabById(id);
   if (!tab) return;
-  wakeTab(tab);
-  tab.lastActive = Date.now();
-  tabMRU = [id, ...tabMRU.filter((x) => x !== id)]; // ordre d'utilisation : le plus récent en tête
-  current = { kind: 'tab', id };
-  attach(tab.view);
-  tab.view.webContents.focus();
-  win.setTitle(tab.title || 'NaX');
+  // cliquer le volet secondaire active la paire ; le primaire reste le pilote de gauche
+  const pair = pairOf(tab);
+  const activeTab = pair ? pair.primary : tab;
+  wakeTab(activeTab);
+  activeTab.lastActive = Date.now();
+  tabMRU = [activeTab.id, ...tabMRU.filter((x) => x !== activeTab.id)]; // ordre d'utilisation : le plus récent en tête
+  current = { kind: 'tab', id: activeTab.id };
+  showActive();
+  if (activeTab.view) activeTab.view.webContents.focus();
+  win.setTitle(activeTab.title || 'NaX');
   hidePeek(); hideFind();
   sendState();
 }
@@ -579,6 +598,9 @@ function closeTab(id, { toArchive = true } = {}) {
   const idx = tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const tab = tabs[idx];
+  // si on ferme le volet primaire, son secondaire redevient un onglet normal
+  const sec = secondaryOf(tab);
+  if (sec) { delete sec.splitParent; delete sec.splitMode; }
   const g = groupById(tab.groupId);
   if (toArchive && tab.url && normalize(tab.url) !== normalize(homepage)) {
     archive.unshift({ url: tab.url, title: tab.title, favicon: tab.favicon, closedAt: Date.now(), groupTitle: groupTitle(g) });
@@ -588,14 +610,14 @@ function closeTab(id, { toArchive = true } = {}) {
   tabMRU = tabMRU.filter((x) => x !== id);
   if (!tabs.some((t) => t.groupId === tab.groupId)) groups = groups.filter((x) => x.id !== tab.groupId);
   const wasCurrent = isCurrentTab(id);
-  if (tab.view) { if (contentView === tab.view) attach(null); tab.view.webContents.close(); tab.view = null; }
+  if (tab.view) { if (contentView === tab.view) attach(null); if (splitView === tab.view) setSplitView(null); tab.view.webContents.close(); tab.view = null; }
   if (wasCurrent) {
     current = null;
     // le dernier onglet utilisé d'abord, sinon un voisin du même groupe, sinon l'onglet à la même position
     const mru = tabMRU.find((x) => tabById(x));
     const next = (mru && tabById(mru)) || tabs.find((t) => t.groupId === tab.groupId) || tabs[Math.min(idx, tabs.length - 1)];
     if (next) activateTab(next.id); else newTab();
-  } else sendState();
+  } else { showActive(); sendState(); }
 }
 
 // Dédoublonnage : si l'URL est déjà ouverte, on y va au lieu d'ouvrir une 2e fois.
@@ -925,6 +947,7 @@ function activateApp(id) {
   const v = ensureAppView(a);
   current = { kind: 'app', id };
   attach(v);
+  setSplitView(null); splitMode = null; // une appli masque la vue divisée
   v.webContents.focus();
   win.setTitle(a.name);
   hidePeek(); hideFind();
