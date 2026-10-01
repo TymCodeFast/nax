@@ -59,8 +59,10 @@ function render() {
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
   renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit();
-  document.body.classList.toggle('private-tab', !!state.navPrivate);
-  $('private-pill').classList.toggle('hidden', !state.navPrivate);
+  // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
+  const showPill = !!state.navPrivate && !(state.split && state.split.active);
+  document.body.classList.toggle('private-tab', showPill);
+  $('private-pill').classList.toggle('hidden', !showPill);
   setText($('archive-count'), state.archiveCount ? String(state.archiveCount) : '');
   const devPane = document.querySelector('.settings-pane[data-pane="dev"]');
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
