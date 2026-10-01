@@ -137,6 +137,54 @@ function zoomReset(wc) {
   if (host) { delete zoomHosts[host]; persist(); }
 }
 
+// ---------- vue divisée (deux volets côte à côte) ----------
+let splitView = null;   // WebContentsView du volet droit
+let splitMode = null;   // 'shared' | 'private'  (TODO: ajouter 'profile' = profil isolé PERSISTANT plus tard)
+let splitRatio = 0.5;   // largeur relative du volet gauche
+const SPLIT_GAP = 6;    // écart entre les deux volets (zone du séparateur)
+function splitPartition(mode) {
+  // TODO (profil persistant) : pour un profil conservé, renvoyer `persist:nax-profile-<nom>`.
+  if (mode === 'private') return 'nax-private-' + Date.now(); // pas de préfixe persist: → session en mémoire, jetable
+  return null; // partagé : session par défaut (même connexion qu'à gauche)
+}
+function ensureSplitView(mode) {
+  const partition = splitPartition(mode);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
+  const wc = view.webContents;
+  for (const ev of NAV_EVENTS) wc.on(ev, () => sendState());
+  wc.setWindowOpenHandler(({ url, disposition }) => {
+    if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
+    try { wc.loadURL(url); } catch {}
+    return { action: 'deny' };
+  });
+  wc.on('context-menu', (_e, p) => pageContextMenu(wc, p, null));
+  wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(PIP_INJECT).catch(() => {}); applyZoom(wc); });
+  wc.on('enter-html-full-screen', () => enterHtmlFullscreen());
+  wc.on('leave-html-full-screen', () => leaveHtmlFullscreen());
+  return view;
+}
+function openSplit(mode) {
+  if (!win) return;
+  mode = mode === 'private' ? 'private' : 'shared';
+  const cur = currentWC();
+  const startUrl = (cur && !cur.isDestroyed() && cur.getURL()) ? cur.getURL() : homepage;
+  if (splitView) closeSplit();
+  splitMode = mode;
+  splitView = ensureSplitView(mode);
+  win.contentView.addChildView(splitView);
+  splitView.setVisible(!overlayOpen);
+  try { splitView.webContents.loadURL(startUrl || homepage); } catch {}
+  layout();
+  sendState();
+}
+function closeSplit() {
+  if (!splitView) return;
+  try { win.contentView.removeChildView(splitView); } catch {}
+  try { splitView.webContents.close(); } catch {}
+  splitView = null; splitMode = null;
+  layout(); sendState();
+}
+
 // ---------- persistance ----------
 function load() {
   try {
@@ -373,7 +421,15 @@ function layout() {
   }
   chrome.setVisible(true);
   chrome.setBounds({ x: 0, y: 0, width, height });
-  if (contentView) contentView.setBounds(mainBounds());
+  const b = mainBounds();
+  if (splitView) {
+    const leftW = Math.max(140, Math.round((b.width - SPLIT_GAP) * splitRatio));
+    const rightW = Math.max(140, b.width - SPLIT_GAP - leftW);
+    if (contentView) contentView.setBounds({ x: b.x, y: b.y, width: leftW, height: b.height });
+    splitView.setBounds({ x: b.x + leftW + SPLIT_GAP, y: b.y, width: rightW, height: b.height });
+  } else if (contentView) {
+    contentView.setBounds(b);
+  }
 }
 function attach(view) {
   if (contentView === view) return;
@@ -381,9 +437,11 @@ function attach(view) {
   contentView = view;
   if (view) {
     win.contentView.addChildView(view);
-    view.setBounds(mainBounds());
     view.setVisible(!overlayOpen);
+    // garde le volet droit au-dessus dans l'ordre d'empilement
+    if (splitView) { try { win.contentView.removeChildView(splitView); win.contentView.addChildView(splitView); } catch {} }
   }
+  layout();
 }
 
 // ---------- état → UI ----------
@@ -409,6 +467,14 @@ function sendState() {
         title: wc.getTitle(), loading: wc.isLoading(),
         canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(),
       } : { url: '', title: '', loading: false, canGoBack: false, canGoForward: false },
+      split: splitView ? { active: true, mode: splitMode } : { active: false },
+      splitRatio,
+      splitNav: (splitView && !splitView.webContents.isDestroyed()) ? {
+        url: splitView.webContents.getURL(), title: splitView.webContents.getTitle(),
+        loading: splitView.webContents.isLoading(),
+        canGoBack: splitView.webContents.navigationHistory.canGoBack(),
+        canGoForward: splitView.webContents.navigationHistory.canGoForward(),
+      } : null,
     });
     persist();
   });
@@ -1352,10 +1418,22 @@ function registerIpc() {
   ipcMain.on('overlay', (_e, open) => {
     overlayOpen = !!open;
     if (contentView) contentView.setVisible(!overlayOpen);
+    if (splitView) splitView.setVisible(!overlayOpen);
     if (overlayOpen) chrome.webContents.focus();
     else { const wc = currentWC(); if (wc) wc.focus(); }
     sendState();
   });
+  // ---------- vue divisée ----------
+  ipcMain.on('split-open', (_e, mode) => openSplit(mode));
+  ipcMain.on('split-close', () => closeSplit());
+  const withSplit = (fn) => () => { if (splitView && !splitView.webContents.isDestroyed()) fn(splitView.webContents); };
+  ipcMain.on('split-back', withSplit((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
+  ipcMain.on('split-forward', withSplit((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));
+  ipcMain.on('split-reload', withSplit((wc) => (wc.isLoading() ? wc.stop() : wc.reload())));
+  ipcMain.on('split-navigate', (_e, input) => { const u = toUrl(input); if (u && splitView && !splitView.webContents.isDestroyed()) splitView.webContents.loadURL(u); });
+  ipcMain.on('split-resize-start', () => { if (contentView) contentView.setVisible(false); if (splitView) splitView.setVisible(false); });
+  ipcMain.on('split-resize', (_e, r) => { splitRatio = Math.min(0.8, Math.max(0.2, +r || 0.5)); layout(); });
+  ipcMain.on('split-resize-end', () => { const vis = !overlayOpen; if (contentView) contentView.setVisible(vis); if (splitView) splitView.setVisible(vis); layout(); sendState(); });
 
   ipcMain.handle('search', (_e, q) => {
     const s = (q || '').trim().toLowerCase();

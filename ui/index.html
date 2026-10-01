@@ -39,6 +39,7 @@
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4 20l4.5-1 9-9-4-4-9 9z"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 1 1-1v-3"/></symbol>
+  <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M12 4.5v15"/></symbol>
   <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 12v4M10 14h4"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
   <symbol id="i-nax" viewBox="0 0 512 512">
@@ -119,10 +120,25 @@
         <button id="fav-star" class="omni-btn" title="Ajouter aux favoris (Ctrl+D)"><svg><use href="#i-star"/></svg></button>
         <kbd id="omni-hint" title="Rechercher">Ctrl K</kbd>
       </div>
+      <button id="split-btn" class="nav-btn" title="Diviser la vue"><svg><use href="#i-split"/></svg></button>
       <button id="home" class="nav-btn" title="Accueil (Google)"><svg><use href="#i-home"/></svg></button>
       <div id="progress"></div>
     </div>
+    <div id="split-tb-right" class="split-tb hidden">
+      <div class="nav-group">
+        <button id="sp-back" class="nav-btn" title="Précédent"><svg><use href="#i-back"/></svg></button>
+        <button id="sp-forward" class="nav-btn" title="Suivant"><svg><use href="#i-forward"/></svg></button>
+        <button id="sp-reload" class="nav-btn" title="Recharger"><svg><use href="#i-reload"/></svg></button>
+      </div>
+      <div id="sp-omni">
+        <span class="sp-ico"><svg><use href="#i-globe"/></svg></span>
+        <input id="sp-url" type="text" spellcheck="false" autocomplete="off" placeholder="Adresse du volet">
+        <span id="sp-badge" class="sp-badge"></span>
+      </div>
+      <button id="sp-close" class="nav-btn" title="Fermer la vue divisée"><svg><use href="#i-close"/></svg></button>
+    </div>
     <div id="content">
+      <div id="split-divider" class="hidden"></div>
       <div class="mesh"></div>
       <!-- Palette de recherche (Ctrl+K) -->
       <div id="palette" class="overlay hidden">

@@ -58,7 +58,7 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
-  renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail();
+  renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit();
   setText($('archive-count'), state.archiveCount ? String(state.archiveCount) : '');
   const devPane = document.querySelector('.settings-pane[data-pane="dev"]');
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
@@ -623,6 +623,80 @@ $('resizer').addEventListener('mousedown', (e) => {
     resizing = false; document.body.classList.remove('resizing');
     api.sidebarResize(w); api.sidebarResizeEnd();
   };
+  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+});
+
+// ---------- vue divisée (deux volets) ----------
+function renderSplit() {
+  const active = !!(state.split && state.split.active);
+  document.body.classList.toggle('split', active);
+  const tbR = $('split-tb-right'), div = $('split-divider'), nav = $('navbar');
+  if (!active) { tbR.classList.add('hidden'); div.classList.add('hidden'); nav.style.width = ''; return; }
+  const contentW = $('content').clientWidth || 1;
+  const leftW = Math.max(160, Math.round((contentW - 6) * (state.splitRatio || 0.5)));
+  nav.style.width = leftW + 'px';
+  tbR.classList.remove('hidden'); tbR.style.left = (leftW + 6) + 'px';
+  const hideOverlay = !!openOverlay;
+  div.classList.toggle('hidden', hideOverlay); div.style.left = leftW + 'px';
+  // mise à jour de la barre du volet droit
+  const n = state.splitNav || {};
+  $('sp-back').disabled = !n.canGoBack; $('sp-forward').disabled = !n.canGoForward;
+  $('sp-reload').querySelector('use').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
+  const spUrl = $('sp-url');
+  if (document.activeElement !== spUrl) spUrl.value = n.url || '';
+  const badge = $('sp-badge');
+  const priv = state.split.mode === 'private';
+  setText(badge, priv ? 'Privé' : 'Partagé');
+  badge.classList.toggle('private', priv);
+}
+$('sp-back').onclick = () => api.splitBack();
+$('sp-forward').onclick = () => api.splitForward();
+$('sp-reload').onclick = () => api.splitReload();
+$('sp-close').onclick = () => api.splitClose();
+$('sp-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { api.splitNavigate(e.target.value); e.target.blur(); } });
+
+// Bouton « Diviser la vue » : bascule ou propose le mode de session.
+let splitMenuEl = null;
+function closeSplitMenu() { if (splitMenuEl) { splitMenuEl.remove(); splitMenuEl = null; document.removeEventListener('mousedown', onSplitOutside, true); } }
+function onSplitOutside(e) { if (splitMenuEl && !splitMenuEl.contains(e.target) && e.target !== $('split-btn')) closeSplitMenu(); }
+function showSplitMenu(btn) {
+  closeSplitMenu();
+  const m = el('div', 'split-menu'); splitMenuEl = m;
+  const opt = (label, desc, mode) => {
+    const o = el('button', 'split-opt');
+    o.appendChild(el('div', 'split-opt-t', label));
+    o.appendChild(el('div', 'split-opt-d', desc));
+    o.onclick = () => { closeSplitMenu(); api.splitOpen(mode); };
+    return o;
+  };
+  m.appendChild(opt('Cookies partagés', 'Même session qu’à gauche.', 'shared'));
+  m.appendChild(opt('Navigation privée', 'Session isolée, non conservée.', 'private'));
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect();
+  m.style.top = (r.bottom + 6) + 'px';
+  m.style.right = (window.innerWidth - r.right) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', onSplitOutside, true), 0);
+}
+$('split-btn').onclick = (e) => {
+  if (state && state.split && state.split.active) { api.splitClose(); return; }
+  e.stopPropagation(); showSplitMenu(e.currentTarget);
+};
+
+// Séparateur déplaçable entre les deux volets.
+$('split-divider').addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  document.body.classList.add('resizing');
+  api.splitResizeStart();
+  const cont = $('content');
+  const move = (ev) => {
+    const r = cont.getBoundingClientRect();
+    const ratio = Math.min(0.8, Math.max(0.2, (ev.clientX - r.left - 3) / Math.max(1, r.width - 6)));
+    $('navbar').style.width = Math.round((r.width - 6) * ratio) + 'px';
+    $('split-tb-right').style.left = (Math.round((r.width - 6) * ratio) + 6) + 'px';
+    $('split-divider').style.left = Math.round((r.width - 6) * ratio) + 'px';
+    api.splitResize(ratio);
+  };
+  const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); document.body.classList.remove('resizing'); api.splitResizeEnd(); };
   window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
 });
 
