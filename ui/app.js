@@ -1638,7 +1638,6 @@ async function renderPermissionsPane() {
 
 document.querySelectorAll('.settings-navitem').forEach((b) => { b.onclick = () => selectSettingsPane(b.dataset.pane); });
 $('settings-btn').onclick = () => openSettings();
-$('settings-row').onclick = () => openSettings();
 $('settings-close').onclick = closeOverlay;
 // Thème : renvoie le choix au process principal, qui pilote nativeTheme (donc le CSS bascule).
 document.querySelectorAll('#theme-seg .seg').forEach((b) => { b.onclick = () => api.setTheme(b.dataset.theme); });
