@@ -85,6 +85,7 @@ function render() {
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
   const favPane = document.querySelector('.settings-pane[data-pane="favorites"]');
   if (openOverlay === 'settings' && favPane && !favPane.classList.contains('hidden') && !(dnd && dnd.kind === 'favmgr') && renamingFav === null) renderFavPane();
+  if (openOverlay === 'addapp') renderAppCatalog(); // coches « déjà dans le rail » tenues à jour
 }
 
 function renderDevRail() {
@@ -1121,8 +1122,71 @@ $('history-clear').onclick = async () => { await api.clearBrowsingData({ history
 $('history-close').onclick = closeOverlay;
 
 // Ajout d'appli
-$('app-add').onclick = () => { showOverlay('addapp'); $('addapp-input').value = ''; $('addapp-input').focus(); };
-$('addapp-cancel').onclick = closeOverlay;
+// Catalogue d'applis suggérées pour le rail. Icônes : favicons Google (même secours que le rail).
+const APP_CATALOG = [
+  { cat: 'Communication', apps: [
+    { name: 'Gmail', url: 'https://mail.google.com' },
+    { name: 'Outlook', url: 'https://outlook.live.com/mail' },
+    { name: 'WhatsApp', url: 'https://web.whatsapp.com' },
+    { name: 'Telegram', url: 'https://web.telegram.org' },
+    { name: 'Messenger', url: 'https://www.messenger.com' },
+    { name: 'Slack', url: 'https://app.slack.com/client' },
+    { name: 'Discord', url: 'https://discord.com/app' },
+    { name: 'Teams', url: 'https://teams.microsoft.com' },
+  ] },
+  { cat: 'Travail', apps: [
+    { name: 'Agenda', url: 'https://calendar.google.com' },
+    { name: 'Drive', url: 'https://drive.google.com' },
+    { name: 'Docs', url: 'https://docs.google.com' },
+    { name: 'Notion', url: 'https://www.notion.so' },
+    { name: 'GitHub', url: 'https://github.com' },
+    { name: 'Figma', url: 'https://www.figma.com' },
+    { name: 'Trello', url: 'https://trello.com' },
+    { name: 'Linear', url: 'https://linear.app' },
+  ] },
+  { cat: 'IA', apps: [
+    { name: 'Claude', url: 'https://claude.ai' },
+    { name: 'ChatGPT', url: 'https://chatgpt.com' },
+    { name: 'Gemini', url: 'https://gemini.google.com' },
+    { name: 'Perplexity', url: 'https://www.perplexity.ai' },
+  ] },
+  { cat: 'Médias & réseaux', apps: [
+    { name: 'YouTube', url: 'https://www.youtube.com' },
+    { name: 'Spotify', url: 'https://open.spotify.com' },
+    { name: 'X', url: 'https://x.com' },
+    { name: 'LinkedIn', url: 'https://www.linkedin.com' },
+    { name: 'Instagram', url: 'https://www.instagram.com' },
+    { name: 'Reddit', url: 'https://www.reddit.com' },
+    { name: 'Twitch', url: 'https://www.twitch.tv' },
+    { name: 'Netflix', url: 'https://www.netflix.com' },
+  ] },
+];
+function renderAppCatalog() {
+  const box = $('addapp-grid');
+  box.textContent = '';
+  const have = new Set(((state && state.apps) || []).map((a) => hostOf(a.url)));
+  for (const sec of APP_CATALOG) {
+    box.appendChild(el('div', 'aa-cat', sec.cat));
+    const grid = el('div', 'aa-grid');
+    for (const a of sec.apps) {
+      const added = have.has(hostOf(a.url));
+      const tile = el('button', 'aa-tile' + (added ? ' added' : ''));
+      const img = el('img'); img.alt = '';
+      img.src = 'https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64';
+      img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
+      tile.appendChild(img);
+      tile.appendChild(el('span', 'aa-name', a.name));
+      const chk = el('span', 'aa-check'); chk.appendChild(icon('i-check')); tile.appendChild(chk);
+      tile.title = added ? 'Déjà dans le rail' : 'Ajouter ' + a.name + ' au rail';
+      tile.disabled = added;
+      tile.onclick = () => { api.appAddPreset({ name: a.name, url: a.url }); toast(a.name + ' ajoutée au rail'); };
+      grid.appendChild(tile);
+    }
+    box.appendChild(grid);
+  }
+}
+$('app-add').onclick = () => { showOverlay('addapp'); renderAppCatalog(); $('addapp-input').value = ''; };
+$('addapp-close').onclick = closeOverlay;
 const addApp = () => { const v = $('addapp-input').value.trim(); if (v) api.appAdd(v); closeOverlay(); };
 $('addapp-ok').onclick = addApp;
 $('addapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addApp(); });

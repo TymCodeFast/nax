@@ -363,13 +363,18 @@
           <div class="actions"><button id="pw-guide-cancel">Plus tard</button><button id="pw-guide-pick" class="primary"><svg><use href="#i-download"/></svg> Choisir le fichier CSV</button></div>
         </div>
       </div>
-      <!-- Ajout d'appli -->
+      <!-- Ajout d'appli : catalogue de suggestions + adresse personnalisée -->
       <div id="addapp" class="overlay hidden">
-        <div class="panel small glow">
-          <h2>Ajouter une appli au rail</h2>
-          <p class="muted">Un site que tu gardes toujours ouvert. Il aura son bouton, jamais d'onglet.</p>
-          <input id="addapp-input" type="text" placeholder="ex. slack.com, jira.exemple.fr" spellcheck="false">
-          <div class="actions"><button id="addapp-cancel">Annuler</button><button id="addapp-ok" class="primary">Ajouter</button></div>
+        <div class="panel glow addapp-panel">
+          <div class="panel-head">
+            <div><h2>Ajouter une appli au rail</h2><span class="muted">Un site que tu gardes toujours ouvert. Il aura son bouton, jamais d'onglet.</span></div>
+            <button id="addapp-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+          </div>
+          <div id="addapp-grid"></div>
+          <div class="addapp-custom">
+            <input id="addapp-input" type="text" placeholder="ou une adresse personnalisée — ex. jira.exemple.fr" spellcheck="false">
+            <button id="addapp-ok" class="primary">Ajouter</button>
+          </div>
         </div>
       </div>
       <!-- Export Markdown -->

@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('api', {
   favMove: send('fav-move'), favContext: send('fav-context'),
   onRenameFav: on('rename-fav'),
   appActivate: send('app-activate'), appContext: send('app-context'), appAdd: send('app-add'),
+  appAddPreset: (o) => ipcRenderer.send('app-add-preset', o),
   appPeek: (id, clientY) => ipcRenderer.send('app-peek', { id, clientY }), appPeekHideSoon: send('app-peek-hide-soon'),
   sidebarToggle: send('sidebar-toggle'), overlay: send('overlay'),
   splitOpen: send('split-open'), splitClose: send('split-close'), splitMenu: send('split-menu'),

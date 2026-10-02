@@ -1735,6 +1735,15 @@ function registerIpc() {
     apps.push({ id: 'app' + nextId++, name, url });
     sendState();
   });
+  // ajout depuis le catalogue de suggestions (nom connu, URL vérifiée, pas de doublon par hôte)
+  ipcMain.on('app-add-preset', (_e, o) => {
+    if (!o || typeof o.url !== 'string') return;
+    let u; try { u = new URL(o.url); } catch { return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    if (apps.some((a) => hostOf(a.url) === u.host)) return;
+    apps.push({ id: 'app' + nextId++, name: String(o.name || u.host).slice(0, 24), url: u.href });
+    sendState();
+  });
 
   ipcMain.on('sidebar-toggle', () => { sidebarOpen = !sidebarOpen; layout(); sendState(); });
   // Redimensionnement de la liste : pendant le glisser on masque la page (vue native) pour garder la souris dans l'interface.
