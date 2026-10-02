@@ -537,7 +537,7 @@ function sendState() {
         const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît
         const n = r.node;
         return n.type === 'folder'
-          ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || 'Dossier', icon: n.icon || null, color: n.color || null, count: (n.children || []).filter((c) => c.type === 'link').length }
+          ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || 'Dossier', icon: n.icon || null, color: n.color || null, count: (n.children || []).length }
           : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
       }).filter(Boolean),
       claudeOpen, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
@@ -1229,7 +1229,7 @@ let flyWin = null, flyHideTimer = null;
 function ensureFlyWin() {
   if (flyWin && !flyWin.isDestroyed()) return flyWin;
   flyWin = new BrowserWindow({
-    width: 300, height: 220, show: false, frame: false, resizable: false, minimizable: false,
+    width: 324, height: 220, show: false, frame: false, resizable: false, minimizable: false,
     maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
     webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
   });
@@ -1239,19 +1239,38 @@ function ensureFlyWin() {
 }
 function hideFly() { clearTimeout(flyHideTimer); if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) flyWin.hide(); }
 function hideFlySoon() { clearTimeout(flyHideTimer); flyHideTimer = setTimeout(hideFly, 260); }
+let flyClientY = 0;
+// Place la fenêtre du flyout à côté du rail, en-tête aligné sur l'icône survolée ; H = hauteur voulue (ombre comprise).
+function flyPlace(H) {
+  if (!win || !flyWin || flyWin.isDestroyed()) return;
+  const b = win.getContentBounds();
+  H = Math.max(110, Math.min(Math.round(H), b.height - 24));
+  const y = Math.max(b.y + 8, Math.min(b.y + (flyClientY || 0) - 18, b.y + b.height - H - 8));
+  flyWin.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 324, height: H });
+}
 function showFly(payload, clientY) {
   if (!win) return;
   clearTimeout(flyHideTimer);
   let w;
   try { w = ensureFlyWin(); } catch { return; }
-  // marges d'ombre (24) + en-tête (46+1) + bordure/espacements (12) + lignes à deux niveaux (44 chacune)
-  const H = Math.min(24 + 47 + 12 + payload.items.length * 44, win.getContentBounds().height - 24);
-  const b = win.getContentBounds();
-  const y = Math.max(b.y + 8, Math.min(b.y + (clientY || 0) - 18, b.y + b.height - H - 8)); // en-tête aligné sur l'icône survolée
-  w.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 300, height: Math.round(H) });
+  flyClientY = clientY || 0;
+  // estimation initiale (ombre 24 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
+  const est = payload.items.reduce((n, it) => n + (it.type === 'folder' ? 38 : 44), 0) || 44;
+  flyPlace(24 + 47 + 12 + est);
   const send = () => { try { w.webContents.send('fly-load', payload); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
   w.showInactive();
+}
+// Contenu d'un dossier de favoris, sous-dossiers compris (profondeur 4, 200 éléments max)
+function favTreeItems(children, depth, budget) {
+  const out = [];
+  for (const c of (children || [])) {
+    if (budget.n <= 0) break;
+    budget.n--;
+    if (c.type === 'folder') out.push({ id: c.id, type: 'folder', name: c.title || 'Dossier', color: c.color || null, count: (c.children || []).length, children: depth < 4 ? favTreeItems(c.children, depth + 1, budget) : [] });
+    else out.push({ id: c.id, type: 'link', name: c.title || hostOf(c.url), url: c.url, favicon: c.favicon || null });
+  }
+  return out;
 }
 // Survol d'un élément du rail : Gmail garde son widget, une appli à raccourcis ou un dossier épinglé a son flyout.
 function railHover(id, kind, clientY) {
@@ -1264,9 +1283,7 @@ function railHover(id, kind, clientY) {
   } else if (kind === 'pin') {
     const p = railPins.find((x) => x.id === id); if (!p) return;
     const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
-    const links = (r.node.children || []).filter((c) => c.type === 'link').slice(0, 14);
-    if (!links.length) return;
-    showFly({ kind: 'folder', id, title: r.node.title || 'Favoris', items: links.map((l) => ({ id: l.id, name: l.title || hostOf(l.url), url: l.url, favicon: l.favicon || null })) }, clientY);
+    showFly({ kind: 'folder', id, favId: p.favId, title: r.node.title || 'Favoris', items: favTreeItems(r.node.children, 1, { n: 200 }) }, clientY);
   }
 }
 
@@ -1795,10 +1812,20 @@ function registerIpc() {
       const v = ensureAppView(a);
       try { v.webContents.loadURL(s.url); } catch { return; }
       current = { kind: 'app', id: a.id }; attach(v); v.webContents.focus(); win.setTitle(a.name); sendState();
-    } else if (o.kind === 'folder') { // lien d'un dossier épinglé
-      const r = favFind(o.itemId); if (r && r.node.type === 'link') navigateCurrent(r.node.url);
+    } else if (o.kind === 'folder') { // lien d'un dossier épinglé (Ctrl+clic ou clic molette : nouvel onglet)
+      const r = favFind(o.itemId);
+      if (r && r.node.type === 'link') { if (o.newTab) newTab({ url: r.node.url }); else navigateCurrent(r.node.url); }
     }
   });
+  // retire un raccourci d'appli directement depuis le flyout ; la liste se rafraîchit (ou se ferme si elle est vide)
+  ipcMain.on('fly-remove-item', (_e, o) => {
+    const a = apps.find((x) => x.id === (o && o.id)); if (!a || !Array.isArray(a.shortcuts)) return;
+    a.shortcuts = a.shortcuts.filter((x) => x.id !== o.itemId);
+    sendState();
+    if (a.shortcuts.length) railHover(a.id, 'app', flyClientY); else hideFly();
+  });
+  ipcMain.on('fly-open-all', (_e, favId) => { hideFly(); if (favFind(favId)) openAllInFolder(favId); });
+  ipcMain.on('fly-resize', (_e, h) => { if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible() && +h > 0) flyPlace(+h); });
   ipcMain.on('fly-edit', (_e, appId) => { hideFly(); if (apps.some((x) => x.id === appId) && chrome) chrome.webContents.send('edit-app-shortcuts', appId); });
   ipcMain.on('app-shortcuts-set', (_e, o) => {
     const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;

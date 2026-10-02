@@ -190,8 +190,8 @@ function renderApps() {
       img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
       b.appendChild(img);
       b.appendChild(el('span', 'badge'));
-      b.onclick = () => { closeOverlay(); api.appActivate(a.id); };
-      b.oncontextmenu = (e) => { e.preventDefault(); api.appContext(a.id); };
+      b.onclick = () => { clearTimeout(peekTimer); closeOverlay(); api.appActivate(a.id); };
+      b.oncontextmenu = (e) => { e.preventDefault(); clearTimeout(peekTimer); api.appContext(a.id); };
       // aperçu au survol (petit panneau flottant)
       let peekTimer = null;
       b.onmouseenter = () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => api.railHover({ id: b.dataset.appId, kind: 'app', clientY: Math.round(b.getBoundingClientRect().top) }), 320); };
@@ -218,13 +218,13 @@ function renderRailPins() {
       let hoverTimer = null;
       b.onmouseenter = () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => api.railHover({ id: b.dataset.pinId, kind: 'pin', clientY: Math.round(b.getBoundingClientRect().top) }), 320); };
       b.onmouseleave = () => { clearTimeout(hoverTimer); api.railHoverEnd(); };
-      b.onclick = () => { closeOverlay(); api.pinActivate({ id: b.dataset.pinId, clientY: Math.round(b.getBoundingClientRect().top) }); };
-      b.oncontextmenu = (e) => { e.preventDefault(); api.pinContext(b.dataset.pinId); };
+      b.onclick = () => { clearTimeout(hoverTimer); closeOverlay(); api.pinActivate({ id: b.dataset.pinId, clientY: Math.round(b.getBoundingClientRect().top) }); };
+      b.oncontextmenu = (e) => { e.preventDefault(); clearTimeout(hoverTimer); api.pinContext(b.dataset.pinId); };
       return b;
     },
     (b, p) => {
       b.dataset.pinId = p.id;
-      b.title = p.kind === 'favfolder' ? p.title + ' — ' + p.count + ' lien' + (p.count > 1 ? 's' : '') : p.title;
+      b.title = p.kind === 'favfolder' ? p.title + ' — ' + p.count + ' élément' + (p.count > 1 ? 's' : '') : p.title;
       const sig = [p.kind, p.icon, p.color, p.favicon, p.url, p.title].join('|');
       if (b.dataset.sig === sig) return; // rien n'a changé : on garde l'icône déjà chargée (pas de clignotement)
       b.dataset.sig = sig;
@@ -1201,6 +1201,7 @@ const appIconUrl = (a) => a.icon || a.favicon || ('https://www.google.com/s2/fav
 let reSel = null;      // sélection : { kind: 'app' | 'pin', id } ; null = volet « Ajouter »
 let reFilter = '';
 let reDrag = null;     // glisser en cours : { kind, id }
+const reFavOpen = new Set(); // dossiers de favoris dépliés dans le volet « Ajouter »
 let reKnown = null;    // ids déjà affichés (une ligne nouvelle clignote une fois)
 let reTimers = {};
 
@@ -1234,7 +1235,7 @@ function reRow(kind, it, list) {
   row.appendChild(el('span', 're-name', kind === 'app' ? it.name : it.title));
   const nsc = kind === 'app' ? (it.shortcuts || []).length : 0;
   if (nsc) { const m = el('span', 're-meta has'); m.title = nsc + ' raccourci' + (nsc > 1 ? 's' : '') + ' au survol'; m.appendChild(icon('i-spark')); m.appendChild(document.createTextNode(String(nsc))); row.appendChild(m); }
-  else if (kind === 'pin' && it.kind === 'favfolder') row.appendChild(el('span', 're-meta', it.count + ' lien' + (it.count > 1 ? 's' : '')));
+  else if (kind === 'pin' && it.kind === 'favfolder') row.appendChild(el('span', 're-meta', it.count + ' élément' + (it.count > 1 ? 's' : '')));
   const x = el('button', 're-x'); x.title = 'Retirer du rail'; x.appendChild(icon('i-trash'));
   x.onclick = (e) => {
     e.stopPropagation();
@@ -1334,8 +1335,8 @@ function renderReDetail() {
   } else {
     $('re-pin-ico').replaceChildren(it.kind === 'favfolder' ? reFolderEl(it) : reIconEl(it.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(it.url) + '&sz=64', it.title));
     $('re-pin-name').textContent = it.title;
-    $('re-pin-sub').textContent = it.kind === 'favfolder' ? 'Dossier de favoris · ' + it.count + ' lien' + (it.count > 1 ? 's' : '') : hostOf(it.url);
-    $('re-pin-tip').textContent = it.kind === 'favfolder' ? 'Survole-le dans le rail pour ouvrir un de ses liens.' : 'Un clic dans le rail ouvre ce lien.';
+    $('re-pin-sub').textContent = it.kind === 'favfolder' ? 'Dossier de favoris · ' + it.count + ' élément' + (it.count > 1 ? 's' : '') : hostOf(it.url);
+    $('re-pin-tip').textContent = it.kind === 'favfolder' ? 'Survole-le dans le rail : ses sous-dossiers se déplient sur place, et le bouton → ouvre tous les liens d’un dossier.' : 'Un clic dans le rail ouvre ce lien.';
   }
 }
 // Catalogue : clic = ajouter ; re-clic sur une puce cochée = la retirer. Favoris : épingler / désépingler.
@@ -1365,23 +1366,52 @@ function renderReCatalog() {
     }
     box.appendChild(row);
   }
+  // favoris : arbre dépliable, tous niveaux — on épingle un lien, un dossier ou un sous-dossier
   const pinned = new Set(((state && state.railPins) || []).map((p) => p.favId));
-  const favs = ((state && state.favorites) || []).filter((n) => !f || (n.title || '').toLowerCase().includes(f)).slice(0, 40);
-  if (favs.length) {
+  const favRoot = (state && state.favorites) || [];
+  const matches = (n) => (n.title || '').toLowerCase().includes(f) || (n.type === 'link' && (n.url || '').toLowerCase().includes(f));
+  const subMatch = (n) => matches(n) || (n.children || []).some(subMatch);
+  if (favRoot.some((n) => !f || subMatch(n))) {
     box.appendChild(el('div', 'aa-cat', 'Tes favoris'));
-    const row = el('div', 'aa-chips');
-    for (const n of favs) {
-      const on = pinned.has(n.id);
-      const title = n.title || (n.url ? hostOf(n.url) : 'Sans titre');
-      const chip = el('button', 'aa-chip' + (on ? ' added' : ''));
-      chip.appendChild(n.type === 'folder' ? reFolderEl(n) : reIconEl(n.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(n.url) + '&sz=64', title));
-      chip.appendChild(el('span', 'aa-name', title));
-      chip.appendChild(chipState());
-      chip.title = on ? 'Retirer ' + title + ' du rail' : 'Épingler ' + title + ' au rail';
-      chip.onclick = () => { api.railPinToggle(n.id); toast(title + (on ? ' retiré du rail' : ' épinglé au rail')); };
-      row.appendChild(chip);
-    }
-    box.appendChild(row);
+    const tree = el('div', 'rf-tree');
+    let budget = 300;
+    const togglePin = (n, title, on) => { api.railPinToggle(n.id); toast(title + (on ? ' retiré du rail' : ' épinglé au rail')); };
+    const walk = (nodes, depth) => {
+      for (const n of nodes) {
+        if (budget-- <= 0) return;
+        if (f && !subMatch(n)) continue;
+        const isFolder = n.type === 'folder';
+        const isOpen = isFolder && (f ? true : reFavOpen.has(n.id)); // une recherche déplie tout ce qui correspond
+        const on = pinned.has(n.id);
+        const title = n.title || (n.url ? hostOf(n.url) : 'Sans titre');
+        const row = el('div', 'rf-row' + (on ? ' added' : '') + (isFolder ? ' folder' : ''));
+        row.style.paddingLeft = (6 + depth * 20) + 'px';
+        const chev = el('span', 'rf-chev' + (isOpen ? ' open' : '') + (isFolder ? '' : ' none'));
+        if (isFolder) chev.appendChild(icon('i-forward'));
+        row.appendChild(chev);
+        const ico = el('span', 're-ico');
+        ico.appendChild(isFolder ? reFolderEl(n) : reIconEl(n.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(n.url) + '&sz=64', title));
+        row.appendChild(ico);
+        row.appendChild(el('span', 'rf-name', title));
+        if (isFolder) row.appendChild(el('span', 'rf-count', String((n.children || []).length)));
+        const pin = el('button', 'rf-pin');
+        pin.title = on ? 'Retirer du rail' : 'Épingler au rail';
+        const st = el('span', 'aa-state');
+        st.appendChild(icon('i-plus', 'plus')); st.appendChild(icon('i-check', 'check')); st.appendChild(icon('i-close', 'uncheck'));
+        pin.appendChild(st);
+        pin.onclick = (e) => { e.stopPropagation(); togglePin(n, title, on); };
+        row.appendChild(pin);
+        // dossier : clic = plier / déplier ; lien : clic = épingler / désépingler
+        row.onclick = () => {
+          if (isFolder) { if (reFavOpen.has(n.id)) reFavOpen.delete(n.id); else reFavOpen.add(n.id); renderReCatalog(); }
+          else togglePin(n, title, on);
+        };
+        tree.appendChild(row);
+        if (isOpen) walk(n.children || [], depth + 1);
+      }
+    };
+    walk(favRoot, 0);
+    box.appendChild(tree);
   }
   if (!box.children.length) box.appendChild(el('div', 're-hint', 'Aucune suggestion ne correspond à « ' + reFilter + ' ».'));
   box.scrollTop = top;

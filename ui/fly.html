@@ -33,7 +33,7 @@
   #hedit svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
   /* lignes : icône, nom, hôte en dessous */
-  #items { overflow-y: auto; padding: 5px; }
+  #items { min-height: 0; overflow-y: auto; padding: 5px; }
   ::-webkit-scrollbar { width: 7px; } ::-webkit-scrollbar-thumb { background: rgba(128,128,128,.3); border-radius: 7px; }
   .it { display: flex; align-items: center; gap: 11px; padding: 7px 10px 7px 9px; border-radius: 10px; cursor: pointer; transition: background .12s; }
   .it:hover { background: var(--hover); }
@@ -45,6 +45,29 @@
   .it .host { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .it .go { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--dim); opacity: 0; transform: translateX(-3px); transition: opacity .15s, transform .15s; }
   .it:hover .go { opacity: 1; transform: none; }
+  /* croix « retirer ce raccourci » (raccourcis d'appli) : remplace le chevron au survol de la ligne */
+  .it .rm { flex: none; display: none; width: 24px; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; place-items: center; }
+  .it .rm svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .it .rm:hover { background: rgba(242,109,125,.16); color: #f26d7d; }
+  .it.has-rm:hover .rm { display: grid; }
+  .it.has-rm:hover .go { display: none; }
+
+  /* dossiers : ligne simple, chevron qui pivote, sous-éléments en retrait avec un filet de guidage */
+  .it.folder { padding: 8px 8px 8px 7px; gap: 8px; }
+  .it .chev { flex: none; width: 14px; height: 14px; fill: none; stroke: var(--dim); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .18s; }
+  .fold.open > .it.folder .chev { transform: rotate(90deg); }
+  .it .fico { flex: none; width: 20px; height: 20px; display: grid; place-items: center; color: var(--c1); }
+  .it .fico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .it.folder .nm { font-weight: 600; }
+  .it .cnt { flex: none; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .it .all { flex: none; display: none; width: 24px; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; place-items: center; }
+  .it .all svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .it .all:hover { background: var(--hover); color: var(--c1); }
+  .it.folder:hover .all { display: grid; }
+  .it.folder:hover .cnt { display: none; }
+  .kids { display: none; margin-left: 17px; padding-left: 6px; border-left: 1px solid var(--line); }
+  .fold.open > .kids { display: block; }
+  .empty { padding: 12px 14px; color: var(--dim); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -69,27 +92,71 @@
     return src ? `<img src="${esc(src)}" onerror="this.outerHTML=this.dataset.fb" data-fb="${esc(dot)}">` : dot;
   };
 
-  fly.onLoad((d) => {
+  const FOLDER_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const OPEN_ALL_SVG = '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+  const open = new Set();   // dossiers dépliés (réinitialisé à chaque nouvelle charge)
+  let cur = null;
+
+  // hauteur exacte demandée à la fenêtre : en-tête + contenu + ombre (24)
+  function resize() {
+    const head = document.getElementById('head'), items = document.getElementById('items');
+    fly.resize(head.offsetHeight + items.scrollHeight + 2 + 24);
+  }
+  function rowHtml(it, d) {
+    if (it.type === 'folder') {
+      const tint = it.color ? 'style="color:' + esc(it.color) + '"' : '';
+      return '<div class="fold' + (open.has(it.id) ? ' open' : '') + '" data-id="' + esc(it.id) + '">' +
+        '<div class="it folder" data-id="' + esc(it.id) + '">' +
+          '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' +
+          '<span class="fico" ' + tint + '>' + FOLDER_SVG + '</span>' +
+          '<span class="txt"><span class="nm">' + esc(it.name) + '</span></span>' +
+          '<span class="cnt">' + it.count + '</span>' +
+          '<button class="all" title="Ouvrir tous les liens" data-all="' + esc(it.id) + '">' + OPEN_ALL_SVG + '</button>' +
+        '</div>' +
+        '<div class="kids">' + (it.children.length ? it.children.map((c) => rowHtml(c, d)).join('') : '<div class="empty">Dossier vide</div>') + '</div>' +
+      '</div>';
+    }
+    // une appli : ses raccourcis reprennent son logo ; un dossier : le favicon de chaque lien
+    const src = d.kind === 'app' ? (d.icon || favicon(it.url)) : (it.favicon || favicon(it.url));
+    const rm = d.kind === 'app' ? '<button class="rm" title="Retirer ce raccourci" data-rm="' + esc(it.id) + '"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>' : '';
+    return '<div class="it' + (rm ? ' has-rm' : '') + '" data-id="' + esc(it.id) + '">' +
+      '<span class="ico">' + iconHtml(src, it.name) + '</span>' +
+      '<span class="txt"><span class="nm">' + esc(it.name) + '</span><span class="host">' + esc(hostOf(it.url)) + '</span></span>' +
+      '<svg class="go" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' + rm +
+    '</div>';
+  }
+  function render(d) {
     document.getElementById('htitle').textContent = d.title || '';
     const hico = document.getElementById('hico');
     hico.innerHTML = d.icon
-      ? `<img src="${esc(d.icon)}" width="20" height="20" style="border-radius:5px" onerror="this.remove()">`
-      : '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+      ? '<img src="' + esc(d.icon) + '" width="20" height="20" style="border-radius:5px" onerror="this.remove()">'
+      : FOLDER_SVG;
     const edit = document.getElementById('hedit');
     edit.classList.toggle('on', !!d.edit);
     edit.onclick = () => fly.edit(d.id);
     const box = document.getElementById('items');
-    box.innerHTML = d.items.map((it) => {
-      // une appli : ses raccourcis reprennent son logo (ex. deux espaces Jira) ; un dossier : le favicon de chaque lien
-      const src = d.kind === 'app' ? (d.icon || favicon(it.url)) : (it.favicon || favicon(it.url));
-      return `<div class="it" data-id="${esc(it.id)}">
-        <span class="ico">${iconHtml(src, it.name)}</span>
-        <span class="txt"><span class="nm">${esc(it.name)}</span><span class="host">${esc(hostOf(it.url))}</span></span>
-        <svg class="go" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-      </div>`;
-    }).join('');
-    box.querySelectorAll('.it').forEach((el) => { el.onclick = () => fly.click({ kind: d.kind, id: d.id, itemId: el.dataset.id }); });
-  });
+    box.innerHTML = d.items.length ? d.items.map((it) => rowHtml(it, d)).join('') : '<div class="empty">Ce dossier est vide.</div>';
+    // dossier : un clic le plie / le déplie sur place ; le bouton → ouvre tous ses liens
+    box.querySelectorAll('.it.folder').forEach((el) => {
+      el.onclick = () => {
+        const f = el.parentElement, id = f.dataset.id;
+        if (open.has(id)) open.delete(id); else open.add(id);
+        f.classList.toggle('open', open.has(id));
+        resize();
+      };
+    });
+    box.querySelectorAll('.all').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); fly.openAll(b.dataset.all); }; });
+    box.querySelectorAll('.rm').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); fly.removeItem({ id: d.id, itemId: b.dataset.rm }); }; });
+    // lien : clic = ouvrir ; Ctrl+clic ou clic molette = nouvel onglet (jamais pour les raccourcis d'appli)
+    box.querySelectorAll('.it:not(.folder)').forEach((el) => {
+      const go = (newTab) => fly.click({ kind: d.kind, id: d.id, itemId: el.dataset.id, newTab: !!newTab });
+      el.onclick = (e) => go(e.ctrlKey || e.metaKey);
+      el.onauxclick = (e) => { if (e.button === 1) go(true); };
+    });
+    cur = d;
+    resize();
+  }
+  fly.onLoad((d) => { open.clear(); render(d); });
 
   document.addEventListener('mouseenter', () => fly.hover(true), true);
   document.body.addEventListener('mouseleave', () => fly.hover(false));
