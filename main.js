@@ -1958,7 +1958,16 @@ function initAutoUpdate() {
   setInterval(check, 6 * 60 * 60 * 1000);      // puis toutes les 6 h
 }
 
-app.whenReady().then(createWindow);
+// Une seule instance : deux NaX sur le même profil se réécrivent state.json l'un sur l'autre
+// (pertes d'applis du rail, de tâches Claude…). Un second lancement met la fenêtre existante au premier plan.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  });
+  app.whenReady().then(createWindow);
+}
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   for (const [id, proc] of claudeProcs) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
