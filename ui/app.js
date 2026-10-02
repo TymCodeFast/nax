@@ -85,7 +85,7 @@ function render() {
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
   const favPane = document.querySelector('.settings-pane[data-pane="favorites"]');
   if (openOverlay === 'settings' && favPane && !favPane.classList.contains('hidden') && !(dnd && dnd.kind === 'favmgr') && renamingFav === null) renderFavPane();
-  if (openOverlay === 'addapp' && !aaDragging) renderAppCatalog(); // coches et ordre tenus à jour (pas pendant un glisser)
+  if (openOverlay === 'addapp' && !reDrag) renderRailEditor(false); // liste, coches et fiche tenues à jour (pas pendant un glisser)
 }
 
 function renderDevRail() {
@@ -225,6 +225,9 @@ function renderRailPins() {
     (b, p) => {
       b.dataset.pinId = p.id;
       b.title = p.kind === 'favfolder' ? p.title + ' — ' + p.count + ' lien' + (p.count > 1 ? 's' : '') : p.title;
+      const sig = [p.kind, p.icon, p.color, p.favicon, p.url, p.title].join('|');
+      if (b.dataset.sig === sig) return; // rien n'a changé : on garde l'icône déjà chargée (pas de clignotement)
+      b.dataset.sig = sig;
       b.innerHTML = '';
       if (p.kind === 'favfolder') {
         const sp = el('span', 'pin-folder');
@@ -1151,11 +1154,11 @@ $('history-search').addEventListener('keydown', (e) => { if (e.key === 'Escape' 
 $('history-clear').onclick = async () => { await api.clearBrowsingData({ history: true }); histItems = []; renderHistory(); };
 $('history-close').onclick = closeOverlay;
 
-// Ajout d'appli
-// Catalogue d'applis suggérées pour le rail. Icônes : favicons Google (même secours que le rail).
+// ---------- personnalisation du rail : liste ordonnée (gauche) + fiche / ajout (droite) ----------
+// Catalogue d'applis suggérées. Icône : iconUrl explicite, sinon favicon Google de iconDomain (ou de l'hôte).
 const APP_CATALOG = [
   { cat: 'Communication', apps: [
-    { name: 'Gmail', url: 'https://mail.google.com' },
+    { name: 'Gmail', url: 'https://mail.google.com', iconUrl: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico' },
     { name: 'Outlook', url: 'https://outlook.live.com/mail' },
     { name: 'WhatsApp', url: 'https://web.whatsapp.com' },
     { name: 'Telegram', url: 'https://web.telegram.org' },
@@ -1165,9 +1168,9 @@ const APP_CATALOG = [
     { name: 'Teams', url: 'https://teams.microsoft.com' },
   ] },
   { cat: 'Travail', apps: [
-    { name: 'Agenda', url: 'https://calendar.google.com' },
-    { name: 'Drive', url: 'https://drive.google.com' },
-    { name: 'Docs', url: 'https://docs.google.com' },
+    { name: 'Agenda', url: 'https://calendar.google.com', iconUrl: 'https://calendar.google.com/googlecalendar/images/favicons_2020q4/calendar_31.ico' },
+    { name: 'Drive', url: 'https://drive.google.com', iconUrl: 'https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png' },
+    { name: 'Docs', url: 'https://docs.google.com', iconUrl: 'https://ssl.gstatic.com/docs/documents/images/kix-favicon7.ico' },
     { name: 'Notion', url: 'https://www.notion.so' },
     { name: 'GitHub', url: 'https://github.com' },
     { name: 'Figma', url: 'https://www.figma.com' },
@@ -1192,49 +1195,156 @@ const APP_CATALOG = [
     { name: 'Netflix', url: 'https://www.netflix.com' },
   ] },
 ];
-let aaDragging = false; // glisser en cours dans « Ton rail » : on suspend les re-rendus
-// Section « Ton rail » : les applis actuelles, dans l'ordre — glisser pour réordonner, ✕ pour retirer.
-function renderRailCustomize() {
-  const box = $('addapp-rail');
-  box.textContent = '';
-  const apps = (state && state.apps) || [];
-  if (!apps.length) { box.appendChild(el('span', 'aa-rail-empty', 'Rail vide — ajoute des applis ci-dessous.')); return; }
-  apps.forEach((a, idx) => {
-    const tile = el('div', 'aa-rail-tile');
-    tile.draggable = true;
-    const img = el('img'); img.alt = ''; img.draggable = false;
-    img.src = a.icon || a.favicon || ('https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64');
-    img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
-    tile.appendChild(img);
-    tile.appendChild(el('span', 'aa-name', a.name));
-    const x = el('button', 'aa-rail-x'); x.title = 'Retirer du rail'; x.appendChild(icon('i-close'));
-    x.onclick = (e) => { e.stopPropagation(); api.appRemove(a.id); toast(a.name + ' retirée du rail'); };
-    tile.appendChild(x);
-    tile.ondragstart = (e) => { aaDragging = true; e.dataTransfer.setData('text/nax-app', a.id); e.dataTransfer.effectAllowed = 'move'; tile.classList.add('dragging'); };
-    tile.ondragend = () => { aaDragging = false; tile.classList.remove('dragging'); renderRailCustomize(); };
-    tile.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
-    tile.ondrop = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      const srcId = e.dataTransfer.getData('text/nax-app');
-      if (!srcId || srcId === a.id) return;
-      const r = tile.getBoundingClientRect();
-      const before = (e.clientX - r.left) < r.width / 2; // moitié gauche = avant cette tuile, droite = après
-      api.appMove({ id: srcId, beforeId: before ? a.id : (apps[idx + 1] ? apps[idx + 1].id : null) });
-    };
-    box.appendChild(tile);
-  });
-  // lâcher dans le vide de la rangée = déplacer en fin
-  box.ondragover = (e) => e.preventDefault();
-  box.ondrop = (e) => { const srcId = e.dataTransfer.getData('text/nax-app'); if (srcId) api.appMove({ id: srcId, beforeId: null }); };
+const catIcon = (a) => a.iconUrl || ('https://www.google.com/s2/favicons?domain=' + (a.iconDomain || hostOf(a.url)) + '&sz=64');
+const appIconUrl = (a) => a.icon || a.favicon || ('https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64');
+
+let reSel = null;      // sélection : { kind: 'app' | 'pin', id } ; null = volet « Ajouter »
+let reFilter = '';
+let reDrag = null;     // glisser en cours : { kind, id }
+let reKnown = null;    // ids déjà affichés (une ligne nouvelle clignote une fois)
+let reTimers = {};
+
+// Icône avec repli sur la lettre ; fav-folder = pastille Lucide teintée
+function reIconEl(src, label) {
+  const img = el('img'); img.alt = ''; img.draggable = false;
+  img.onerror = () => { img.replaceWith(el('span', 'letter', (label || '?')[0])); };
+  img.src = src;
+  return img;
 }
-// Catalogue en puces : clic = ajouter ; re-clic sur une puce cochée = la retirer. Filtrable.
-let aaFilter = '';
-function renderAppCatalog() {
-  renderRailCustomize();
-  const box = $('addapp-grid');
+function reFolderEl(p) {
+  const sp = el('span', 'pin-folder small');
+  if (p.color) { sp.style.background = p.color + '26'; sp.style.color = p.color; }
+  sp.appendChild(lucideSvg(p.icon || 'Folder'));
+  return sp;
+}
+function reFind(sel) {
+  if (!sel || !state) return null;
+  return sel.kind === 'app' ? (state.apps || []).find((a) => a.id === sel.id) : (state.railPins || []).find((p) => p.id === sel.id);
+}
+
+// ---- colonne de gauche : l'ordre du rail, ligne par ligne ----
+function reRow(kind, it, list) {
+  const row = el('div', 're-row' + (reSel && reSel.kind === kind && reSel.id === it.id ? ' sel' : ''));
+  row.draggable = true;
+  row.appendChild(el('span', 're-grip')).appendChild(icon('i-grip'));
+  const ico = el('span', 're-ico');
+  if (kind === 'pin' && it.kind === 'favfolder') ico.appendChild(reFolderEl(it));
+  else ico.appendChild(reIconEl(kind === 'app' ? appIconUrl(it) : (it.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(it.url) + '&sz=64'), kind === 'app' ? it.name : it.title));
+  row.appendChild(ico);
+  row.appendChild(el('span', 're-name', kind === 'app' ? it.name : it.title));
+  const nsc = kind === 'app' ? (it.shortcuts || []).length : 0;
+  if (nsc) { const m = el('span', 're-meta has'); m.title = nsc + ' raccourci' + (nsc > 1 ? 's' : '') + ' au survol'; m.appendChild(icon('i-spark')); m.appendChild(document.createTextNode(String(nsc))); row.appendChild(m); }
+  else if (kind === 'pin' && it.kind === 'favfolder') row.appendChild(el('span', 're-meta', it.count + ' lien' + (it.count > 1 ? 's' : '')));
+  const x = el('button', 're-x'); x.title = 'Retirer du rail'; x.appendChild(icon('i-trash'));
+  x.onclick = (e) => {
+    e.stopPropagation();
+    if (kind === 'app') api.appRemove(it.id); else api.railPinToggle(it.favId);
+    toast((kind === 'app' ? it.name : it.title) + ' retiré du rail');
+  };
+  row.appendChild(x);
+  row.onclick = () => { reSel = { kind, id: it.id }; renderRailEditor(true); };
+
+  // réordonnancement vertical : trait d'insertion au-dessus / au-dessous selon la moitié survolée
+  row.ondragstart = (e) => { reDrag = { kind, id: it.id }; e.dataTransfer.setData('text/nax-re', kind + ':' + it.id); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); };
+  row.ondragend = () => { reDrag = null; renderRailEditor(false); };
+  row.ondragover = (e) => {
+    if (!reDrag || reDrag.kind !== kind || reDrag.id === it.id) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    const r = row.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+    row.classList.toggle('drop-before', !after); row.classList.toggle('drop-after', after);
+  };
+  row.ondragleave = () => row.classList.remove('drop-before', 'drop-after');
+  row.ondrop = (e) => {
+    e.preventDefault();
+    row.classList.remove('drop-before', 'drop-after');
+    if (!reDrag || reDrag.kind !== kind || reDrag.id === it.id) return;
+    const r = row.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+    const idx = list.findIndex((x) => x.id === it.id);
+    const beforeId = after ? (list[idx + 1] ? list[idx + 1].id : null) : it.id;
+    if (beforeId === reDrag.id) return; // déjà à cette place
+    (kind === 'app' ? api.appMove : api.pinMove)({ id: reDrag.id, beforeId });
+  };
+  return row;
+}
+function reSec(title, n) { const s = el('div', 're-sec', title); if (n != null) s.appendChild(el('span', 'n', String(n))); return s; }
+function renderReList() {
+  const box = $('re-list'), top = box.scrollTop;
+  const apps = (state && state.apps) || [], pins = (state && state.railPins) || [];
+  const ids = new Set([...apps.map((a) => a.id), ...pins.map((p) => p.id)]);
+  const fresh = reKnown ? [...ids].filter((id) => !reKnown.has(id)) : [];
+  reKnown = ids;
+  box.textContent = '';
+  box.appendChild(reSec('Applis', apps.length));
+  if (!apps.length) box.appendChild(el('div', 're-hint', 'Aucune appli. Ajoute-en avec le bouton ci-dessous.'));
+  for (const a of apps) box.appendChild(reRow('app', a, apps));
+  box.appendChild(reSec('Favoris épinglés', pins.length));
+  if (!pins.length) box.appendChild(el('div', 're-hint', 'Épingle un favori ou un dossier depuis « Ajouter » : il apparaît sous tes applis.'));
+  for (const p of pins) box.appendChild(reRow('pin', p, pins));
+  box.scrollTop = top;
+  // nouvelle ligne : on la montre et elle clignote une fois
+  for (const id of fresh) {
+    const idx = [...apps, ...pins].findIndex((x) => x.id === id);
+    const row = box.querySelectorAll('.re-row')[idx];
+    if (row) { row.classList.add('flash'); row.scrollIntoView({ block: 'nearest' }); }
+  }
+  $('re-add').classList.toggle('on', !reSel);
+}
+
+// ---- colonne de droite : fiche de la sélection, ou ajout ----
+function scRow(name, url) {
+  const row = el('div', 'sc-row');
+  const n = el('input', 'sc-name re-input'); n.placeholder = 'Nom'; n.value = name; n.spellcheck = false;
+  const u = el('input', 'sc-url re-input'); u.placeholder = 'https://…'; u.value = url; u.spellcheck = false;
+  [n, u].forEach((i) => { i.addEventListener('keydown', (e) => e.stopPropagation()); i.addEventListener('input', reSaveShortcuts); });
+  const x = el('button', 'icon-btn'); x.title = 'Supprimer ce raccourci'; x.appendChild(icon('i-trash'));
+  x.onclick = () => { row.remove(); reSaveShortcuts(true); };
+  row.append(n, u, x);
+  return row;
+}
+// Enregistrement automatique (différé) : pas de bouton « Enregistrer »
+function reSaveShortcuts(now) {
+  clearTimeout(reTimers.sc);
+  const go = () => {
+    if (!reSel || reSel.kind !== 'app') return;
+    const rows = [...$('re-sc-list').querySelectorAll('.sc-row')]
+      .map((r) => ({ name: r.querySelector('.sc-name').value.trim(), url: r.querySelector('.sc-url').value.trim() }))
+      .filter((x) => x.url);
+    api.appShortcutsSet({ id: reSel.id, shortcuts: rows });
+  };
+  if (now === true) go(); else reTimers.sc = setTimeout(go, 450);
+}
+function reSaveName() {
+  clearTimeout(reTimers.name);
+  reTimers.name = setTimeout(() => { if (reSel && reSel.kind === 'app') api.appUpdate({ id: reSel.id, name: $('re-name').value }); }, 400);
+}
+function renderReDetail() {
+  const add = !reSel, isApp = !!reSel && reSel.kind === 'app', isPin = !!reSel && reSel.kind === 'pin';
+  $('re-pane-add').classList.toggle('hidden', !add);
+  $('re-pane-app').classList.toggle('hidden', !isApp);
+  $('re-pane-pin').classList.toggle('hidden', !isPin);
+  if (add) return renderReCatalog();
+  const it = reFind(reSel); if (!it) return;
+  if (isApp) {
+    $('re-app-ico').replaceChildren(reIconEl(appIconUrl(it), it.name));
+    if (document.activeElement !== $('re-name')) $('re-name').value = it.name;
+    if (document.activeElement !== $('re-url')) $('re-url').value = it.url;
+    const list = $('re-sc-list'); list.textContent = '';
+    for (const s of (it.shortcuts || [])) list.appendChild(scRow(s.name, s.url));
+    if (!list.children.length) list.appendChild(el('div', 're-hint', 'Aucun raccourci. Ajoute des liens (par exemple deux espaces Jira) : ils s’affichent quand tu survoles l’appli dans le rail.'));
+  } else {
+    $('re-pin-ico').replaceChildren(it.kind === 'favfolder' ? reFolderEl(it) : reIconEl(it.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(it.url) + '&sz=64', it.title));
+    $('re-pin-name').textContent = it.title;
+    $('re-pin-sub').textContent = it.kind === 'favfolder' ? 'Dossier de favoris · ' + it.count + ' lien' + (it.count > 1 ? 's' : '') : hostOf(it.url);
+    $('re-pin-tip').textContent = it.kind === 'favfolder' ? 'Survole-le dans le rail pour ouvrir un de ses liens.' : 'Un clic dans le rail ouvre ce lien.';
+  }
+}
+// Catalogue : clic = ajouter ; re-clic sur une puce cochée = la retirer. Favoris : épingler / désépingler.
+function renderReCatalog() {
+  const box = $('addapp-grid'), top = box.scrollTop;
   box.textContent = '';
   const apps = (state && state.apps) || [];
-  const f = aaFilter.toLowerCase();
+  const f = reFilter.toLowerCase();
+  const chipState = () => { const st = el('span', 'aa-state'); st.appendChild(icon('i-plus', 'plus')); st.appendChild(icon('i-check', 'check')); st.appendChild(icon('i-close', 'uncheck')); return st; };
   for (const sec of APP_CATALOG) {
     const list = sec.apps.filter((a) => !f || a.name.toLowerCase().includes(f));
     if (!list.length) continue;
@@ -1243,64 +1353,75 @@ function renderAppCatalog() {
     for (const a of list) {
       const cur = apps.find((x) => hostOf(x.url) === hostOf(a.url));
       const chip = el('button', 'aa-chip' + (cur ? ' added' : ''));
-      const iconUrl = 'https://www.google.com/s2/favicons?domain=' + (a.iconDomain || hostOf(a.url)) + '&sz=64';
-      const img = el('img'); img.alt = '';
-      img.src = iconUrl;
-      img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
-      chip.appendChild(img);
+      chip.appendChild(reIconEl(catIcon(a), a.name));
       chip.appendChild(el('span', 'aa-name', a.name));
-      const st = el('span', 'aa-state');
-      st.appendChild(icon('i-plus', 'plus')); st.appendChild(icon('i-check', 'check')); st.appendChild(icon('i-close', 'uncheck'));
-      chip.appendChild(st);
+      chip.appendChild(chipState());
       chip.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
       chip.onclick = () => {
         if (cur) { api.appRemove(cur.id); toast(a.name + ' retirée du rail'); }
-        else { api.appAddPreset({ name: a.name, url: a.url, icon: a.iconDomain ? iconUrl : undefined }); toast(a.name + ' ajoutée au rail'); }
+        else { api.appAddPreset({ name: a.name, url: a.url, icon: (a.iconUrl || a.iconDomain) ? catIcon(a) : undefined }); toast(a.name + ' ajoutée au rail'); }
       };
       row.appendChild(chip);
     }
     box.appendChild(row);
   }
-  if (!box.children.length) box.appendChild(el('div', 'aa-rail-empty', 'Aucune suggestion ne correspond à « ' + aaFilter + ' ».'));
+  const pinned = new Set(((state && state.railPins) || []).map((p) => p.favId));
+  const favs = ((state && state.favorites) || []).filter((n) => !f || (n.title || '').toLowerCase().includes(f)).slice(0, 40);
+  if (favs.length) {
+    box.appendChild(el('div', 'aa-cat', 'Tes favoris'));
+    const row = el('div', 'aa-chips');
+    for (const n of favs) {
+      const on = pinned.has(n.id);
+      const title = n.title || (n.url ? hostOf(n.url) : 'Sans titre');
+      const chip = el('button', 'aa-chip' + (on ? ' added' : ''));
+      chip.appendChild(n.type === 'folder' ? reFolderEl(n) : reIconEl(n.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(n.url) + '&sz=64', title));
+      chip.appendChild(el('span', 'aa-name', title));
+      chip.appendChild(chipState());
+      chip.title = on ? 'Retirer ' + title + ' du rail' : 'Épingler ' + title + ' au rail';
+      chip.onclick = () => { api.railPinToggle(n.id); toast(title + (on ? ' retiré du rail' : ' épinglé au rail')); };
+      row.appendChild(chip);
+    }
+    box.appendChild(row);
+  }
+  if (!box.children.length) box.appendChild(el('div', 're-hint', 'Aucune suggestion ne correspond à « ' + reFilter + ' ».'));
+  box.scrollTop = top;
 }
-$('app-add').onclick = () => { showOverlay('addapp'); aaFilter = ''; $('aa-filter').value = ''; renderAppCatalog(); $('addapp-input').value = ''; };
-$('addapp-close').onclick = closeOverlay;
-$('aa-filter').addEventListener('input', () => { aaFilter = $('aa-filter').value.trim(); renderAppCatalog(); });
-$('aa-filter').addEventListener('keydown', (e) => e.stopPropagation());
 
-// ---------- raccourcis au survol d'une appli du rail ----------
-let scAppId = null;
-function scRow(name, url) {
-  const row = el('div', 'sc-row');
-  const n = el('input', 'sc-name'); n.placeholder = 'Nom — ex. Workspace A'; n.value = name; n.spellcheck = false;
-  const u = el('input', 'sc-url'); u.placeholder = 'https://…'; u.value = url; u.spellcheck = false;
-  [n, u].forEach((i) => i.addEventListener('keydown', (e) => e.stopPropagation()));
-  const x = el('button', 'icon-btn'); x.title = 'Supprimer ce raccourci'; x.appendChild(icon('i-trash'));
-  x.onclick = () => row.remove();
-  row.append(n, u, x);
-  return row;
+function renderRailEditor(forceDetail) {
+  if (reSel && !reFind(reSel)) { reSel = null; forceDetail = true; } // l'élément a disparu (retiré) : retour à « Ajouter »
+  renderReList();
+  // on ne reconstruit pas la fiche pendant que l'utilisateur y tape (l'écho de l'état est déjà ce qu'il a saisi)
+  if (forceDetail || !$('re-pane-app').contains(document.activeElement)) renderReDetail();
 }
-api.onEditAppShortcuts((id) => {
-  const a = ((state && state.apps) || []).find((x) => x.id === id); if (!a) return;
-  scAppId = id;
-  $('sc-sub').textContent = a.name + ' — ces liens apparaissent au survol de l’appli dans le rail.';
-  const list = $('sc-list'); list.textContent = '';
-  for (const s of (a.shortcuts || [])) list.appendChild(scRow(s.name, s.url));
-  if (!list.children.length) list.appendChild(scRow('', ''));
-  showOverlay('app-sc');
-});
-$('sc-add').onclick = () => { const r = scRow('', ''); $('sc-list').appendChild(r); r.querySelector('.sc-name').focus(); };
-$('sc-close').onclick = closeOverlay;
-$('sc-cancel').onclick = closeOverlay;
-$('sc-save').onclick = () => {
-  const rows = [...$('sc-list').querySelectorAll('.sc-row')]
-    .map((r) => ({ name: r.querySelector('.sc-name').value.trim(), url: r.querySelector('.sc-url').value.trim() }))
-    .filter((x) => x.url);
-  api.appShortcutsSet({ id: scAppId, shortcuts: rows });
-  closeOverlay();
-  toast('Raccourcis enregistrés');
+function openRailEditor(sel) {
+  reSel = sel || null; reFilter = ''; reKnown = null;
+  $('aa-filter').value = ''; $('addapp-input').value = '';
+  showOverlay('addapp');
+  renderRailEditor(true);
+  if (!reSel) setTimeout(() => $('aa-filter').focus(), 60);
+}
+
+$('app-add').onclick = () => openRailEditor(null);
+$('addapp-close').onclick = closeOverlay;
+$('re-add').onclick = () => { reSel = null; renderRailEditor(true); $('aa-filter').focus(); };
+$('aa-filter').addEventListener('input', () => { reFilter = $('aa-filter').value.trim(); renderReCatalog(); });
+$('aa-filter').addEventListener('keydown', (e) => e.stopPropagation());
+$('re-name').addEventListener('input', reSaveName);
+$('re-url').addEventListener('change', () => { if (reSel && reSel.kind === 'app') api.appUpdate({ id: reSel.id, url: $('re-url').value }); }); // à la validation seulement : change l'adresse recharge l'appli
+[$('re-name'), $('re-url')].forEach((i) => i.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') i.blur(); }));
+$('re-sc-add').onclick = () => {
+  const list = $('re-sc-list');
+  const hint = list.querySelector('.re-hint'); if (hint) hint.remove();
+  const r = scRow('', ''); list.appendChild(r); r.querySelector('.sc-name').focus();
 };
-const addApp = () => { const v = $('addapp-input').value.trim(); if (v) api.appAdd(v); closeOverlay(); };
+$('re-remove').onclick = () => { const a = reFind(reSel); if (a) { api.appRemove(a.id); toast(a.name + ' retirée du rail'); } };
+$('re-pin-remove').onclick = () => { const p = reFind(reSel); if (p) { api.railPinToggle(p.favId); toast(p.title + ' retiré du rail'); } };
+api.onEditAppShortcuts((id) => openRailEditor({ kind: 'app', id })); // clic droit « Raccourcis au survol… » ou « Personnaliser… » du flyout
+
+const addApp = () => {
+  const v = $('addapp-input').value.trim(); if (!v) return;
+  api.appAdd(v); $('addapp-input').value = ''; toast('Appli ajoutée au rail');
+};
 $('addapp-ok').onclick = addApp;
 $('addapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addApp(); });
 

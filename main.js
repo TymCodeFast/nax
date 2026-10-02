@@ -292,6 +292,7 @@ function persistClaudeTasks() {
   }, 300);
 }
 function snapshot() {
+  railPins = railPins.filter((p) => favFind(p.favId)); // un favori supprimé emporte son épingle
   return {
     nextId, groups, apps, railPins, archive, history, favorites, sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
     homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
@@ -1815,6 +1816,13 @@ function registerIpc() {
     else railHover(id, 'pin', clientY); // clic sur un dossier = ouvre le flyout de ses liens
   });
   ipcMain.on('pin-context', (_e, id) => pinContextMenu(id));
+  // épingle / désépingle un favori (lien ou dossier) depuis le panneau de personnalisation
+  ipcMain.on('rail-pin-toggle', (_e, favId) => {
+    const r = favFind(favId); if (!r) return;
+    if (railPins.some((p) => p.favId === favId)) railPins = railPins.filter((p) => p.favId !== favId);
+    else railPins.push({ id: 'pin' + nextId++, kind: r.node.type === 'folder' ? 'favfolder' : 'fav', favId });
+    sendState();
+  });
   ipcMain.on('peek-open-full', () => { const id = peekAppId; hidePeek(); if (id) activateApp(id); });
   ipcMain.handle('gmail-feed', () => fetchGmailFeed());
   ipcMain.on('gmail-open', (_e, link) => openGmailMessage(link));
@@ -1932,6 +1940,29 @@ function registerIpc() {
     sendState();
   });
   ipcMain.on('app-remove', (_e, id) => removeApp(id));
+  // renomme / change l'adresse d'une appli du rail (la vue déjà chargée navigue vers la nouvelle adresse)
+  ipcMain.on('app-update', (_e, o) => {
+    const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
+    if (typeof o.name === 'string' && o.name.trim()) a.name = o.name.trim().slice(0, 24);
+    if (typeof o.url === 'string' && o.url.trim()) {
+      const u = toUrl(o.url);
+      let ok = false; try { ok = !!u && /^https?:$/.test(new URL(u).protocol); } catch {}
+      if (ok && u !== a.url) {
+        a.url = u;
+        const v = appViews.get(a.id);
+        if (v && !v.webContents.isDestroyed()) { try { v.webContents.loadURL(u); } catch {} }
+      }
+    }
+    sendState();
+  });
+  // réordonne les favoris épinglés : place id avant beforeId (ou en fin)
+  ipcMain.on('pin-move', (_e, o) => {
+    const i = railPins.findIndex((p) => p.id === (o && o.id)); if (i < 0) return;
+    const [p] = railPins.splice(i, 1);
+    const j = o.beforeId ? railPins.findIndex((x) => x.id === o.beforeId) : -1;
+    if (j < 0) railPins.push(p); else railPins.splice(j, 0, p);
+    sendState();
+  });
   // réordonne le rail : place id avant beforeId (ou en fin si beforeId absent)
   ipcMain.on('app-move', (_e, o) => {
     const i = apps.findIndex((a) => a.id === (o && o.id)); if (i < 0) return;

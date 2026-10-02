@@ -45,6 +45,7 @@
   <symbol id="i-incognito" viewBox="0 0 24 24"><path d="M5 11l1.6-5.1A2 2 0 0 1 8.5 4.5h7a2 2 0 0 1 1.9 1.4L19 11"/><path d="M3 12h18"/><circle cx="7.5" cy="15.5" r="2.6"/><circle cx="16.5" cy="15.5" r="2.6"/><path d="M10.1 15.2a3 3 0 0 1 3.8 0"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 12v4M10 14h4"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
   <symbol id="i-nax" viewBox="32 32 448 448">
     <!-- même monogramme que assets/icon.svg : N blanc, diagonale du X en accent -->
@@ -364,38 +365,57 @@
           <div class="actions"><button id="pw-guide-cancel">Plus tard</button><button id="pw-guide-pick" class="primary"><svg><use href="#i-download"/></svg> Choisir le fichier CSV</button></div>
         </div>
       </div>
-      <!-- Ajout d'appli : catalogue de suggestions + adresse personnalisée -->
+      <!-- Personnalisation du rail : liste ordonnée (gauche) + fiche de l'élément ou ajout (droite) -->
       <div id="addapp" class="overlay hidden">
-        <div class="panel glow addapp-panel">
+        <div class="panel glow re-panel">
           <div class="panel-head">
-            <div><h2>Personnaliser le rail</h2><span class="muted">Tes applis toujours ouvertes, dans l'ordre que tu veux.</span></div>
+            <div><h2>Personnaliser le rail</h2><span class="muted">Glisse les lignes pour réordonner. Le rail, à gauche, se met à jour en direct.</span></div>
             <button id="addapp-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
           </div>
-          <div class="aa-rail-box">
-            <div class="aa-rail-label"><span class="aa-cat">Ton rail</span><span class="aa-hint">glisse pour réordonner · ✕ pour retirer</span></div>
-            <div id="addapp-rail" class="aa-rail"></div>
+          <div class="re-body">
+            <div class="re-left">
+              <div id="re-list"></div>
+              <button id="re-add" class="re-add"><svg><use href="#i-plus"/></svg> Ajouter au rail</button>
+            </div>
+            <div class="re-right">
+              <!-- ajout : suggestions + favoris à épingler + adresse libre -->
+              <div id="re-pane-add" class="re-pane">
+                <div class="re-title">Ajouter au rail</div>
+                <div class="aa-filter">
+                  <svg class="lead"><use href="#i-search"/></svg>
+                  <input id="aa-filter" type="text" placeholder="Filtrer les suggestions et tes favoris…" spellcheck="false" autocomplete="off">
+                </div>
+                <div id="addapp-grid"></div>
+                <div class="addapp-custom">
+                  <input id="addapp-input" type="text" placeholder="ou une adresse — ex. jira.exemple.fr" spellcheck="false">
+                  <button id="addapp-ok" class="primary">Ajouter</button>
+                </div>
+              </div>
+              <!-- fiche d'une appli : nom, adresse, raccourcis au survol (enregistrés automatiquement) -->
+              <div id="re-pane-app" class="re-pane hidden">
+                <div class="re-apphead">
+                  <span id="re-app-ico" class="re-bigico"></span>
+                  <div class="re-fields">
+                    <input id="re-name" class="re-input" type="text" placeholder="Nom" spellcheck="false" autocomplete="off">
+                    <input id="re-url" class="re-input" type="text" placeholder="https://…" spellcheck="false" autocomplete="off">
+                  </div>
+                </div>
+                <div class="re-title">Raccourcis au survol <span class="muted">liens proposés quand tu survoles l'appli</span></div>
+                <div id="re-sc-list"></div>
+                <button id="re-sc-add" class="sc-add"><svg><use href="#i-plus"/></svg> Ajouter un raccourci</button>
+                <div class="re-foot"><button id="re-remove" class="re-danger"><svg><use href="#i-trash"/></svg> Retirer du rail</button></div>
+              </div>
+              <!-- fiche d'un favori épinglé -->
+              <div id="re-pane-pin" class="re-pane hidden">
+                <div class="re-apphead">
+                  <span id="re-pin-ico" class="re-bigico"></span>
+                  <div class="re-fields"><div id="re-pin-name" class="re-pin-name"></div><div id="re-pin-sub" class="muted"></div></div>
+                </div>
+                <p id="re-pin-tip" class="muted"></p>
+                <div class="re-foot"><button id="re-pin-remove" class="re-danger"><svg><use href="#i-trash"/></svg> Retirer du rail</button></div>
+              </div>
+            </div>
           </div>
-          <div class="aa-filter">
-            <svg class="lead"><use href="#i-search"/></svg>
-            <input id="aa-filter" type="text" placeholder="Filtrer les suggestions…" spellcheck="false" autocomplete="off">
-          </div>
-          <div id="addapp-grid"></div>
-          <div class="addapp-custom">
-            <input id="addapp-input" type="text" placeholder="ou une adresse personnalisée — ex. jira.exemple.fr" spellcheck="false">
-            <button id="addapp-ok" class="primary">Ajouter</button>
-          </div>
-        </div>
-      </div>
-      <!-- Raccourcis au survol d'une appli du rail -->
-      <div id="app-sc" class="overlay hidden">
-        <div class="panel small glow">
-          <div class="panel-head" style="padding:0 0 4px;border:0">
-            <div><h2>Raccourcis au survol</h2><span class="muted" id="sc-sub"></span></div>
-            <button id="sc-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
-          </div>
-          <div id="sc-list"></div>
-          <button id="sc-add" class="sc-add"><svg><use href="#i-plus"/></svg> Ajouter un raccourci</button>
-          <div class="actions"><button id="sc-cancel">Annuler</button><button id="sc-save" class="primary">Enregistrer</button></div>
         </div>
       </div>
       <!-- Export Markdown -->
