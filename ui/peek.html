@@ -70,6 +70,22 @@
   #foot:hover { background: var(--hover); color: var(--fg); }
   #foot svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   #foot.hidden { display: none; }
+
+  /* onglets Mails / Chat */
+  #tabs { flex: none; display: flex; gap: 4px; padding: 8px 10px 0; }
+  .ptab { position: relative; border: 0; background: transparent; color: var(--muted); font: 500 12px Inter; cursor: pointer;
+    padding: 6px 11px; border-radius: 8px; transition: background .15s, color .15s; }
+  .ptab:hover { background: var(--hover); color: var(--fg2); }
+  .ptab.active { background: var(--hover); color: var(--fg); font-weight: 600; }
+  .ptab .dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--c1); }
+  .ptab .dot.hidden { display: none; }
+
+  /* lignes de chat : nom + point non-lu */
+  .chat { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 11px; cursor: pointer; transition: background .12s; }
+  .chat:hover { background: var(--hover); }
+  .chat .cname { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; color: var(--fg2); }
+  .chat.unread .cname { font-weight: 600; color: var(--fg); }
+  .chat .udot { width: 8px; height: 8px; border-radius: 50%; background: var(--c1); flex: none; }
 </style>
 </head>
 <body>
@@ -82,8 +98,12 @@
     <button id="refresh" class="hbtn" title="Rafraîchir"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></button>
     <button id="open" class="hbtn" title="Ouvrir en grand"><svg viewBox="0 0 24 24"><path d="M9 5H5v4M5 5l6 6M15 19h4v-4M19 19l-6-6"/></svg></button>
   </div>
+  <div id="tabs">
+    <button class="ptab active" data-tab="mail">Mails</button>
+    <button class="ptab" data-tab="chat">Chat<span id="chat-dot" class="dot hidden"></span></button>
+  </div>
   <div id="widget"></div>
-  <div id="foot"><span>Tout voir dans Gmail</span><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+  <div id="foot"><span id="foot-label">Tout voir dans Gmail</span><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
 </div>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -101,17 +121,64 @@
   }
   const esc = (s) => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+  let tab = 'mail';
   peek.onLoad((d) => {
     nameEl.textContent = d.name || 'Gmail';
     if (d.icon) { icoEl.src = d.icon; icoEl.style.display = ''; } else icoEl.style.display = 'none';
-    loadGmail();
+    setTab('mail');
+    probeChat(); // alimente le point « non lu » de l'onglet Chat en arrière-plan
   });
+
+  function setTab(t) {
+    tab = t;
+    document.querySelectorAll('.ptab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+    $('foot-label').textContent = t === 'mail' ? 'Tout voir dans Gmail' : 'Ouvrir Google Chat';
+    if (t === 'mail') loadGmail(); else loadChat(false);
+  }
+  document.querySelectorAll('.ptab').forEach((b) => { b.onclick = () => setTab(b.dataset.tab); });
+
+  // ---- Chat : conversations non lues ----
+  async function probeChat() {
+    try { const r = await peek.chatFeed(false); const n = r && r.items ? r.items.filter((c) => c.unread).length : 0; $('chat-dot').classList.toggle('hidden', !n); } catch {}
+  }
+  async function loadChat(force) {
+    refreshBtn.classList.add('spin');
+    countEl.classList.add('hidden');
+    widget.innerHTML = '<div class="state"><div class="loader"></div><div class="sub">Connexion à Google Chat…</div></div>';
+    let r; try { r = await peek.chatFeed(force); } catch { r = { error: true }; }
+    refreshBtn.classList.remove('spin');
+    if (tab !== 'chat') return;
+    if (!r || r.error) { widget.innerHTML = state('cloud-off', 'Impossible de joindre Chat', 'Réessaie dans un moment.'); return; }
+    if (!r.authed) {
+      widget.innerHTML = state('lock', 'Connecte-toi à Google', 'Ouvre Google Chat une fois pour activer l’aperçu.', 'Ouvrir Chat');
+      const b = widget.querySelector('button'); if (b) b.onclick = () => peek.openChat();
+      return;
+    }
+    if (!r.available) { widget.innerHTML = state('cloud-off', 'Chat n’est pas activé', 'Ce compte Google n’a pas Google Chat.'); return; }
+    const unread = (r.items || []).filter((c) => c.unread);
+    $('chat-dot').classList.toggle('hidden', !unread.length);
+    if (unread.length) { countEl.textContent = unread.length + ' non lu' + (unread.length > 1 ? 's' : ''); countEl.classList.remove('hidden'); }
+    const list = unread.length ? unread : (r.items || []).slice(0, 12);
+    if (!list.length) { widget.innerHTML = state('check', 'Aucune conversation', 'Rien à afficher pour l’instant.'); return; }
+    widget.innerHTML = (unread.length ? '' : '<div class="state" style="height:auto;padding:14px 10px 6px"><div class="sub">Rien de non lu — conversations récentes :</div></div>')
+      + list.map((c) => {
+        const col = avatarColor(c.name);
+        return `
+      <div class="chat${c.unread ? ' unread' : ''}" data-id="${esc(c.id)}">
+        <div class="avatar" style="background:${col}24;color:${col}">${esc((c.name.trim()[0]||'?').toUpperCase())}</div>
+        <span class="cname">${esc(c.name)}</span>
+        ${c.unread ? '<span class="udot"></span>' : ''}
+      </div>`;
+      }).join('');
+    widget.querySelectorAll('.chat').forEach((el) => { el.onclick = () => peek.openChat(el.dataset.id); });
+  }
 
   async function loadGmail() {
     refreshBtn.classList.add('spin');
     widget.innerHTML = '<div class="state"><div class="loader"></div></div>';
     let r; try { r = await peek.gmailFeed(); } catch { r = { error: true }; }
     refreshBtn.classList.remove('spin');
+    if (tab !== 'mail') return; // l'utilisateur a changé d'onglet pendant le chargement
     if (!r || r.error) { widget.innerHTML = state('cloud-off', 'Impossible de récupérer les mails', 'Réessaie dans un moment.'); countEl.classList.add('hidden'); return; }
     if (!r.authed) {
       widget.innerHTML = state('lock', 'Connecte-toi à Gmail', 'Ouvre Gmail une fois pour activer l’aperçu.', 'Ouvrir Gmail');
@@ -144,9 +211,9 @@
     return `<div class="state"><div class="halo"><svg viewBox="0 0 24 24">${icons[icon]||icons.check}</svg></div><div class="big">${big}</div><div class="sub">${sub||''}</div>${btn?`<button>${btn}</button>`:''}</div>`;
   }
 
-  $('open').onclick = () => peek.openFull();
-  refreshBtn.onclick = () => loadGmail();
-  $('foot').onclick = () => peek.openFull();
+  $('open').onclick = () => (tab === 'mail' ? peek.openFull() : peek.openChat());
+  refreshBtn.onclick = () => (tab === 'mail' ? loadGmail() : loadChat(true));
+  $('foot').onclick = () => (tab === 'mail' ? peek.openFull() : peek.openChat());
   document.addEventListener('mouseenter', () => peek.hover(true), true);
   document.body.addEventListener('mouseleave', () => peek.hover(false));
   window.addEventListener('mouseover', () => peek.hover(true));

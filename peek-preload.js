@@ -5,4 +5,6 @@ contextBridge.exposeInMainWorld('peek', {
   openFull: () => ipcRenderer.send('peek-open-full'),
   gmailFeed: () => ipcRenderer.invoke('gmail-feed'),
   openMail: (link) => ipcRenderer.send('gmail-open', link),
+  chatFeed: (force) => ipcRenderer.invoke('chat-feed', force),
+  openChat: (groupId) => ipcRenderer.send('chat-open', groupId),
 });

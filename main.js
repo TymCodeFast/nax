@@ -1090,6 +1090,80 @@ async function pollGmail() {
   if (r && r.authed) { gmailCount = r.count || 0; if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('gmail-count', gmailCount); }
 }
 
+// ---------- widget Google Chat (conversations non lues, via une vue cachée sur la session) ----------
+// Pas de flux Atom pour Chat : on charge chat.google.com hors écran avec la session de
+// l'utilisateur et on lit la liste des conversations dans le DOM (data-group-id + aria).
+let chatView = null, chatViewIdle = null, chatCache = null; // cache 60 s : la SPA met ~3 s à peindre
+function destroyChatView() { if (chatView) { try { chatView.webContents.close(); } catch {} chatView = null; } }
+const CHAT_EXTRACT = `(() => {
+  const seen = new Set(); const items = [];
+  for (const el of document.querySelectorAll('[data-group-id]')) {
+    const id = el.getAttribute('data-group-id') || '';
+    if (!id || seen.has(id)) continue; seen.add(id);
+    const label = el.getAttribute('aria-label') || '';
+    const nameEl = el.querySelector('span[title]') || el.querySelector('span');
+    const name = ((nameEl && nameEl.textContent) || label.split(',')[0] || '').trim();
+    if (!name) continue;
+    const unread = /non lu|unread/i.test(label) || !!el.querySelector('[aria-label*="non lu" i], [aria-label*="unread" i]');
+    items.push({ id, name: name.slice(0, 80), unread });
+    if (items.length >= 40) break;
+  }
+  const available = items.length > 0 || !!document.querySelector('[role="list"], [role="navigation"], [data-group-id]');
+  return { authed: true, available, items };
+})()`;
+function fetchChatFeed(force) {
+  return new Promise((resolve) => {
+    if (!force && chatCache && Date.now() - chatCache.t < 60000) return resolve(chatCache.data);
+    let done = false;
+    const finish = (data, cache) => {
+      if (done) return; done = true;
+      if (cache) chatCache = { t: Date.now(), data };
+      clearTimeout(chatViewIdle);
+      chatViewIdle = setTimeout(destroyChatView, 5 * 60 * 1000); // la vue cachée ne vit pas éternellement
+      resolve(data);
+    };
+    setTimeout(() => finish({ error: true }, false), 20000); // garde-fou : jamais plus de 20 s
+    try {
+      if (!chatView || chatView.webContents.isDestroyed()) {
+        chatView = new WebContentsView({ webPreferences: { sandbox: true } });
+        try { chatView.webContents.setBackgroundThrottling(false); } catch {} // la vue est hors écran : sans ça la SPA se fige
+        chatView.webContents.loadURL('https://chat.google.com/');
+      } else if (force) {
+        chatView.webContents.reload();
+      }
+    } catch { return finish({ error: true }, false); }
+    const wc = chatView.webContents;
+    const extract = async () => {
+      if (/accounts\.google\./.test(wc.getURL())) return finish({ authed: false }, true);
+      await new Promise((r) => setTimeout(r, 3000)); // laisse la SPA peindre sa liste
+      if (done) return;
+      let data;
+      try { data = await wc.executeJavaScript(CHAT_EXTRACT, true); } catch { data = { error: true }; }
+      if (data && !data.error && /accounts\.google\./.test(wc.getURL())) data = { authed: false };
+      finish(data, !(data && data.error));
+    };
+    if (wc.isLoading()) wc.once('did-finish-load', extract); else extract();
+  });
+}
+// Ouvre Chat (une conversation précise si on connaît son id « space/… » ou « dm/… »)
+function openChat(groupId) {
+  let url = 'https://chat.google.com/';
+  if (typeof groupId === 'string') {
+    if (groupId.startsWith('space/')) url += 'room/' + groupId.slice(6);
+    else if (groupId.startsWith('dm/')) url += 'dm/' + groupId.slice(3);
+  }
+  const a = apps.find((x) => /chat\.google\.com/i.test(x.url));
+  if (a) {
+    const v = ensureAppView(a);
+    v.webContents.loadURL(url);
+    current = { kind: 'app', id: a.id };
+    attach(v); v.webContents.focus(); win.setTitle(a.name);
+  } else {
+    newTab({ url });
+  }
+  hidePeek(); sendState();
+}
+
 // ---------- panneau d'aperçu au survol (widget façon Opera) ----------
 let peekWin = null, peekAppId = null, peekHideTimer = null;
 function ensurePeekWin() {
@@ -1624,6 +1698,8 @@ function registerIpc() {
   ipcMain.on('peek-open-full', () => { const id = peekAppId; hidePeek(); if (id) activateApp(id); });
   ipcMain.handle('gmail-feed', () => fetchGmailFeed());
   ipcMain.on('gmail-open', (_e, link) => openGmailMessage(link));
+  ipcMain.handle('chat-feed', (_e, force) => fetchChatFeed(!!force));
+  ipcMain.on('chat-open', (_e, groupId) => openChat(groupId));
   ipcMain.on('menu-ready', () => { if (menuWin && !menuWin.isDestroyed()) { menuWin.show(); menuWin.focus(); menuWin.webContents.send('menu-play'); } });
   ipcMain.on('tip-show', (_e, d) => { const w = ensureTipWin(); syncTipBounds(); const send = () => { try { w.webContents.send('tip-show', { ...d, dark: nativeTheme.shouldUseDarkColors }); } catch {} }; if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send(); });
   ipcMain.on('tip-hide', () => hideTip());
@@ -1970,6 +2046,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  destroyChatView();
   for (const [id, proc] of claudeProcs) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
   clearTimeout(saveTimer);
   try { fs.writeFileSync(STATE_FILE, JSON.stringify(snapshot())); } catch {}
