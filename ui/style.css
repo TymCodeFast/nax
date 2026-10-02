@@ -66,13 +66,17 @@ kbd { font: 500 10.5px "JetBrains Mono", ui-monospace, Consolas, monospace; colo
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 8px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.14); }
 
-#root { display: grid; grid-template-columns: var(--rail-w) var(--side-w) 1fr; height: 100%; }
-#root.collapsed { grid-template-columns: var(--rail-w) 0 1fr; }
+#root { display: grid; grid-template-columns: var(--rail-w) var(--side-w) 1fr var(--claude-w, 0px); height: 100%; }
+#root.collapsed { grid-template-columns: var(--rail-w) 0 1fr var(--claude-w, 0px); }
 #root.collapsed #sidebar { display: none; }
 /* Colonnes fixées : sans ça, quand la sidebar passe en display:none, #main glisse dans la colonne 2 (0px) au lieu de la 3 (1fr) et le header s'effondre. */
 #rail { grid-column: 1; }
 #sidebar { grid-column: 2; }
 #main { grid-column: 3; }
+#claude-panel { grid-column: 4; }
+/* panneau Claude ouvert : la 4e colonne prend sa largeur (CLAUDE_W côté main.js) */
+body.claude { --claude-w: 400px; }
+body:not(.claude) #claude-panel { display: none; }
 
 /* ============ Rail des applis ============ */
 #rail { background: var(--rail); display: flex; flex-direction: column; align-items: center; padding: 10px 0 12px; gap: 8px; position: relative;
@@ -80,11 +84,11 @@ kbd { font: 500 10.5px "JetBrains Mono", ui-monospace, Consolas, monospace; colo
 #rail button, #apps { -webkit-app-region: no-drag; }
 #rail::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 1px;
   background: linear-gradient(180deg, transparent, var(--line-strong) 30%, var(--line-strong) 70%, transparent); }
-#brand { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 6px;
-  background: var(--grad); color: #fff; box-shadow: 0 4px 14px rgba(91, 107, 245, .32), inset 0 1px 0 rgba(255, 255, 255, .18);
+#brand { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 6px;
+  background: linear-gradient(180deg, #1a1f2a, #0c0f15); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), 0 2px 8px rgba(0, 0, 0, .25);
   transition: transform var(--t), box-shadow var(--t); }
-#brand:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(91, 107, 245, .42), inset 0 1px 0 rgba(255, 255, 255, .18); }
-#brand svg { width: 25px; height: 25px; stroke: none; }
+#brand:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), 0 5px 14px rgba(0, 0, 0, .32); }
+#brand svg { width: 36px; height: 36px; stroke: none; }
 #apps { display: flex; flex-direction: column; gap: 6px; width: 100%; align-items: center; }
 .rail-grow { flex: 1; min-height: 8px; }
 #dev-rail { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; -webkit-app-region: no-drag; }
@@ -201,7 +205,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .group { margin-bottom: 4px; border-radius: var(--r); position: relative; }
 .group.multi { background: rgba(255, 255, 255, .025); padding: 4px 4px 4px; border: 1px solid var(--line); margin-bottom: 8px; }
 .group.multi::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: var(--grad); opacity: .55; }
-.group-title { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 6px; color: var(--fg-2); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; min-height: 26px; }
+.group-title { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 6px; color: var(--fg-2); font-size: 13px; font-weight: 600; letter-spacing: .005em; min-height: 28px; }
 .group-title .g-chev { width: 20px; height: 22px; flex: none; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; }
 .group-title .g-chev:hover { background: var(--hover); color: var(--fg); }
 .group-title .g-chev svg { width: 11px; height: 11px; transition: transform 200ms var(--ease); }
@@ -217,7 +221,7 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .group.collapsed.hasactive::before { opacity: 1; }
 .group-title .name.custom { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .group-title .n { color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; }
-.group-title input { flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--fg); padding: 2px 8px; font-size: 12px; box-shadow: var(--glow); }
+.group-title input { flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--fg); padding: 2px 8px; font-size: 13px; box-shadow: var(--glow); }
 .group-title .icon-btn { width: 22px; height: 22px; opacity: 0; }
 .group:hover .group-title .icon-btn { opacity: 1; }
 
@@ -304,6 +308,17 @@ body.private-tab #omni-icon { color: var(--c2); }
 @keyframes leave { to { opacity: 0; transform: translateX(10px) scale(.98); height: 0; margin: 0; padding-top: 0; padding-bottom: 0 } }
 
 .sidebar-bottom { border-top: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.sidebar-tools { display: flex; gap: 4px; }
+.tool-btn { position: relative; flex: 1; height: 32px; display: grid; place-items: center; border-radius: 9px; color: var(--muted); transition: background var(--t), color var(--t); }
+.tool-btn:hover { background: var(--hover); color: var(--c1); }
+.tool-btn svg { width: 16px; height: 16px; }
+.tool-btn .badge { position: absolute; top: 3px; right: 4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px; background: var(--c1); color: #fff; font-size: 9.5px; font-weight: 600; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
+.tool-btn .badge:empty { display: none; }
+.hist-search { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 11px; border-radius: 10px; background: var(--field); border: 1px solid var(--line-strong); }
+.hist-search .lead { width: 14px; height: 14px; color: var(--muted); flex: none; }
+#history-search { width: 170px; background: transparent; border: 0; color: var(--fg); font-size: 13px; outline: none; user-select: text; }
+#history-search::placeholder { color: var(--dim); }
+.res .meta { color: var(--dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .row-btn { display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border-radius: 9px; color: var(--fg-2); text-align: left; transition: background var(--t), color var(--t); }
 .row-btn:hover { background: var(--hover); color: var(--fg); }
 .row-btn svg { color: var(--muted); }
@@ -418,7 +433,7 @@ body.split #navbar { padding-right: 12px; flex: none; }
 #palette-input::placeholder { color: var(--dim); }
 #addapp-input { width: 100%; background: var(--field); border: 1px solid var(--line-strong); border-radius: 10px; color: var(--fg); font-size: 14px; padding: 11px 14px; outline: none; user-select: text; transition: box-shadow var(--t), border-color var(--t); }
 #addapp-input:focus { box-shadow: var(--glow); border-color: transparent; }
-#palette-results, #archive-list { overflow-y: auto; border-top: 1px solid var(--line); padding: 6px 8px 8px; }
+#palette-results, #archive-list, #history-list { overflow-y: auto; border-top: 1px solid var(--line); padding: 6px 8px 8px; }
 .res-section { color: var(--dim); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; padding: 12px 14px 6px; }
 .res { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; cursor: default; color: var(--fg-2); transition: background var(--t), color var(--t);
   animation: enter 220ms var(--ease) both; animation-delay: calc(var(--i, 0) * 18ms); }
@@ -642,14 +657,14 @@ body.split #navbar { padding-right: 12px; flex: none; }
 .favm-row.folder.open .favm-chev { transform: rotate(-90deg); }
 .favm-chev.spacer { visibility: hidden; }
 .favm-ico { width: 20px; height: 20px; border-radius: 5px; flex: none; object-fit: cover; display: grid; place-items: center; }
-.favm-row.folder .favm-ico { color: var(--c1); }
+.favm-row.folder .favm-ico { color: var(--gold); }
 .favm-row.folder .favm-ico svg { width: 18px; height: 18px; }
 .favm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .favm-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13.5px; }
 .favm-sub { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .favm-url { color: var(--dim); font: 400 11.5px "JetBrains Mono", ui-monospace, monospace; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .favm-path { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px 1px 5px; flex: none; max-width: 220px; }
-.favm-path svg { width: 12px; height: 12px; flex: none; color: var(--c1); }
+.favm-path svg { width: 12px; height: 12px; flex: none; color: var(--gold); }
 .favm-path span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .favm-input { width: 100%; background: var(--field); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--fg); padding: 3px 8px; font-size: 13.5px; outline: none; box-shadow: var(--glow); }
 .favm-actions { display: flex; align-items: center; gap: 4px; flex: none; opacity: 0; transition: opacity var(--t); }
@@ -729,6 +744,150 @@ body.split #navbar { padding-right: 12px; flex: none; }
 .bd-check { width: 20px; height: 20px; flex: none; border-radius: 6px; border: 1.5px solid var(--line-strong); display: grid; place-items: center; color: transparent; transition: background var(--t), border-color var(--t), color var(--t); }
 .bd-check svg { width: 13px; height: 13px; stroke-width: 2.5; }
 
+/* ============ Panneau Claude (tâches IA) ============ */
+#claude-panel { background: var(--side); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* panneau ouvert : les boutons système sont au-dessus du panneau, la barre de nav n'a plus à leur réserver de place */
+body.claude #navbar { padding-right: 12px; }
+body.claude #split-tb-right { padding-right: 12px; }
+/* l'en-tête sert aussi de zone de déplacement de la fenêtre et réserve la place des boutons système (réduire/agrandir/fermer) */
+.cl-head { height: var(--nav-h); flex: none; display: flex; align-items: center; gap: 6px; padding: 0 146px 0 8px; -webkit-app-region: drag; }
+@supports (top: env(titlebar-area-x)) {
+  .cl-head { padding-right: calc(100vw - env(titlebar-area-x) - env(titlebar-area-width) + 8px); }
+}
+.cl-head .icon-btn { -webkit-app-region: no-drag; }
+.cl-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
+.cl-title svg { width: 16px; height: 16px; color: var(--c1); }
+
+/* composer : un seul champ arrondi (langage de l'omnibox), bouton ✦ intégré */
+.cl-compose { flex: none; padding: 2px 12px 12px; -webkit-app-region: no-drag; }
+.cl-field { display: flex; flex-direction: column; background: var(--field); border: 1px solid var(--line-strong); border-radius: 14px; padding: 4px 6px 6px; transition: box-shadow var(--t), border-color var(--t), background var(--t); }
+.cl-field:focus-within { box-shadow: var(--glow); border-color: transparent; background: var(--field-hover); }
+#claude-prompt { border: 0; outline: none; background: transparent; resize: none; color: var(--fg); font: inherit; line-height: 1.5; padding: 7px 8px 2px; min-height: 34px; max-height: 150px; overflow-y: auto; user-select: text; }
+#claude-prompt::placeholder { color: var(--dim); }
+.cl-field-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 0 8px; min-height: 30px; }
+.cl-hint { display: flex; gap: 3px; opacity: 0; transition: opacity var(--t); }
+.cl-field:focus-within .cl-hint { opacity: 1; }
+#claude-run { width: 30px; height: 30px; flex: none; border-radius: 10px; display: grid; place-items: center; background: var(--grad); color: #fff; transition: opacity var(--t), transform var(--t), filter var(--t); }
+#claude-run svg { width: 15px; height: 15px; }
+#claude-run:hover { filter: brightness(1.12); }
+#claude-run:active { transform: scale(.9); }
+#claude-run:disabled { opacity: .3; cursor: default; filter: saturate(.3); transform: none; }
+
+/* liste des tâches */
+.cl-list-head { flex: none; display: flex; align-items: center; gap: 7px; padding: 2px 10px 4px 17px; }
+.cl-list-title { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.cl-list-head .count { font-size: 10.5px; font-weight: 600; color: var(--dim); }
+.cl-list-head .spacer { flex: 1; }
+#claude-tasks { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+/* carte de tâche : titre (2 lignes), puis « ● Statut · durée · quand » */
+.cl-task { flex: none; background: var(--field); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; transition: border-color var(--t), background var(--t); }
+.cl-task:hover { background: var(--field-hover); }
+.cl-task.open { border-color: var(--line-strong); background: var(--field-hover); }
+.cl-task-head { display: flex; align-items: flex-start; gap: 8px; padding: 11px 10px 0 12px; cursor: pointer; }
+.cl-task-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 550; line-height: 1.4; user-select: text; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cl-task.open .cl-task-title { -webkit-line-clamp: unset; }
+.cl-task-x { flex: none; width: 22px; height: 22px; margin-top: -2px; border-radius: 7px; display: grid; place-items: center; color: var(--dim); opacity: 0; transition: background var(--t), color var(--t), opacity var(--t); }
+.cl-task:hover .cl-task-x { opacity: 1; }
+.cl-task-x:hover { background: var(--hover); color: var(--c3); }
+.cl-task-x svg { width: 13px; height: 13px; }
+.cl-task-meta { display: flex; align-items: center; gap: 7px; padding: 6px 12px 11px; min-width: 0; font-size: 11.5px; color: var(--muted); }
+.cl-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.cl-dot.running { background: var(--c1); animation: cl-pulse 1.3s var(--ease) infinite; }
+.cl-dot.done { background: #3ecf8e; }
+.cl-dot.error { background: var(--c3); }
+.cl-dot.canceled { background: var(--dim); }
+@keyframes cl-pulse { from { box-shadow: 0 0 0 0 rgba(115, 133, 255, .4); } to { box-shadow: 0 0 0 6px rgba(115, 133, 255, 0); } }
+.cl-status { font-weight: 600; color: var(--fg-2); flex: none; }
+.cl-when { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* activité en cours : pastille teintée avec le dernier outil utilisé */
+.cl-activity { margin: -5px 12px 11px; padding: 6px 9px; border-radius: 8px; background: color-mix(in srgb, var(--c1) 7%, transparent); color: var(--fg-2); font-size: 11.5px; display: flex; align-items: center; gap: 7px; min-width: 0; }
+.cl-activity svg { width: 12px; height: 12px; flex: none; color: var(--c1); animation: cl-breathe 1.6s ease-in-out infinite; }
+@keyframes cl-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+.cl-activity span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+
+/* résultat déplié */
+.cl-task-body { border-top: 1px solid var(--line); max-height: 44vh; overflow-y: auto; user-select: text; }
+.cl-task-body .md-render { padding: 12px 14px; font-size: 12.5px; line-height: 1.6; }
+.cl-task-body .md-render h1 { font-size: 1.2em; } .cl-task-body .md-render h2 { font-size: 1.1em; } .cl-task-body .md-render h3 { font-size: 1.02em; }
+.cl-task-body .md-render > :first-child { margin-top: 0; }
+.cl-task-body .md-render table { display: block; max-width: 100%; overflow-x: auto; font-size: 11.5px; }
+.cl-task-err { padding: 10px 12px; color: var(--c3); font-size: 12px; user-select: text; overflow-wrap: anywhere; border-top: 1px solid var(--line); }
+
+/* échanges précédents d'une tâche continuée : accordéon replié par défaut */
+.cl-exch { border-top: 1px solid var(--line); }
+.cl-exch-head { width: 100%; display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12px; color: var(--muted); text-align: left; transition: background var(--t), color var(--t); }
+.cl-exch-head:hover { background: var(--hover); color: var(--fg-2); }
+.cl-exch-head .chev { width: 11px; height: 11px; flex: none; color: var(--dim); transition: transform 200ms var(--ease); }
+.cl-exch.open > .cl-exch-head .chev { transform: rotate(90deg); }
+.cl-exch-head .txt { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
+.cl-exch .cl-task-body { border-top: 0; max-height: 30vh; }
+.cl-exch .cl-task-err { border-top: 0; }
+
+/* demande (prompt initial d'un échange précédent, ou suite demandée) */
+.cl-prompt { display: flex; align-items: flex-start; gap: 7px; padding: 9px 12px 8px; font-size: 12px; font-style: italic; color: var(--muted); border-top: 1px solid var(--line); user-select: text; }
+.cl-prompt svg { width: 12px; height: 12px; flex: none; margin-top: 2px; color: var(--dim); }
+.cl-prompt span { min-width: 0; overflow-wrap: anywhere; }
+
+/* timeline de la tâche en cours (vue dépliée) */
+.cl-steps { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }
+.cl-step { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); min-width: 0; }
+.cl-step svg { width: 12px; height: 12px; flex: none; color: var(--dim); }
+.cl-step span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
+.cl-step.last { color: var(--fg-2); }
+.cl-step.last svg { color: var(--c1); animation: cl-breathe 1.6s ease-in-out infinite; }
+
+/* « Demander une suite… » : la tâche reprend avec son contexte */
+.cl-follow { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); }
+.cl-follow input { flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--line-strong); border-radius: 9px; padding: 7px 10px; color: var(--fg); font-size: 12.5px; outline: none; user-select: text; transition: box-shadow var(--t), border-color var(--t); }
+.cl-follow input:focus { box-shadow: var(--glow); border-color: transparent; }
+.cl-follow input::placeholder { color: var(--dim); }
+.cl-follow-go { width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center; background: var(--grad); color: #fff; transition: filter var(--t), transform var(--t); }
+.cl-follow-go svg { width: 14px; height: 14px; }
+.cl-follow-go:hover { filter: brightness(1.12); }
+.cl-follow-go:active { transform: scale(.9); }
+
+/* actions : icônes + infobulles, comme le reste de NaX */
+.cl-actions { display: flex; align-items: center; gap: 2px; padding: 5px 7px; border-top: 1px solid var(--line); }
+.cl-actions .icon-btn { width: 30px; height: 30px; }
+.cl-actions .icon-btn.accent { color: var(--c1); }
+.cl-actions .icon-btn.danger:hover { color: var(--c3); }
+.cl-actions .spacer { flex: 1; }
+
+.cl-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 36px 60px; text-align: center; color: var(--dim); font-size: 12.5px; }
+.cl-empty.hidden, #claude-clear.hidden { display: none; }
+.cl-empty svg { width: 26px; height: 26px; color: var(--c2); opacity: .7; }
+.cl-empty p { margin: 0; line-height: 1.6; }
+
+/* ---------- îlots ouverts par Claude ---------- */
+/* identité : teinte indigo + badge ✦ dans l'en-tête (même langage que les onglets privés : teinte + icône, pas de barre) */
+.group.claude.multi { background: color-mix(in srgb, var(--c1) 6%, transparent); border-color: color-mix(in srgb, var(--c1) 22%, transparent); }
+.group.claude.multi::before { opacity: .85; }
+.group-title .g-claude { width: 20px; height: 22px; flex: none; display: grid; place-items: center; color: var(--c1); border-radius: 6px; cursor: pointer; }
+.group-title .g-claude svg { width: 12px; height: 12px; }
+.group-title .g-claude:hover { background: color-mix(in srgb, var(--c1) 16%, transparent); }
+/* naissance d'un îlot : glissé-rebond + halo accent qui s'estompe */
+@keyframes island-in {
+  0%   { opacity: 0; transform: translateX(-22px) scale(.92); box-shadow: 0 0 0 0 rgba(115, 133, 255, 0); }
+  40%  { opacity: 1; transform: translateX(3px) scale(1.015); }
+  60%  { box-shadow: 0 0 0 5px rgba(115, 133, 255, .25), 0 8px 28px rgba(115, 133, 255, .35); }
+  100% { opacity: 1; transform: none; box-shadow: 0 0 0 0 rgba(115, 133, 255, 0); }
+}
+.group.island-born { animation: island-in 950ms var(--ease) both; }
+@keyframes spark-in { 0% { transform: scale(0) rotate(-120deg); } 70% { transform: scale(1.5) rotate(10deg); } 100% { transform: scale(1) rotate(0); } }
+.group.island-born .g-claude svg { animation: spark-in 950ms var(--ease) both; }
+/* mise en évidence d'une carte de tâche (badge ✦ d'un îlot cliqué) */
+@keyframes cl-flash { 0%, 100% { box-shadow: none; } 30% { box-shadow: var(--glow); } }
+.cl-task.cl-flash { animation: cl-flash 1.2s var(--ease); border-color: var(--c1); }
+
+/* bouton de la barre de nav : pastille « n tâches en cours » + état actif */
+#claude-btn { position: relative; }
+#claude-btn.active { background: var(--active); color: var(--fg); }
+.nav-badge { position: absolute; top: 2px; right: 2px; min-width: 14px; height: 14px; display: grid; place-items: center; background: var(--grad); color: #fff; font-size: 9.5px; font-weight: 700; line-height: 1; padding: 0 3px; border-radius: 8px; }
+.nav-badge.hidden { display: none; }
+
 /* langues */
 .lang-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .lang-row { display: flex; align-items: center; gap: 11px; padding: 9px 12px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); cursor: pointer; transition: background var(--t), border-color var(--t); }
@@ -762,7 +921,10 @@ body.split #navbar { padding-right: 12px; flex: none; }
 .fc-search .lead { width: 15px; height: 15px; color: var(--muted); flex: none; }
 #fc-icon-search { flex: 1; background: transparent; border: 0; color: var(--fg); font-size: 13.5px; outline: none; user-select: text; }
 #fc-icon-search::placeholder { color: var(--dim); }
-.fc-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; max-height: 240px; overflow-y: auto; padding: 2px; }
+.fc-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; max-height: 300px; overflow-y: auto; padding: 2px; }
+.fc-sec { grid-column: 1 / -1; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 8px 0 0; padding: 0 2px; }
+.fc-sec:first-of-type { margin-top: 2px; }
+.fc-empty { grid-column: 1 / -1; padding: 18px 0; text-align: center; font-size: 13px; }
 .fc-icon { height: 40px; border-radius: 9px; display: grid; place-items: center; color: var(--fg-2); border: 1px solid transparent; cursor: pointer; transition: background var(--t), color var(--t), border-color var(--t); }
 .fc-icon:hover { background: var(--hover); color: var(--fg); }
 .fc-icon.sel { background: var(--active); border-color: var(--c1); color: var(--c1); }

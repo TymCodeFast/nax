@@ -1,7 +1,7 @@
 // Browser — process principal.
 // Fenêtre = une vue "chrome" (rail d'applis + liste d'onglets + barre de nav) qui couvre
 // toute la fenêtre, et UNE vue de contenu (onglet ou appli) posée par-dessus dans la zone principale.
-const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, net, screen, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, nativeImage, net, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -12,7 +12,17 @@ const PIP_INJECT = (() => { try { return fs.readFileSync(path.join(__dirname, 'c
 // Nom d'app figé AVANT tout getPath : les données vivent dans %APPDATA%/NaX,
 // identique en dev et une fois installé (donc favoris/mots de passe/réglages suivent).
 app.setName('NaX');
-try { app.setAppUserModelId('com.nax.browser'); } catch {} // regroupe l'icône dans la barre des tâches Windows
+// Identifiant d'application Windows : la barre des tâches (Win11) affiche l'icône du raccourci portant cet ID, pas celle de la fenêtre.
+// Packagé : l'installeur crée ce raccourci. En dev, l'exécutable est electron.exe (icône atome) : on écrit nous-mêmes
+// un raccourci « NaX (dev) » dans le menu Démarrer, avec l'ID et l'icône, pour que la barre des tâches montre NaX.
+const APP_ID = app.isPackaged ? 'com.nax.browser' : 'com.nax.browser.dev'; // ID distinct en dev : ne se mélange pas avec la version installée
+if (process.platform === 'win32' && !app.isPackaged) {
+  try {
+    const lnk = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'NaX (dev).lnk');
+    shell.writeShortcutLink(lnk, 'create', { target: process.execPath, args: `"${app.getAppPath()}"`, cwd: app.getAppPath(), icon: path.join(__dirname, 'assets', 'icon.ico'), iconIndex: 0, appUserModelId: APP_ID, description: 'NaX (lancement dev)' });
+  } catch {}
+}
+try { app.setAppUserModelId(APP_ID); } catch {}
 // Reprise unique d'anciennes données si le dossier NaX est encore vide (rename depuis « browser »).
 (function migrateUserData() {
   try {
@@ -38,6 +48,9 @@ const DORMANT_AFTER = 2 * 60 * 60 * 1000;      // 2 h sans usage → veille
 const ARCHIVE_AFTER = 3 * 24 * 60 * 60 * 1000; // 3 j en veille → archive
 const STATE_FILE = path.join(app.getPath('userData'), 'state.json');
 const PW_FILE = path.join(app.getPath('userData'), 'passwords.enc');
+// Les tâches Claude ont leur propre fichier : state.json peut être réécrit par une autre
+// instance de NaX (version installée) qui ignore ces champs et les effacerait.
+const CLAUDE_FILE = path.join(app.getPath('userData'), 'claude-tasks.json');
 
 const DEFAULT_APPS = [
   { id: 'gmail', name: 'Gmail', url: 'https://mail.google.com', icon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico' },
@@ -84,6 +97,13 @@ const dlItems = new Map(); // id -> DownloadItem (en cours)
 const permGrants = new Map(); // "origin|permission" -> bool (persisté entre les sessions)
 const appViews = new Map();
 let contentView = null; // vue actuellement attachée dans la zone principale
+
+// ---------- Claude (tâches IA via le CLI Claude Code — utilise l'abonnement, aucune clé API) ----------
+const CLAUDE_W = 400;          // largeur du panneau latéral (doit suivre --claude-w dans style.css)
+let claudeOpen = false;        // panneau visible ?
+let claudeTasks = [];          // {id, prompt, title, status:'running'|'done'|'error'|'canceled', createdAt, finishedAt, output, error, activity:[{t,label}], durationMs, numTurns, sessionId}
+let claudeNextId = 1;
+const claudeProcs = new Map(); // id de tâche -> ChildProcess en cours
 
 // ---------- réglages configurables (persistés) ----------
 let homepage = 'https://www.google.com/';
@@ -240,11 +260,34 @@ function load() {
     spellcheckOn = !!s.spellcheckOn;
     if (Array.isArray(s.spellLangs) && s.spellLangs.length) spellLangs = s.spellLangs;
     if (s.permDefaults && typeof s.permDefaults === 'object') permDefaults = { ...permDefaults, ...s.permDefaults };
+    loadClaudeTasks(s);
     return s.currentTabId || null;
   } catch {
     apps = DEFAULT_APPS;
+    loadClaudeTasks(null);
     return null;
   }
+}
+// Charge les tâches Claude depuis leur fichier dédié (migration depuis state.json au premier passage).
+function loadClaudeTasks(stateFallback) {
+  let c = null;
+  try { c = JSON.parse(fs.readFileSync(CLAUDE_FILE, 'utf8')); } catch {}
+  if (!c && stateFallback && Array.isArray(stateFallback.claudeTasks)) {
+    c = { tasks: stateFallback.claudeTasks, nextId: stateFallback.claudeNextId, claudeOpen: stateFallback.claudeOpen };
+  }
+  if (!c) return;
+  // celles encore « running » à la fermeture sont marquées interrompues
+  claudeTasks = (c.tasks || []).map((t) => (t.status === 'running' ? { ...t, status: 'error', error: 'Interrompue à la fermeture de NaX', finishedAt: t.finishedAt || Date.now() } : t));
+  claudeNextId = c.nextId || claudeTasks.reduce((m, t) => Math.max(m, t.id || 0), 0) + 1;
+  claudeOpen = !!c.claudeOpen;
+  persistClaudeTasks(); // écrit le fichier dédié dès le chargement (migration comprise)
+}
+let claudeSaveTimer = null;
+function persistClaudeTasks() {
+  clearTimeout(claudeSaveTimer);
+  claudeSaveTimer = setTimeout(() => {
+    try { fs.writeFileSync(CLAUDE_FILE, JSON.stringify({ tasks: claudeTasks, nextId: claudeNextId, claudeOpen })); } catch {}
+  }, 300);
 }
 function snapshot() {
   return {
@@ -437,7 +480,8 @@ function groupTitle(g) {
 function mainBounds() {
   const { width, height } = win.getContentBounds();
   const x = RAIL + (sidebarOpen ? sidebarWidth : 0);
-  return { x, y: NAV, width: Math.max(0, width - x), height: Math.max(0, height - NAV) };
+  const right = claudeOpen ? CLAUDE_W : 0; // place du panneau Claude
+  return { x, y: NAV, width: Math.max(0, width - x - right), height: Math.max(0, height - NAV) };
 }
 function layout() {
   const { width, height } = win.getContentBounds();
@@ -484,8 +528,9 @@ function sendState() {
     const ct = current && current.kind === 'tab' ? tabById(current.id) : null;
     chrome.webContents.send('state', {
       tabs: tabs.map(({ view, ...t }) => ({ ...t, dormant: !view, loading: !!view && !view.webContents.isDestroyed() && view.webContents.isLoading() })),
-      groups: groups.map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed })),
+      groups: groups.map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
       apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
+      claudeOpen, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
       favorites, favActive: !!(ct && favByUrl(ct.url)),
       devMode, devProjects,
       searchEngine, searchEngines: SEARCH_ENGINES.map((e) => ({ id: e.id, name: e.name })),
@@ -603,6 +648,9 @@ function activateTab(id) {
   const pair = pairOf(tab);
   const activeTab = pair ? pair.primary : tab;
   wakeTab(activeTab);
+  // arriver sur un onglet d'un groupe replié (Ctrl+Tab, cycle…) déplie le groupe, sinon l'onglet actif reste invisible
+  const grp = groupById(activeTab.groupId);
+  if (grp && grp.collapsed) grp.collapsed = false;
   activeTab.lastActive = Date.now();
   tabMRU = [activeTab.id, ...tabMRU.filter((x) => x !== activeTab.id)]; // ordre d'utilisation : le plus récent en tête
   current = { kind: 'tab', id: activeTab.id };
@@ -1193,7 +1241,9 @@ function popupMenu(template) {
 function tabContextMenu(id) {
   const tab = tabById(id); if (!tab) return;
   const siblings = tabs.filter((t) => t.groupId === tab.groupId);
-  const inGroup = siblings.length > 1; // un groupe n'existe vraiment qu'à partir de 2 onglets
+  const inGroup = siblings.length > 1;
+  const grp = groupById(tab.groupId);
+  const named = !!(grp && grp.title); // un onglet seul mais dans un groupe nommé : le groupe existe quand même
   const items = [
     { label: favByUrl(tab.url) ? 'Retirer des favoris' : 'Ajouter aux favoris', click: () => toggleFavoriteUrl(tab.url, tab.title, tab.favicon) },
     { label: 'Mettre en veille', enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
@@ -1202,11 +1252,11 @@ function tabContextMenu(id) {
     { type: 'separator' },
     { label: tab.partition ? 'Revenir à la session normale' : 'Passer en navigation privée', click: () => setTabSession(tab.id, !tab.partition) },
   ];
-  if (inGroup) {
-    items.push({ type: 'separator' });
-    items.push({ label: 'Renommer le groupe…', click: () => chrome.webContents.send('rename-group', tab.groupId) });
-    items.push({ label: 'Sortir du groupe', click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
-  }
+  items.push({ type: 'separator' });
+  // nommer un onglet seul = créer un groupe d'un onglet (utile pour garder un nom, replier, etc.)
+  items.push({ label: inGroup || named ? 'Renommer le groupe…' : 'Créer un groupe…', click: () => { uiFocus('rename-group', tab.groupId); setTimeout(() => { try { chrome.webContents.focus(); } catch {} }, 80); } }); // focus explicite : le menu est une fenêtre à part, sinon le clavier reste sur la page
+  if (inGroup) items.push({ label: 'Sortir du groupe', click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
+  else if (named) items.push({ label: 'Dissoudre le groupe', click: () => { grp.title = null; grp.collapsed = false; sendState(); } });
   items.push({ type: 'separator' });
   items.push({ label: 'Fermer', danger: true, click: () => closeTab(id) });
   if (inGroup) items.push({ label: 'Fermer le groupe', danger: true, click: () => siblings.forEach((t) => closeTab(t.id)) });
@@ -1324,6 +1374,213 @@ function buildMenu() {
     ],
   }];
   Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+}
+
+// ---------- Claude : moteur de tâches ----------
+// Chaque tâche lance « claude -p » (CLI Claude Code, authentifié par l'abonnement de l'utilisateur)
+// en mode headless avec sortie stream-json : on relaie l'activité (recherches, lectures) et le
+// résultat final au panneau, en continu.
+const { spawn } = require('child_process');
+
+function claudePublicTasks() {
+  // volontairement sans le prompt complet répété partout : la liste reste légère à sérialiser
+  return claudeTasks;
+}
+function sendClaudeTasks() {
+  if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-tasks', claudePublicTasks());
+  persistClaudeTasks();
+}
+function claudeWorkDir() {
+  const dir = path.join(app.getPath('userData'), 'claude-tasks');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+function claudeActivity(task, label) {
+  task.activity.push({ t: Date.now(), label });
+  if (task.activity.length > 120) task.activity.splice(0, task.activity.length - 120);
+}
+// Une ligne JSON du flux « stream-json » du CLI → mise à jour de la tâche.
+function handleClaudeEvent(task, line) {
+  let ev; try { ev = JSON.parse(line); } catch { return; }
+  if (ev.type === 'system' && ev.subtype === 'init') {
+    task.sessionId = ev.session_id || null;
+    claudeActivity(task, 'Claude démarre…');
+  } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
+    for (const b of ev.message.content) {
+      if (b.type === 'text' && b.text) {
+        task.output += (task.output ? '\n\n' : '') + b.text;
+      } else if (b.type === 'tool_use') {
+        const i = b.input || {};
+        const label = b.name === 'WebSearch' ? 'Recherche web — ' + (i.query || '')
+          : b.name === 'WebFetch' ? 'Lecture — ' + (i.url || 'une page')
+          : b.name + (i.query || i.url ? ' — ' + (i.query || i.url) : '');
+        claudeActivity(task, label);
+      }
+    }
+  } else if (ev.type === 'result') {
+    task.status = ev.is_error ? 'error' : 'done';
+    if (typeof ev.result === 'string' && ev.result) task.output = ev.result; // le résultat final remplace le flux (évite les doublons)
+    if (ev.is_error) task.error = (typeof ev.result === 'string' && ev.result) || ev.subtype || 'Erreur';
+    task.durationMs = ev.duration_ms || null;
+    task.numTurns = ev.num_turns || null;
+    task.finishedAt = Date.now();
+    if (task.status === 'done') {
+      // finalité de la tâche : ouvrir UNIQUEMENT les pages-résultat listées par Claude (bloc nax-tabs).
+      // Pas de repli automatique sur les liens du rapport : ils incluent les sources, que l'utilisateur ne veut pas voir s'ouvrir.
+      task.tabs = claudeParseTabs(task);
+      claudeActivity(task, task.tabs.length ? 'Îlot ouvert — ' + task.tabs.length + ' onglet' + (task.tabs.length > 1 ? 's' : '') : 'Aucune page à ouvrir');
+      openClaudeIslandTabs(task, true);
+    }
+  }
+  sendClaudeTasks();
+}
+// Lance le CLI pour une tâche (démarrage ou reprise) et branche le flux stream-json dessus.
+function runClaudeProcess(task, prompt, resumeSession) {
+  const args = [
+    ...(resumeSession ? ['--resume', resumeSession] : []),
+    '-p', prompt + CLAUDE_TABS_SUFFIX, // la consigne « conclure par des onglets » ne fait pas partie du titre
+    '--output-format', 'stream-json', '--verbose',
+    // travail de recherche uniquement : pas d'écriture disque ni de shell
+    '--allowedTools', 'WebSearch,WebFetch',
+  ];
+  let proc = null;
+  try {
+    proc = spawn('claude', args, { cwd: claudeWorkDir(), env: process.env, windowsHide: true, shell: false });
+  } catch (e) {
+    task.status = 'error'; task.error = 'Lancement impossible : ' + e.message; task.finishedAt = Date.now();
+    sendClaudeTasks(); return;
+  }
+  claudeProcs.set(task.id, proc);
+  let buf = '', errBuf = '';
+  proc.stdout.on('data', (d) => {
+    buf += d.toString('utf8');
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (line) handleClaudeEvent(task, line);
+    }
+  });
+  proc.stderr.on('data', (d) => { errBuf = (errBuf + d.toString('utf8')).slice(-4000); });
+  proc.on('error', (e) => {
+    claudeProcs.delete(task.id);
+    if (task.status !== 'running') return;
+    task.status = 'error';
+    task.error = e.code === 'ENOENT'
+      ? 'CLI « claude » introuvable. Installe Claude Code (claude.com/claude-code) et connecte ton abonnement.'
+      : e.message;
+    task.finishedAt = Date.now();
+    sendClaudeTasks();
+  });
+  proc.on('close', (code) => {
+    claudeProcs.delete(task.id);
+    if (task.status === 'running') { // sorti sans événement « result »
+      task.status = code === 0 ? 'done' : 'error';
+      if (code !== 0 && !task.error) task.error = (errBuf || 'claude a quitté avec le code ' + code).trim();
+      task.finishedAt = Date.now();
+    }
+    sendClaudeTasks();
+  });
+}
+function startClaudeTask(prompt) {
+  const p = (prompt || '').trim();
+  if (!p) return null;
+  const task = {
+    id: claudeNextId++, prompt: p,
+    title: p.split('\n')[0].slice(0, 90),
+    status: 'running', createdAt: Date.now(), finishedAt: null,
+    output: '', error: null, activity: [], durationMs: null, numTurns: null, sessionId: null,
+    history: [], curPrompt: null,
+  };
+  claudeTasks.unshift(task);
+  runClaudeProcess(task, p, null);
+  sendClaudeTasks();
+  return task.id;
+}
+// Reprend une tâche terminée avec son contexte (--resume) pour demander une suite.
+function continueClaudeTask(id, prompt) {
+  const t = claudeTasks.find((x) => x.id === id);
+  const p = (prompt || '').trim();
+  if (!t || !p || t.status === 'running' || !t.sessionId) return;
+  // l'échange précédent passe dans l'historique, la carte repart sur la suite
+  t.history = t.history || [];
+  t.history.push({ prompt: t.curPrompt || null, output: t.output, error: t.error });
+  t.curPrompt = p; t.output = ''; t.error = null; t.tabs = null;
+  t.status = 'running'; t.createdAt = Date.now(); t.finishedAt = null;
+  t.activity = [];
+  runClaudeProcess(t, p, t.sessionId);
+  sendClaudeTasks();
+}
+function cancelClaudeTask(id) {
+  const t = claudeTasks.find((x) => x.id === id);
+  const proc = claudeProcs.get(id);
+  if (proc) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
+  if (t && t.status === 'running') {
+    t.status = 'canceled'; t.finishedAt = Date.now();
+    claudeActivity(t, 'Annulée');
+  }
+  sendClaudeTasks();
+}
+
+// ---------- Claude : îlots ----------
+// Un îlot « ouvert par Claude » est un groupe d'onglets ordinaire, marqué claude:true et
+// relié à sa tâche par claudeTaskId. bornAt sert à l'animation d'apparition côté UI.
+function claudeIslandOf(taskId) {
+  const g = groups.find((x) => x.claudeTaskId === taskId);
+  return g && tabs.some((t) => t.groupId === g.id) ? g : null;
+}
+function claudeIsland(task) {
+  let g = claudeIslandOf(task.id);
+  if (!g) {
+    groups = groups.filter((x) => x.claudeTaskId !== task.id); // retire un éventuel îlot vidé
+    g = { id: nextId++, title: task.title.slice(0, 48), claude: true, claudeTaskId: task.id, bornAt: Date.now() };
+    groups.push(g);
+  }
+  return g;
+}
+// La finalité d'une tâche est d'ouvrir des onglets : on impose à Claude de conclure par un
+// bloc ```nax-tabs``` listant les pages à ouvrir. Le bloc est retiré du rapport affiché.
+const CLAUDE_TABS_SUFFIX = '\n\nINSTRUCTION NAVIGATEUR (obligatoire) : la finalité de cette tâche est d\'ouvrir dans le navigateur les pages qui SONT le résultat demandé — uniquement elles. '
+  + 'N\'inclus JAMAIS tes sources de recherche, comparatifs, articles de presse ou pages intermédiaires consultées en chemin : seulement les pages finales que l\'utilisateur veut consulter. '
+  + 'Si la demande précise un nombre (« 3 freelances », « les 5 meilleurs… »), ouvre exactement ce nombre de pages ; sinon reste minimal (1 à 4). '
+  + 'Les URL viennent de tes recherches, jamais inventées. Termine ta réponse par un bloc de code ```nax-tabs``` contenant UNIQUEMENT ce tableau JSON :\n'
+  + '```nax-tabs\n[{"url":"https://exemple.com/page","title":"Titre court"}]\n```';
+function claudeParseTabs(task) {
+  const m = /```nax-tabs\s*([\s\S]*?)```/.exec(task.output || '');
+  if (!m) return [];
+  let arr;
+  try { arr = JSON.parse(m[1]); } catch { return []; }
+  task.output = (task.output.replace(m[0], '').trim()); // le bloc technique ne pollue pas le rapport
+  return (Array.isArray(arr) ? arr : [])
+    .map((x) => ({ url: String((x && x.url) || ''), title: String((x && x.title) || '').slice(0, 120) }))
+    .filter((x) => { try { return /^https?:$/.test(new URL(x.url).protocol); } catch { return false; } })
+    .slice(0, 10);
+}
+// Ouvre (ou complète) l'îlot de la tâche avec ses onglets ; active le premier onglet ouvert.
+function openClaudeIslandTabs(task, activate) {
+  const list = task.tabs || [];
+  if (!list.length) return;
+  const g = claudeIsland(task);
+  const already = new Set(tabs.filter((x) => x.groupId === g.id).map((x) => normalize(x.url)));
+  let first = null;
+  for (const it of list) {
+    if (already.has(normalize(it.url))) continue;
+    already.add(normalize(it.url));
+    const tb = newTab({ url: it.url, groupId: g.id, activate: false });
+    if (it.title) tb.title = it.title; // en attendant le vrai titre de la page
+    if (!first) first = tb;
+  }
+  if (first && activate) activateTab(first.id); else sendState();
+}
+// Sources d'une tâche : liens http(s) du markdown final, dans l'ordre, dédupliqués.
+function claudeTaskSources(task, max = 8) {
+  const seen = new Set(); const out = [];
+  const re = /\((https?:\/\/[^\s)]+)\)|<(https?:\/\/[^\s>]+)>|(?:^|[\s"'`[])(https?:\/\/[^\s)\]"'`<>]+)/g;
+  let m;
+  while ((m = re.exec(task.output || '')) && out.length < max) {
+    const raw = (m[1] || m[2] || m[3] || '').replace(/[.,;:!?]+$/, '');
+    try { const u = new URL(raw); if (!/^https?:$/.test(u.protocol) || seen.has(u.href)) continue; seen.add(u.href); out.push(u.href); } catch {}
+  }
+  return out;
 }
 
 // ---------- IPC ----------
@@ -1540,6 +1797,53 @@ function registerIpc() {
   ipcMain.on('pw-open', (_e, id) => { const p = passwords.find((x) => x.id === id); if (p && p.url) navigateCurrent(p.url); });
   ipcMain.on('pw-delete', (_e, id) => { passwords = passwords.filter((p) => p.id !== id); persistPasswords(); });
   ipcMain.on('pw-clear', () => { passwords = []; persistPasswords(); });
+
+  // ---------- Claude (tâches IA) ----------
+  ipcMain.on('claude-toggle', () => { claudeOpen = !claudeOpen; layout(); sendState(); persistClaudeTasks(); if (claudeOpen) sendClaudeTasks(); });
+  ipcMain.handle('claude-tasks', () => claudePublicTasks());
+  ipcMain.handle('claude-run', (_e, prompt) => startClaudeTask(prompt));
+  ipcMain.on('claude-cancel', (_e, id) => cancelClaudeTask(id));
+  ipcMain.on('claude-continue', (_e, o) => continueClaudeTask(o && o.id, o && o.prompt));
+  ipcMain.on('claude-remove', (_e, id) => {
+    const t = claudeTasks.find((x) => x.id === id);
+    if (t && t.status === 'running') cancelClaudeTask(id);
+    claudeTasks = claudeTasks.filter((x) => x.id !== id);
+    const g = groups.find((x) => x.claudeTaskId === id);
+    if (g) g.claudeTaskId = null; // l'îlot survit à sa tâche, mais n'y renvoie plus
+    sendClaudeTasks(); sendState();
+  });
+  ipcMain.on('claude-clear-done', () => { claudeTasks = claudeTasks.filter((t) => t.status === 'running'); sendClaudeTasks(); sendState(); });
+  ipcMain.on('claude-open-md', (_e, id) => { // ouvre le résultat dans la visionneuse Markdown existante (plein écran)
+    const t = claudeTasks.find((x) => x.id === id);
+    if (t && t.output && chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', { title: t.title, md: t.output });
+  });
+  // un lien cliqué dans le résultat s'ouvre dans l'îlot de la tâche (créé au premier lien)
+  ipcMain.on('claude-open-link', (_e, o) => {
+    const t = claudeTasks.find((x) => x.id === (o && o.id)); if (!t) return;
+    let u; try { u = new URL(o.url); } catch { return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    newTab({ url: u.href, groupId: claudeIsland(t).id });
+  });
+  // (ré)ouvre l'îlot de la tâche avec ses onglets (bloc nax-tabs, sinon liens du rapport)
+  ipcMain.on('claude-open-island', (_e, id) => {
+    const t = claudeTasks.find((x) => x.id === id); if (!t) return;
+    if (!t.tabs || !t.tabs.length) t.tabs = claudeTaskSources(t).map((url) => ({ url, title: '' }));
+    openClaudeIslandTabs(t, true);
+    sendClaudeTasks();
+  });
+  // retrouve l'îlot d'une tâche (active son onglet le plus récent)
+  ipcMain.on('claude-focus-island', (_e, id) => {
+    const g = claudeIslandOf(id); if (!g) return;
+    const members = tabs.filter((t) => t.groupId === g.id);
+    const mru = members.slice().sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0))[0];
+    if (mru) activateTab(mru.id);
+  });
+  // depuis l'îlot (badge ✦) → ouvre le panneau sur la tâche correspondante
+  ipcMain.on('claude-reveal-task', (_e, taskId) => {
+    if (!claudeOpen) { claudeOpen = true; layout(); }
+    sendState(); sendClaudeTasks();
+    if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-reveal', taskId);
+  });
 }
 
 // ---------- démarrage ----------
@@ -1555,7 +1859,7 @@ function cleanUserAgent() {
 // Couleurs des boutons système (réduire/agrandir/fermer) superposés, selon le thème.
 function overlayOptions() {
   const dark = nativeTheme.shouldUseDarkColors;
-  return { color: dark ? '#0a0d14' : '#f4f6fa', symbolColor: dark ? '#e8edf5' : '#10141c', height: NAV };
+  return { color: dark ? '#0a0d14' : '#f4f6fa', symbolColor: dark ? '#e8edf5' : '#10141c', height: NAV - 2 }; // 2 px de moins que le header : la barre de chargement (#progress, en bas) passe sous les boutons système
 }
 // Le thème pilote nativeTheme : Chromium force alors prefers-color-scheme partout
 // (interface + pages web), et le CSS bascule via sa media query, sans rechargement.
@@ -1579,6 +1883,8 @@ function createWindow() {
     titleBarStyle: 'hidden',          // pas de barre de titre système : le haut de l'UI fait office de header
     titleBarOverlay: overlayOptions(), // garde les boutons réduire/agrandir/fermer natifs en superposition
   });
+  // l'option icon de BaseWindow n'alimente pas la barre des tâches Windows : on la pose explicitement
+  try { win.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico'))); } catch {}
   chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js') } });
   win.contentView.addChildView(chrome);
   layout();
@@ -1635,6 +1941,9 @@ function initAutoUpdate() {
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  for (const [id, proc] of claudeProcs) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
   clearTimeout(saveTimer);
   try { fs.writeFileSync(STATE_FILE, JSON.stringify(snapshot())); } catch {}
+  clearTimeout(claudeSaveTimer);
+  try { fs.writeFileSync(CLAUDE_FILE, JSON.stringify({ tasks: claudeTasks, nextId: claudeNextId, claudeOpen })); } catch {}
 });

@@ -75,7 +75,7 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
-  renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit();
+  renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
   // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
   const showPill = !!state.navPrivate && !(state.split && state.split.active);
   document.body.classList.toggle('private-tab', showPill);
@@ -324,12 +324,22 @@ function renderTabs() {
     (gEl, g) => {
       // une « paire divisée » (2 onglets liés) n'est pas un vrai groupe : pas d'en-tête de groupe, juste le lien
       const pairOnly = g.members.length === 2 && g.members.some((m) => m.splitParent && g.members.some((o) => o.id === m.splitParent)) && !g.custom;
-      const multi = g.members.length > 1 && !pairOnly;
+      // un groupe « réel » : au moins 2 onglets, ou un seul onglet mais nommé (garde son nom, son état replié…), ou en cours de nommage
+      const multi = (g.members.length > 1 || !!g.custom || renamingGroup === g.id) && !pairOnly;
       const collapsed = multi && !!g.collapsed;
       gEl.classList.toggle('multi', multi);
       gEl.classList.toggle('pair', pairOnly);
       gEl.classList.toggle('collapsed', collapsed);
       gEl.classList.toggle('hasactive', collapsed && g.members.some((t) => isCurrent('tab', t.id)));
+      gEl.classList.toggle('claude', !!g.claude);
+      // îlot fraîchement ouvert par Claude : animation d'apparition (une seule fois, pas au redémarrage)
+      if (g.claude && !clSeenIslands.has(g.id)) {
+        clSeenIslands.add(g.id);
+        if (Date.now() - (g.bornAt || 0) < 6000) {
+          gEl.classList.add('island-born');
+          gEl.addEventListener('animationend', () => gEl.classList.remove('island-born'), { once: true });
+        }
+      }
       const head = gEl.querySelector('.group-title');
       head.style.display = multi ? '' : 'none';
       if (multi) renderGroupHead(head, g, collapsed);
@@ -349,9 +359,18 @@ function renderGroupHead(head, g, collapsed) {
     if (renaming) {
       const inp = el('input'); inp.value = g.custom ? g.title : ''; inp.placeholder = g.title;
       let done = false;
-      const finish = (save) => { if (done) return; done = true; renamingGroup = null; if (save) api.groupRename({ id: g.id, title: inp.value }); else render(); };
-      inp.onkeydown = (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
-      inp.onblur = () => finish(true);
+      // valider : champ vide = on adopte le nom par défaut (celui du placeholder) ; Échap = annuler sans rien changer
+      const finish = (save) => {
+        if (done) return; done = true; renamingGroup = null;
+        document.removeEventListener('mousedown', onDown, true);
+        if (save) api.groupRename({ id: g.id, title: inp.value.trim() || inp.placeholder }); else render();
+      };
+      // clic n'importe où hors du champ (onglet, page, autre groupe…) : on valide, sans dépendre du focus
+      const onDown = (e) => { if (e.target !== inp) finish(true); };
+      document.addEventListener('mousedown', onDown, true);
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
+      // perte de focus : si la barre latérale a gardé le clavier et que le champ l'a repris (rebond après le menu contextuel), on ignore ; sinon on valide
+      inp.onblur = () => setTimeout(() => { if (!(document.hasFocus() && document.activeElement === inp)) finish(true); }, 120);
       head.appendChild(inp);
       setTimeout(() => { inp.focus(); inp.select(); }, 0);
       return;
@@ -359,6 +378,12 @@ function renderGroupHead(head, g, collapsed) {
     const chev = el('button', 'g-chev'); chev.title = 'Réduire / déplier le groupe'; chev.appendChild(icon('i-forward'));
     chev.onclick = (e) => { e.stopPropagation(); if (!suppressClick) api.groupToggle(g.id); };
     head.appendChild(chev);
+    if (g.claude) { // badge « ouvert par Claude » : renvoie à la tâche dans le panneau
+      const spark = el('button', 'g-claude'); spark.title = 'Îlot ouvert par Claude — voir la tâche';
+      spark.appendChild(icon('i-spark'));
+      spark.onclick = (e) => { e.stopPropagation(); const tid = head.dataset.ctask; if (tid) api.claudeRevealTask(+tid); };
+      head.appendChild(spark);
+    }
     const name = el('span', 'name'); name.title = 'Clic pour réduire, double-clic pour renommer, glisser pour déplacer';
     name.ondblclick = (e) => { e.stopPropagation(); renamingGroup = g.id; render(); };
     name.onclick = () => { if (!suppressClick) api.groupToggle(g.id); };
@@ -367,9 +392,10 @@ function renderGroupHead(head, g, collapsed) {
     head.appendChild(el('span', 'n'));
     const x = el('button', 'icon-btn'); x.title = 'Fermer le groupe'; x.appendChild(icon('i-close'));
     x.onclick = (e) => { e.stopPropagation(); api.groupClose(g.id); }; head.appendChild(x);
-    head.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.icon-btn') && !e.target.closest('.g-chev') && head.dataset.mode === 'view') beginGroupDrag(e, g.id); });
+    head.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.icon-btn') && !e.target.closest('.g-chev') && !e.target.closest('.g-claude') && head.dataset.mode === 'view') beginGroupDrag(e, g.id); });
   }
   if (!renaming) {
+    head.dataset.ctask = g.claudeTaskId != null ? String(g.claudeTaskId) : '';
     const name = head.querySelector('.name');
     setText(name, g.title || 'Groupe'); name.classList.toggle('custom', !!g.custom);
     setText(head.querySelector('.n'), String(g.members.length));
@@ -428,7 +454,7 @@ function openFavCustom(id) {
   fcTarget = id; fcIcon = f.node.icon || null; fcColor = f.node.color || null;
   $('fc-icon-search').value = '';
   renderFcColors(); renderFcIcons(''); updateFcPreview();
-  showOverlay('fav-custom');
+  showOverlay('fav-custom', { over: true });
 }
 function updateFcPreview() {
   const p = $('fc-prev'); p.innerHTML = ''; p.appendChild(fcIcon ? lucideSvg(fcIcon) : icon('i-folder')); p.style.color = fcColor || 'var(--gold)';
@@ -440,23 +466,80 @@ function renderFcColors() {
   box.appendChild(mk(null));
   FC_COLORS.forEach((c) => box.appendChild(mk(c)));
 }
+const FC_CATS = [
+  { label: 'Dossiers', kw: 'dossier classeur', icons: ['Folder', 'FolderOpen', 'FolderClosed', 'FolderHeart', 'FolderLock', 'FolderCode', 'FolderCog', 'FolderGit2', 'FolderKanban', 'FolderSearch', 'FolderClock', 'FolderCheck', 'FolderArchive', 'FolderDown', 'FolderUp', 'FolderInput', 'FolderOutput', 'FolderPlus', 'FolderPen', 'FolderSync', 'FolderTree', 'FolderRoot', 'FolderDot', 'FolderKey', 'FolderSymlink', 'Archive', 'ArchiveRestore', 'Inbox', 'Layers', 'Box', 'Boxes', 'Package', 'Container'] },
+  { label: 'Travail & projets', kw: 'travail bureau projet entreprise pro boulot client', icons: ['Briefcase', 'BriefcaseBusiness', 'Building', 'Building2', 'Factory', 'Landmark', 'Store', 'Warehouse', 'ClipboardList', 'ClipboardCheck', 'ListTodo', 'ListChecks', 'Kanban', 'Target', 'Goal', 'Rocket', 'Lightbulb', 'Presentation', 'ChartBar', 'ChartLine', 'ChartPie', 'ChartColumn', 'ChartNoAxesCombined', 'TrendingUp', 'Handshake', 'Users', 'UserRound', 'Contact', 'IdCard', 'BadgeCheck', 'Award', 'Trophy', 'Medal', 'Crown', 'Flag', 'Milestone', 'Signpost', 'Megaphone', 'Newspaper', 'FileText', 'Files', 'FileStack', 'LayoutDashboard', 'LayoutGrid', 'Table', 'Sheet', 'Calculator', 'Paperclip', 'Pin', 'Pencil', 'PenTool', 'Highlighter', 'StickyNote', 'NotebookPen', 'Notebook', 'Stamp', 'Printer', 'Scan', 'Mailbox', 'Headset', 'Workflow', 'Network', 'Scale'] },
+  { label: 'Études & lecture', kw: 'etude ecole cours lecture apprendre formation', icons: ['BookOpen', 'Book', 'BookMarked', 'BookText', 'BookOpenCheck', 'Library', 'LibraryBig', 'GraduationCap', 'School', 'Backpack', 'Bookmark', 'BookmarkCheck', 'Languages', 'Type', 'Quote', 'TextCursorInput', 'ScrollText', 'Scroll', 'FileQuestion', 'BrainCircuit', 'Brain', 'Puzzle', 'Lightbulb', 'Glasses', 'Microscope', 'Telescope', 'FlaskConical', 'TestTube', 'Atom', 'Dna', 'Magnet', 'Orbit', 'Sigma', 'Pi', 'Binary', 'Earth', 'Globe'] },
+  { label: 'Dev & tech', kw: 'dev developpement code informatique ordinateur tech programmation', icons: ['Code', 'CodeXml', 'Terminal', 'SquareTerminal', 'Braces', 'Brackets', 'Bug', 'GitBranch', 'GitCommitHorizontal', 'GitMerge', 'GitPullRequest', 'GitFork', 'Database', 'Server', 'HardDrive', 'Cpu', 'MemoryStick', 'Microchip', 'CircuitBoard', 'Monitor', 'Laptop', 'Smartphone', 'Tablet', 'Keyboard', 'Mouse', 'Router', 'Wifi', 'Cloud', 'CloudUpload', 'CloudDownload', 'Link', 'Webhook', 'Blocks', 'Cog', 'Settings', 'Wrench', 'Bot', 'Sparkles', 'WandSparkles', 'Zap', 'Plug', 'Power', 'Bluetooth', 'Usb', 'QrCode', 'ScanLine', 'Fingerprint', 'Shield', 'ShieldCheck', 'Lock', 'KeyRound', 'Key', 'AppWindow', 'Component', 'FileCode', 'FileJson', 'Regex', 'Variable', 'Hash', 'Command', 'Globe', 'SatelliteDish', 'Radar', 'Rss'] },
+  { label: 'Finances & achats', kw: 'finance argent banque budget compte facture achat courses boutique', icons: ['Wallet', 'WalletCards', 'CreditCard', 'Banknote', 'Coins', 'PiggyBank', 'Receipt', 'ReceiptText', 'ReceiptEuro', 'Euro', 'DollarSign', 'PoundSterling', 'Bitcoin', 'Percent', 'BadgeEuro', 'BadgeDollarSign', 'BadgePercent', 'HandCoins', 'CircleDollarSign', 'ChartCandlestick', 'FileSpreadsheet', 'Vault', 'Landmark', 'ShoppingCart', 'ShoppingBag', 'ShoppingBasket', 'Tag', 'Tags', 'Ticket', 'Tickets', 'Gift', 'Barcode', 'Store', 'Truck', 'PackageCheck', 'Calculator', 'TrendingDown', 'TrendingUp', 'Scale'] },
+  { label: 'Maison & quotidien', kw: 'maison famille foyer quotidien logement appartement', icons: ['House', 'HousePlus', 'Sofa', 'Bed', 'BedDouble', 'Lamp', 'LampDesk', 'LampCeiling', 'Bath', 'DoorOpen', 'DoorClosed', 'Fence', 'Key', 'Hammer', 'Wrench', 'Drill', 'Paintbrush', 'PaintRoller', 'PaintBucket', 'Ruler', 'Scissors', 'Shirt', 'WashingMachine', 'Refrigerator', 'Microwave', 'CookingPot', 'ChefHat', 'Utensils', 'UtensilsCrossed', 'Trash2', 'Recycle', 'Lightbulb', 'Thermometer', 'Fan', 'AirVent', 'Plug', 'Baby', 'Users', 'Heart', 'HeartHandshake', 'Dog', 'Cat', 'PawPrint', 'Bird', 'Fish', 'Rabbit', 'Squirrel', 'Turtle', 'Bone', 'Flower', 'Flower2', 'Sprout', 'Leaf', 'TreePine', 'TreeDeciduous', 'Trees', 'Shovel', 'Mailbox', 'Phone', 'Car'] },
+  { label: 'Voyages & lieux', kw: 'voyage vacances transport lieu carte deplacement', icons: ['Plane', 'PlaneTakeoff', 'PlaneLanding', 'TrainFront', 'TramFront', 'Bus', 'Car', 'CarFront', 'CarTaxiFront', 'Bike', 'Ship', 'Sailboat', 'Anchor', 'Fuel', 'Map', 'MapPin', 'MapPinned', 'Compass', 'Navigation', 'Route', 'Luggage', 'Backpack', 'Tent', 'TentTree', 'Mountain', 'MountainSnow', 'TreePalm', 'Sun', 'Umbrella', 'Hotel', 'BedDouble', 'Caravan', 'Earth', 'Globe', 'Footprints', 'Ticket', 'Camera', 'Landmark', 'Castle', 'Church', 'Waves', 'Snowflake', 'Palmtree', 'Sunrise', 'Sunset', 'Binoculars'] },
+  { label: 'Santé & sport', kw: 'sante medical medecin sport fitness bien-etre corps', icons: ['HeartPulse', 'Activity', 'Stethoscope', 'Pill', 'Syringe', 'Dumbbell', 'Bike', 'Footprints', 'Flame', 'Apple', 'Carrot', 'Salad', 'Weight', 'Timer', 'Watch', 'Hospital', 'Cross', 'BriefcaseMedical', 'Bandage', 'Brain', 'Eye', 'Ear', 'Moon', 'BedSingle', 'Smile', 'Volleyball', 'Trophy', 'Medal', 'Target', 'Droplet', 'Leaf', 'Wind', 'Accessibility', 'Ambulance', 'Biohazard', 'Hand', 'PersonStanding', 'Baby'] },
+  { label: 'Médias & loisirs', kw: 'media musique film video photo jeu loisir divertissement sortie', icons: ['Music', 'Music2', 'Headphones', 'Mic', 'Radio', 'Disc', 'Disc3', 'Guitar', 'Piano', 'Drum', 'Film', 'Clapperboard', 'Video', 'Tv', 'Play', 'Camera', 'Image', 'Images', 'Aperture', 'Palette', 'Brush', 'Gamepad2', 'Dice5', 'Joystick', 'Puzzle', 'Swords', 'Ghost', 'Skull', 'Drama', 'Theater', 'Popcorn', 'PartyPopper', 'Cake', 'Wine', 'Beer', 'Martini', 'Coffee', 'CupSoda', 'Pizza', 'IceCreamCone', 'Candy', 'Cookie', 'Croissant', 'Podcast', 'Rss', 'BookOpen', 'Newspaper', 'Ticket', 'Spade', 'Club', 'Diamond', 'Origami', 'Shapes'] },
+  { label: 'Communication', kw: 'communication message courrier mail contact reseau social', icons: ['Mail', 'Mails', 'MailOpen', 'Inbox', 'Send', 'MessageCircle', 'MessageSquare', 'MessagesSquare', 'Phone', 'PhoneCall', 'AtSign', 'Hash', 'Share2', 'Bell', 'BellRing', 'Users', 'UserPlus', 'UsersRound', 'Contact', 'Megaphone', 'Rss', 'Voicemail', 'Video', 'Headset', 'Speech', 'Languages'] },
+  { label: 'Temps & organisation', kw: 'temps agenda planning organisation rappel date', icons: ['Calendar', 'CalendarDays', 'CalendarCheck', 'CalendarClock', 'CalendarHeart', 'CalendarRange', 'Clock', 'Clock3', 'AlarmClock', 'Hourglass', 'Timer', 'Watch', 'History', 'Repeat', 'RefreshCw', 'ListTodo', 'ListChecks', 'CheckCheck', 'CircleCheck', 'SquareCheck', 'Pin', 'Flag', 'Bookmark', 'Star', 'Milestone', 'Route', 'Sunrise', 'Sunset', 'Bell', 'Archive', 'Inbox'] },
+  { label: 'Symboles & nature', kw: 'symbole forme nature meteo divers', icons: ['Star', 'Heart', 'Flag', 'Bookmark', 'Pin', 'Tag', 'Circle', 'Square', 'Triangle', 'Hexagon', 'Pentagon', 'Diamond', 'Gem', 'Sparkle', 'Sparkles', 'Zap', 'Flame', 'Sun', 'Moon', 'CloudSun', 'CloudRain', 'CloudLightning', 'Snowflake', 'Rainbow', 'Droplet', 'Droplets', 'Waves', 'Wind', 'Tornado', 'Infinity', 'Asterisk', 'Hash', 'Check', 'CircleCheck', 'TriangleAlert', 'Info', 'CircleHelp', 'Eye', 'EyeOff', 'Lock', 'LockOpen', 'Shield', 'ShieldAlert', 'Smile', 'Frown', 'Meh', 'Laugh', 'Angry', 'ThumbsUp', 'ThumbsDown', 'Hand', 'Crown', 'Anchor', 'Atom', 'Rocket', 'Satellite', 'Egg', 'Ghost', 'Skull', 'Leaf', 'Flower', 'TreePine', 'Bird', 'Bug', 'Shell', 'Feather', 'Clover', 'Cherry', 'Grape', 'Banana', 'Citrus', 'Wheat', 'Mountain', 'Globe', 'Lightbulb', 'Bolt', 'Target', 'Award', 'Medal', 'Trophy', 'Gift', 'PartyPopper', 'Dot', 'Ellipsis', 'Plus', 'Minus', 'X', 'Slash', 'Percent', 'Ampersand', 'Equal'] },
+];
+// Recherche en français : mot (sans accent) → termes anglais présents dans les noms Lucide
+const FC_SYN = {
+  maison: ['house', 'home'], foyer: ['house'], logement: ['house', 'hotel'], voiture: ['car'], auto: ['car'], camion: ['truck'], train: ['train', 'tram'], moto: ['bike'], velo: ['bike'], avion: ['plane'], bateau: ['ship', 'sailboat'], ancre: ['anchor'],
+  argent: ['wallet', 'coins', 'banknote', 'dollar', 'euro', 'piggy'], banque: ['landmark', 'vault', 'banknote'], budget: ['wallet', 'piggy', 'calculator'], portefeuille: ['wallet'], piece: ['coins'], pieces: ['coins'], billet: ['banknote', 'ticket'], tirelire: ['piggy'], facture: ['receipt'], factures: ['receipt'], recu: ['receipt'], carte: ['card', 'map'], paiement: ['credit', 'wallet'], achat: ['shopping', 'store', 'bag'], achats: ['shopping', 'store', 'bag'], courses: ['shopping', 'basket'], boutique: ['store', 'shopping'], magasin: ['store'], panier: ['basket', 'cart'], cadeau: ['gift'], cadeaux: ['gift'], prix: ['tag', 'percent', 'award'], etiquette: ['tag'], promo: ['percent'], impot: ['landmark', 'receipt'], impots: ['landmark', 'receipt'],
+  musique: ['music', 'headphones', 'disc', 'guitar', 'piano'], chanson: ['music'], casque: ['headphones', 'headset'], micro: ['mic'], film: ['film', 'clapperboard', 'video'], films: ['film', 'clapperboard'], cinema: ['film', 'clapperboard', 'popcorn'], video: ['video', 'film'], videos: ['video', 'film'], serie: ['tv', 'film'], series: ['tv', 'film'], tele: ['tv'], television: ['tv'], photo: ['camera', 'image', 'aperture'], photos: ['camera', 'images'], image: ['image'], jeu: ['gamepad', 'dice', 'joystick', 'puzzle'], jeux: ['gamepad', 'dice', 'joystick', 'puzzle'], manette: ['gamepad', 'joystick'], de: ['dice'], livre: ['book'], livres: ['book', 'library'], lecture: ['book', 'glasses'], bibliotheque: ['library'], journal: ['newspaper'], actu: ['newspaper', 'rss'], actualite: ['newspaper', 'rss'], actualites: ['newspaper', 'rss'], veille: ['newspaper', 'rss', 'radar'], podcast: ['podcast', 'mic'], flux: ['rss'], peinture: ['palette', 'brush', 'paint'], dessin: ['palette', 'brush', 'pen'], art: ['palette', 'brush', 'drama'], theatre: ['drama', 'theater'], fete: ['party', 'cake'], anniversaire: ['cake', 'gift', 'party'], soiree: ['party', 'martini', 'wine'],
+  travail: ['briefcase', 'building'], boulot: ['briefcase'], bureau: ['briefcase', 'building', 'lamp'], entreprise: ['building', 'briefcase', 'factory'], societe: ['building'], usine: ['factory'], client: ['users', 'handshake', 'contact'], clients: ['users', 'contact'], projet: ['kanban', 'rocket', 'target'], projets: ['kanban', 'folder'], tache: ['list', 'check'], taches: ['list', 'check'], reunion: ['presentation', 'users'], objectif: ['target', 'goal'], objectifs: ['target', 'goal'], but: ['goal', 'target'], idee: ['lightbulb'], idees: ['lightbulb'], graphique: ['chart', 'trending'], stats: ['chart', 'trending'], statistiques: ['chart'], tableau: ['table', 'sheet', 'chart'], contrat: ['file', 'scroll', 'stamp'], contrats: ['file', 'scroll', 'stamp'], document: ['file'], documents: ['files'], fichier: ['file'], fichiers: ['files'], note: ['sticky', 'notebook'], notes: ['sticky', 'notebook'], carnet: ['notebook'], cahier: ['notebook'], crayon: ['pencil'], stylo: ['pen'], trombone: ['paperclip'], punaise: ['pin'], epingle: ['pin'], imprimante: ['printer'], impression: ['printer'], scanner: ['scan'], recrutement: ['users', 'id', 'contact'], cv: ['id', 'file'], emploi: ['briefcase'], job: ['briefcase'], equipe: ['users'], personne: ['user'], personnes: ['users'], utilisateur: ['user'], contacts: ['contact', 'users'], recompense: ['award', 'trophy', 'medal'], trophee: ['trophy'], medaille: ['medal'], couronne: ['crown'], drapeau: ['flag'], admin: ['briefcase', 'file', 'stamp', 'landmark'], administratif: ['file', 'stamp', 'landmark'], papiers: ['files', 'id', 'stamp'],
+  etude: ['book', 'graduation', 'school'], etudes: ['book', 'graduation', 'school'], ecole: ['school', 'graduation'], cours: ['book', 'graduation', 'presentation'], formation: ['graduation', 'book'], universite: ['graduation', 'school'], diplome: ['graduation', 'award'], apprendre: ['book', 'brain'], langue: ['languages'], langues: ['languages'], science: ['flask', 'atom', 'microscope', 'test'], chimie: ['flask', 'test'], physique: ['atom', 'magnet'], maths: ['sigma', 'pi', 'calculator'], bio: ['dna', 'microscope'], espace: ['rocket', 'orbit', 'satellite', 'telescope'],
+  dev: ['code', 'terminal', 'git', 'bug'], code: ['code', 'braces', 'terminal'], programmation: ['code', 'terminal'], informatique: ['code', 'laptop', 'monitor', 'cpu'], ordinateur: ['laptop', 'monitor'], pc: ['monitor', 'laptop'], ecran: ['monitor'], telephone: ['phone', 'smartphone'], portable: ['smartphone', 'laptop'], tablette: ['tablet'], clavier: ['keyboard'], souris: ['mouse'], serveur: ['server', 'database'], serveurs: ['server'], base: ['database'], donnees: ['database'], reseau: ['network', 'wifi', 'router'], internet: ['globe', 'wifi'], web: ['globe', 'code'], site: ['globe', 'app'], lien: ['link'], liens: ['link'], nuage: ['cloud'], puce: ['cpu', 'chip', 'microchip'], processeur: ['cpu'], memoire: ['memory'], disque: ['disc', 'hard'], robot: ['bot'], ia: ['bot', 'brain', 'sparkles'], intelligence: ['brain', 'bot'], cerveau: ['brain'], outil: ['wrench', 'hammer', 'cog'], outils: ['wrench', 'hammer', 'cog'], parametre: ['settings', 'cog'], parametres: ['settings', 'cog'], reglage: ['settings', 'cog'], reglages: ['settings', 'cog'], securite: ['shield', 'lock', 'key'], mot: ['key', 'lock'], passe: ['key', 'lock'], cadenas: ['lock'], verrou: ['lock'], cle: ['key'], cles: ['key'], bouclier: ['shield'], empreinte: ['fingerprint'], prise: ['plug'], energie: ['zap', 'bolt', 'power'], eclair: ['zap', 'bolt', 'lightning'], bogue: ['bug'],
+  sante: ['heart', 'pulse', 'stethoscope', 'pill', 'hospital'], medecin: ['stethoscope', 'hospital'], docteur: ['stethoscope'], hopital: ['hospital'], medicament: ['pill'], medicaments: ['pill'], pharmacie: ['pill', 'cross'], sport: ['dumbbell', 'bike', 'volleyball', 'activity'], sports: ['dumbbell', 'bike', 'volleyball', 'activity'], muscu: ['dumbbell'], fitness: ['dumbbell', 'activity'], course: ['footprints', 'timer'], running: ['footprints'], marche: ['footprints'], foot: ['volleyball'], ballon: ['volleyball'], poids: ['weight', 'dumbbell'], regime: ['apple', 'salad', 'carrot'], nutrition: ['apple', 'salad'], sommeil: ['moon', 'bed'], dormir: ['bed', 'moon'], oeil: ['eye'], yeux: ['eye', 'glasses'], lunettes: ['glasses'], coeur: ['heart'], main: ['hand'], bebe: ['baby'], enfant: ['baby'], enfants: ['baby', 'users'], famille: ['users', 'house', 'heart'],
+  cuisine: ['chef', 'cooking', 'utensils'], recette: ['chef', 'cooking', 'utensils'], recettes: ['chef', 'cooking', 'utensils'], manger: ['utensils', 'pizza', 'salad'], nourriture: ['utensils', 'pizza', 'apple'], repas: ['utensils'], restaurant: ['utensils', 'chef'], resto: ['utensils', 'chef'], restos: ['utensils', 'chef'], cafe: ['coffee'], the: ['coffee', 'cup'], vin: ['wine'], biere: ['beer'], cocktail: ['martini'], gateau: ['cake'], glace: ['ice'], bonbon: ['candy'], frigo: ['refrigerator'], four: ['microwave'], lessive: ['washing'], menage: ['trash', 'washing'], poubelle: ['trash'], recyclage: ['recycle'], lit: ['bed'], canape: ['sofa'], salon: ['sofa', 'lamp'], lampe: ['lamp'], lumiere: ['lamp', 'lightbulb', 'sun'], porte: ['door'], bain: ['bath'], douche: ['bath'], jardin: ['flower', 'sprout', 'shovel', 'tree'], plante: ['sprout', 'leaf', 'flower'], plantes: ['sprout', 'leaf', 'flower'], fleur: ['flower'], fleurs: ['flower'], arbre: ['tree'], arbres: ['trees'], feuille: ['leaf'], bricolage: ['hammer', 'wrench', 'drill', 'ruler'], travaux: ['hammer', 'drill', 'paint'], marteau: ['hammer'], perceuse: ['drill'], ciseaux: ['scissors'], regle: ['ruler'], vetement: ['shirt'], vetements: ['shirt'], mode: ['shirt'], chien: ['dog'], chat: ['cat'], animal: ['paw', 'dog', 'cat'], animaux: ['paw', 'dog', 'cat', 'bird', 'fish'], oiseau: ['bird'], poisson: ['fish'], lapin: ['rabbit'], tortue: ['turtle'], os: ['bone'], patte: ['paw'], thermometre: ['thermometer'], chauffage: ['thermometer', 'flame'], ventilateur: ['fan'], courrier: ['mail', 'mailbox'],
+  voyage: ['plane', 'luggage', 'map', 'compass'], voyages: ['plane', 'luggage', 'map'], vacances: ['plane', 'palm', 'tent', 'sun', 'umbrella'], valise: ['luggage'], bagage: ['luggage'], sac: ['backpack', 'bag'], hotel: ['hotel', 'bed'], camping: ['tent'], tente: ['tent'], montagne: ['mountain'], ski: ['mountain', 'snowflake'], plage: ['palm', 'umbrella', 'sun', 'waves'], mer: ['waves', 'ship', 'anchor'], plan: ['map'], lieu: ['map', 'pin'], lieux: ['map', 'pin'], adresse: ['map', 'pin'], itineraire: ['route', 'navigation'], route: ['route', 'car'], trajet: ['route', 'navigation'], boussole: ['compass'], monde: ['globe', 'earth'], terre: ['earth', 'globe'], pays: ['globe', 'flag'], ville: ['building', 'castle'], chateau: ['castle'], eglise: ['church'], essence: ['fuel'], carburant: ['fuel'], billets: ['ticket'], jumelles: ['binoculars'],
+  mails: ['mail'], email: ['mail'], message: ['message'], messages: ['message'], sms: ['message'], discussion: ['message'], appel: ['phone'], envoyer: ['send'], envoi: ['send'], partage: ['share'], partager: ['share'], notification: ['bell'], notifications: ['bell'], cloche: ['bell'], social: ['users', 'share', 'at'], reseaux: ['users', 'share', 'at', 'network'], arobase: ['at'], parole: ['speech', 'message'],
+  agenda: ['calendar'], calendrier: ['calendar'], date: ['calendar'], rdv: ['calendar', 'clock'], rendez: ['calendar'], planning: ['calendar', 'kanban'], temps: ['clock', 'hourglass', 'timer'], heure: ['clock'], horloge: ['clock'], montre: ['watch'], reveil: ['alarm'], alarme: ['alarm'], minuteur: ['timer'], chrono: ['timer'], sablier: ['hourglass'], historique: ['history'], rappel: ['bell', 'alarm', 'calendar'], rappels: ['bell', 'alarm'], repeter: ['repeat', 'refresh'], routine: ['repeat', 'calendar'], archives: ['archive'], boite: ['inbox', 'box', 'package'], colis: ['package'], carton: ['box', 'package'], paquet: ['package'], faire: ['list', 'check'], liste: ['list'], coche: ['check'], valide: ['check'], fait: ['check'], important: ['star', 'flag', 'alert'], favori: ['star', 'bookmark', 'heart'], favoris: ['star', 'bookmark', 'heart'], etoile: ['star'], marque: ['bookmark'],
+  symbole: ['circle', 'square', 'triangle', 'hexagon', 'diamond'], forme: ['circle', 'square', 'triangle', 'hexagon'], rond: ['circle'], cercle: ['circle'], carre: ['square'], losange: ['diamond'], diamant: ['diamond', 'gem'], bijou: ['gem'], soleil: ['sun'], lune: ['moon'], nuit: ['moon'], meteo: ['cloud', 'sun', 'rain', 'snowflake'], pluie: ['rain'], neige: ['snowflake'], orage: ['lightning', 'tornado'], vent: ['wind'], eau: ['droplet', 'waves'], goutte: ['droplet'], vague: ['waves'], feu: ['flame'], flamme: ['flame'], chaud: ['flame', 'sun', 'thermometer'], froid: ['snowflake', 'thermometer'], arc: ['rainbow'], ciel: ['cloud', 'rainbow'], nature: ['leaf', 'tree', 'flower', 'mountain'], fruit: ['apple', 'cherry', 'grape', 'banana', 'citrus'], fruits: ['apple', 'cherry', 'grape', 'banana', 'citrus'], pomme: ['apple'], carotte: ['carrot'], legume: ['carrot', 'salad'], legumes: ['carrot', 'salad'], oeuf: ['egg'], ble: ['wheat'], plume: ['feather'], trefle: ['clover'], chance: ['clover', 'dice'], coquillage: ['shell'], fantome: ['ghost'], crane: ['skull'], mort: ['skull'], epee: ['sword'], epees: ['swords'], fusee: ['rocket'], atome: ['atom'], infini: ['infinity'], alerte: ['alert', 'triangle'], attention: ['alert', 'triangle'], danger: ['alert', 'biohazard', 'skull'], aide: ['help', 'info'], question: ['help', 'question'], pouce: ['thumbs'], sourire: ['smile', 'laugh'], triste: ['frown'], colere: ['angry'], visible: ['eye'], cache: ['eye'], secret: ['eye', 'lock', 'key'], prive: ['lock', 'eye'], perso: ['user', 'house', 'heart'], personnel: ['user', 'house', 'heart'], moins: ['minus'], croix: ['x', 'cross'], point: ['dot'], points: ['ellipsis'], pourcent: ['percent'], egal: ['equal'],
+};
+const FC_NORM = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const fcWordsCache = new Map();
+function fcWords(name) {
+  let w = fcWordsCache.get(name);
+  if (!w) { w = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase(); fcWordsCache.set(name, w); }
+  return w;
+}
+// Une icône correspond si chaque mot de la requête se retrouve (lui-même ou via un synonyme) dans son nom ou dans les mots-clés de sa catégorie
+function fcMatch(name, cat, terms) {
+  const words = fcWords(name), catWords = FC_NORM(cat.label + ' ' + cat.kw);
+  return terms.every((t) => {
+    const cands = [t].concat(FC_SYN[t] || []);
+    return cands.some((c) => words.includes(c)) || catWords.includes(t);
+  });
+}
+function fcSelect(name) {
+  fcIcon = name;
+  document.querySelectorAll('#fc-icons .fc-icon').forEach((b) => b.classList.toggle('sel', (b.dataset.icon || null) === (name || null)));
+  updateFcPreview();
+}
 function renderFcIcons(q) {
-  const box = $('fc-icons'); box.innerHTML = '';
+  const box = $('fc-icons'); box.innerHTML = ''; box.scrollTop = 0;
   const lib = window.lucide && window.lucide.icons;
   // option « dossier par défaut »
   const def = el('button', 'fc-icon' + (!fcIcon ? ' sel' : '')); def.title = 'Dossier (par défaut)'; def.appendChild(icon('i-folder'));
-  def.onclick = () => { fcIcon = null; renderFcIcons($('fc-icon-search').value); updateFcPreview(); }; box.appendChild(def);
+  def.onclick = () => fcSelect(null); box.appendChild(def);
   if (!lib) { box.appendChild(el('div', 'muted', 'Bibliothèque d’icônes indisponible.')); return; }
-  const ql = (q || '').trim().toLowerCase();
-  let names = Object.keys(lib);
-  if (ql) names = names.filter((n) => n.toLowerCase().includes(ql));
-  names = names.slice(0, 160);
-  for (const name of names) {
-    const b = el('button', 'fc-icon' + (name === fcIcon ? ' sel' : '')); b.title = name;
-    b.appendChild(lucideSvg(name));
-    b.onclick = () => { fcIcon = name; renderFcIcons($('fc-icon-search').value); updateFcPreview(); };
-    box.appendChild(b);
+  const terms = FC_NORM(q).split(/\s+/).filter(Boolean);
+  const frag = document.createDocumentFragment();
+  let count = 0;
+  for (const cat of FC_CATS) {
+    const names = cat.icons.filter((n) => lib[n] && (!terms.length || fcMatch(n, cat, terms)));
+    if (!names.length) continue;
+    frag.appendChild(el('div', 'fc-sec', cat.label));
+    for (const name of names) {
+      const b = el('button', 'fc-icon' + (name === fcIcon ? ' sel' : '')); b.title = name; b.dataset.icon = name;
+      b.appendChild(lucideSvg(name));
+      b.onclick = () => fcSelect(name);
+      frag.appendChild(b); count++;
+    }
   }
+  if (!count) frag.appendChild(el('div', 'fc-empty muted', 'Aucune icône ne correspond.'));
+  box.appendChild(frag);
+  // ramener l'icône sélectionnée dans la zone visible
+  const sel = box.querySelector('.fc-icon.sel[data-icon]'); if (sel) sel.scrollIntoView({ block: 'center' });
 }
 $('fc-icon-search').addEventListener('input', (e) => renderFcIcons(e.target.value));
 $('fc-close').onclick = closeOverlay;
@@ -857,8 +940,19 @@ $('split-divider').addEventListener('mousedown', (e) => {
 
 // ---------- overlays ----------
 let openOverlay = null;
-function showOverlay(id) { closeOverlay(); openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true); }
-function closeOverlay() { if (!openOverlay) return; $(openOverlay).classList.add('hidden'); openOverlay = null; api.overlay(false); }
+let overlayParent = null; // overlay masqué sous une modale ouverte « par-dessus » ({ over: true }), restauré à la fermeture
+function showOverlay(id, opts) {
+  const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
+  if (openOverlay) $(openOverlay).classList.add('hidden');
+  overlayParent = over ? openOverlay : null;
+  openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
+}
+function closeOverlay() {
+  if (!openOverlay) return;
+  $(openOverlay).classList.add('hidden');
+  if (overlayParent) { openOverlay = overlayParent; overlayParent = null; $(openOverlay).classList.remove('hidden'); return; }
+  openOverlay = null; api.overlay(false);
+}
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openOverlay) { e.preventDefault(); closeOverlay(); } });
 document.querySelectorAll('.overlay').forEach((o) => o.addEventListener('mousedown', (e) => { if (e.target === o) closeOverlay(); }));
 
@@ -888,12 +982,20 @@ function renderFolder() {
   back.onclick = () => { pFolder = null; pInput.value = ''; runSearch(); };
   pRes.appendChild(back);
   const q = pInput.value.trim().toLowerCase();
-  const kids = kidsAll.filter((n) => !q || (n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q));
+  // Sans requête : contenu direct. Avec requête : tout le sous-arbre, chaque résultat portant le chemin de son sous-dossier.
+  let kids = [];
+  if (!q) kids = kidsAll.map((n) => ({ n, path: '' }));
+  else (function walk(ns, path) {
+    for (const n of ns) {
+      if ((n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q)) kids.push({ n, path });
+      if (n.children) walk(n.children, path ? path + ' › ' + (n.title || 'Dossier') : (n.title || 'Dossier'));
+    }
+  })(kidsAll, '');
   pRes.appendChild(el('div', 'res-section', q ? 'Résultats' : (root ? 'Tous les favoris' : 'Contenu du dossier')));
-  for (const n of kids) {
+  for (const { n, path } of kids) {
     const it = n.type === 'folder'
-      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null }
-      : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon };
+      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null, path }
+      : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon, path };
     pItems.push(it); pRes.appendChild(resRow(it, pItems.length - 1));
   }
   if (!kids.length) pRes.appendChild(el('div', 'empty-msg', q ? 'Rien ne correspond.' : 'Dossier vide.'));
@@ -927,7 +1029,7 @@ function resRow(it, i) {
   t.appendChild(el('div', 'title', it.title || it.url || 'Dossier'));
   t.appendChild(el('div', 'url', isFolder ? (it.count ? it.count + (it.count > 1 ? ' éléments' : ' élément') : 'Dossier vide') : it.url));
   row.appendChild(t);
-  const tag = isFolder ? 'dossier' : it.kind === 'open' ? (it.group || '') : it.kind === 'dormant' ? 'en veille' : it.kind === 'favorite' ? 'favori' : it.kind === 'archive' ? `fermé ${ago(it.closedAt)}` : `${it.count}×`;
+  const tag = isFolder ? (it.path || 'dossier') : it.kind === 'open' ? (it.group || '') : it.kind === 'dormant' ? 'en veille' : it.kind === 'favorite' ? (it.path || 'favori') : it.kind === 'archive' ? `fermé ${ago(it.closedAt)}` : `${it.count}×`;
   if (tag) row.appendChild(el('span', 'tag' + (it.kind === 'dormant' ? ' dormant' : '') + (isFolder ? ' folder' : ''), tag));
   if (isFolder) row.appendChild(icon('i-forward', 'res-chev'));
   row.onclick = (e) => choose(it, e.ctrlKey);
@@ -982,6 +1084,41 @@ $('archive-btn').onclick = async () => {
   });
 };
 $('archive-close').onclick = closeOverlay;
+
+// Historique
+let histItems = [];
+function renderHistory() {
+  const box = $('history-list'); box.innerHTML = '';
+  const q = $('history-search').value.trim().toLowerCase();
+  const items = q ? histItems.filter((h) => ((h.title || '') + ' ' + h.url).toLowerCase().includes(q)) : histItems;
+  if (!items.length) { box.appendChild(el('div', 'empty-msg', q ? 'Aucune page ne correspond.' : 'Aucune page visitée pour le moment.')); return; }
+  let lastDay = '';
+  items.forEach((h, index) => {
+    const day = h.last ? new Date(h.last).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : 'Plus ancien';
+    if (day !== lastDay) { box.appendChild(el('div', 'day', day)); lastDay = day; }
+    const row = el('div', 'res'); row.style.setProperty('--i', Math.min(index, 14));
+    const img = el('img'); img.src = `https://www.google.com/s2/favicons?domain=${hostOf(h.url)}&sz=32`; img.alt = ''; row.appendChild(img);
+    const t = el('div', 't'); t.appendChild(el('div', 'title', h.title || stripScheme(h.url))); t.appendChild(el('div', 'url', stripScheme(h.url))); row.appendChild(t);
+    if (h.last) row.appendChild(el('span', 'meta', new Date(h.last).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })));
+    const rm = el('button', 'rm'); rm.title = 'Supprimer de l’historique'; rm.appendChild(icon('i-close'));
+    rm.onclick = (e) => { e.stopPropagation(); api.historyRemove(h.key); histItems = histItems.filter((x) => x.key !== h.key); row.remove(); };
+    row.appendChild(rm);
+    row.onclick = () => { closeOverlay(); api.openUrl(h.url); };
+    row.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); api.openUrlNew(h.url); } };
+    box.appendChild(row);
+  });
+}
+$('history-btn').onclick = async () => {
+  showOverlay('history');
+  $('history-search').value = '';
+  histItems = await api.historyList().catch(() => []);
+  renderHistory();
+  $('history-search').focus();
+};
+$('history-search').addEventListener('input', renderHistory);
+$('history-search').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; renderHistory(); } });
+$('history-clear').onclick = async () => { await api.clearBrowsingData({ history: true }); histItems = []; renderHistory(); };
+$('history-close').onclick = closeOverlay;
 
 // Ajout d'appli
 $('app-add').onclick = () => { showOverlay('addapp'); $('addapp-input').value = ''; $('addapp-input').focus(); };
@@ -1543,7 +1680,7 @@ function renderPasswords() {
     const big = el('div', 'big'); big.appendChild(icon('i-key')); e.appendChild(big);
     e.appendChild(el('div', null, 'Aucun mot de passe pour l’instant.'));
     const b = el('button', 'btn'); b.appendChild(icon('i-download')); b.appendChild(el('span', null, 'Importer depuis Chrome'));
-    b.onclick = () => showOverlay('pw-guide'); e.appendChild(b);
+    b.onclick = () => showOverlay('pw-guide', { over: true }); e.appendChild(b);
     pwBody.appendChild(e); return;
   }
   if (!list.length) { pwBody.appendChild(el('div', 'empty-msg', 'Aucun résultat.')); return; }
@@ -1594,7 +1731,7 @@ function toast(msg) {
   $('content').appendChild(t);
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 4000);
 }
-$('pw-import').onclick = () => showOverlay('pw-guide');
+$('pw-import').onclick = () => showOverlay('pw-guide', { over: true });
 $('pw-guide-cancel').onclick = () => openSettings('passwords');
 $('pw-guide-pick').onclick = async () => { await runImport(); openSettings('passwords'); };
 pwSearch.addEventListener('input', renderPasswords);
@@ -1629,12 +1766,18 @@ function mdShowTab(which) {
   $('md-source').classList.toggle('hidden', which !== 'source');
 }
 api.onExportMd((data) => {
-  let body = '';
-  try { body = buildTurndown().turndown(data.html || ''); } catch { body = ''; }
-  body = body.replace(/\n{3,}/g, '\n\n').trim();
   mdTitle = data.title || 'page';
-  mdContent = `# ${data.title || ''}\n\n[Source](${data.url})\n\n---\n\n${body}\n`;
-  $('md-sub').textContent = data.url;
+  if (data.md) {
+    // Markdown déjà prêt (ex. résultat d'une tâche Claude) : pas de conversion
+    mdContent = data.md;
+    $('md-sub').textContent = data.title || '';
+  } else {
+    let body = '';
+    try { body = buildTurndown().turndown(data.html || ''); } catch { body = ''; }
+    body = body.replace(/\n{3,}/g, '\n\n').trim();
+    mdContent = `# ${data.title || ''}\n\n[Source](${data.url})\n\n---\n\n${body}\n`;
+    $('md-sub').textContent = data.url;
+  }
   $('md-source').value = mdContent;
   renderMdPreview(mdContent);
   mdShowTab('preview');
@@ -1733,3 +1876,225 @@ document.addEventListener('mouseout', (e) => {
 document.addEventListener('mousedown', hideTip, true);
 window.addEventListener('wheel', hideTip, true);
 window.addEventListener('blur', hideTip);
+
+// ---------- Claude : panneau de tâches IA (CLI Claude Code, abonnement) ----------
+let clTasks = [];        // dernière liste reçue du process principal
+let clOpenTask = null;   // id de la tâche dépliée
+let clWasOpen = false;   // pour focus du champ à l'ouverture du panneau
+const clSeenIslands = new Set(); // îlots Claude déjà vus (l'animation de naissance ne joue qu'une fois)
+const clOpenExch = new Set();    // échanges d'historique dépliés, clés « taskId:index » (repliés par défaut)
+
+// l'îlot relié à une tâche, s'il a encore des onglets
+function clIslandOf(taskId) {
+  if (!state) return null;
+  const g = (state.groups || []).find((x) => x.claudeTaskId === taskId);
+  return g && (state.tabs || []).some((t) => t.groupId === g.id) ? g : null;
+}
+
+let clIslandsSig = '';
+function renderClaudeChrome() {
+  const open = !!state.claudeOpen;
+  document.body.classList.toggle('claude', open);
+  // re-rend les cartes quand un îlot naît, se vide ou change de tâche (l'info vient de state, pas du flux claude-tasks)
+  const sig = (state.groups || []).filter((g) => g.claude)
+    .map((g) => g.id + ':' + g.claudeTaskId + ':' + ((state.tabs || []).some((t) => t.groupId === g.id) ? 1 : 0)).join('|');
+  if (sig !== clIslandsSig) { clIslandsSig = sig; renderClaudeTasks(); }
+  $('claude-btn').classList.toggle('active', open);
+  const n = state.claudeRunning || 0;
+  const badge = $('claude-badge');
+  badge.classList.toggle('hidden', !n);
+  badge.textContent = n ? String(n) : '';
+  if (open && !clWasOpen) setTimeout(() => $('claude-prompt').focus(), 60);
+  clWasOpen = open;
+}
+
+function clAgo(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return 'à l’instant';
+  if (s < 3600) return 'il y a ' + Math.round(s / 60) + ' min';
+  if (s < 86400) return 'il y a ' + Math.round(s / 3600) + ' h';
+  return new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+function clDuration(t) {
+  const ms = t.durationMs || (t.finishedAt && t.createdAt ? t.finishedAt - t.createdAt : 0);
+  if (!ms) return '';
+  const s = Math.round(ms / 1000);
+  return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+}
+const CL_STATUS = { running: 'En cours', done: 'Terminée', error: 'Erreur', canceled: 'Annulée' };
+
+function clStepIcon(label) {
+  return /^Recherche/.test(label) ? 'i-search' : /^Lecture/.test(label) ? 'i-globe' : 'i-spark';
+}
+// Ligne « demande » (prompt initial dans l'historique ou suite demandée)
+function clPromptRow(text) {
+  const row = el('div', 'cl-prompt');
+  row.appendChild(icon('i-forward'));
+  row.appendChild(el('span', null, text));
+  return row;
+}
+// Bloc markdown d'un résultat ; les liens s'ouvrent dans l'îlot de la tâche, jamais dans le panneau
+function clMdBody(t, text) {
+  const body = el('div', 'cl-task-body');
+  let html = '';
+  try { html = window.marked ? window.marked.parse(text) : ''; } catch {}
+  const md = el('div', 'md-render');
+  if (html) md.innerHTML = sanitizeHtml(html); else md.textContent = text;
+  md.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]'); if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    const href = a.getAttribute('href') || '';
+    if (/^https?:/i.test(href)) api.claudeOpenLink({ id: t.id, url: href });
+  });
+  body.appendChild(md);
+  return body;
+}
+// Timeline de ce que Claude fait (vue dépliée d'une tâche en cours)
+function clSteps(t) {
+  const box = el('div', 'cl-steps');
+  const steps = (t.activity || []).slice(-10);
+  if (!steps.length) steps.push({ label: 'Claude démarre…' });
+  steps.forEach((s, i) => {
+    const row = el('div', 'cl-step' + (i === steps.length - 1 ? ' last' : ''));
+    row.appendChild(icon(clStepIcon(s.label)));
+    row.appendChild(el('span', null, s.label));
+    box.appendChild(row);
+  });
+  return box;
+}
+// Champ « Demander une suite… » : la tâche reprend avec le contexte de sa session
+function clFollowRow(t) {
+  const row = el('div', 'cl-follow');
+  const inp = el('input'); inp.placeholder = 'Demander une suite…'; inp.spellcheck = false;
+  const send = () => { const v = inp.value.trim(); if (!v) return; api.claudeContinue({ id: t.id, prompt: v }); };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') send(); };
+  const go = el('button', 'cl-follow-go'); go.title = 'Envoyer — la tâche reprend avec son contexte';
+  go.appendChild(icon('i-forward'));
+  go.onclick = (e) => { e.stopPropagation(); send(); };
+  row.append(inp, go);
+  return row;
+}
+
+function renderClaudeTasks() {
+  const box = $('claude-tasks');
+  $('claude-empty').classList.toggle('hidden', clTasks.length > 0);
+  $('claude-clear').classList.toggle('hidden', !clTasks.some((t) => t.status !== 'running'));
+  setText($('claude-count'), clTasks.length ? String(clTasks.length) : '');
+  box.textContent = '';
+  for (const t of clTasks) {
+    const card = el('div', 'cl-task');
+    card.dataset.task = String(t.id);
+    if (clOpenTask === t.id) card.classList.add('open');
+
+    const head = el('div', 'cl-task-head');
+    const title = el('div', 'cl-task-title'); title.textContent = t.title || t.prompt;
+    const x = el('button', 'cl-task-x'); x.dataset.tip = 'Supprimer la tâche';
+    x.appendChild(icon('i-close'));
+    x.onclick = (e) => { e.stopPropagation(); api.claudeRemove(t.id); };
+    head.append(title, x);
+    head.onclick = () => { clOpenTask = clOpenTask === t.id ? null : t.id; renderClaudeTasks(); };
+    card.appendChild(head);
+
+    // « ● Statut · durée · quand »
+    const meta = el('div', 'cl-task-meta');
+    meta.appendChild(el('span', 'cl-dot ' + t.status));
+    meta.appendChild(el('span', 'cl-status', CL_STATUS[t.status] || CL_STATUS.error));
+    const parts = t.status === 'running' ? [clAgo(t.createdAt)] : [clDuration(t), clAgo(t.finishedAt)];
+    if (t.tabs && t.tabs.length) parts.push(t.tabs.length + ' onglets');
+    const rest = parts.filter(Boolean).join(' · ');
+    if (rest) meta.appendChild(el('span', 'cl-when', '· ' + rest));
+    card.appendChild(meta);
+
+    // dernière activité (outil en cours), en vue repliée seulement — la vue dépliée montre la timeline complète
+    if (t.status === 'running' && clOpenTask !== t.id && t.activity && t.activity.length) {
+      const last = t.activity[t.activity.length - 1].label;
+      const act = el('div', 'cl-activity');
+      act.appendChild(icon(clStepIcon(last)));
+      act.appendChild(el('span', null, last));
+      card.appendChild(act);
+    }
+
+    if (clOpenTask === t.id) {
+      // échanges précédents repliés en accordéon : seule la demande reste visible, clic pour rouvrir
+      (t.history || []).forEach((h, idx) => {
+        const key = t.id + ':' + idx;
+        const openExch = clOpenExch.has(key);
+        const ex = el('div', 'cl-exch' + (openExch ? ' open' : ''));
+        const ehead = el('button', 'cl-exch-head');
+        ehead.appendChild(icon('i-forward', 'chev'));
+        ehead.appendChild(el('span', 'txt', h.prompt || 'Demande initiale'));
+        ehead.onclick = (e) => { e.stopPropagation(); if (openExch) clOpenExch.delete(key); else clOpenExch.add(key); renderClaudeTasks(); };
+        ex.appendChild(ehead);
+        if (openExch) {
+          if (h.output) ex.appendChild(clMdBody(t, h.output));
+          else if (h.error) ex.appendChild(el('div', 'cl-task-err', h.error));
+        }
+        card.appendChild(ex);
+      });
+      if (t.curPrompt) card.appendChild(clPromptRow(t.curPrompt));
+      if (t.error) card.appendChild(el('div', 'cl-task-err', t.error));
+      if (t.output) card.appendChild(clMdBody(t, t.output));
+      if (t.status === 'running') card.appendChild(clSteps(t));
+      if (t.status !== 'running' && t.sessionId) card.appendChild(clFollowRow(t));
+      // actions : icônes + infobulles, cohérent avec les autres barres d'outils de NaX
+      const actions = el('div', 'cl-actions');
+      const act = (name, tip, fn, cls) => {
+        const b = el('button', 'icon-btn' + (cls ? ' ' + cls : '')); b.title = tip;
+        b.appendChild(icon(name));
+        b.onclick = (e) => { e.stopPropagation(); fn(); };
+        actions.appendChild(b);
+      };
+      if (t.output) {
+        act('i-expand', 'Ouvrir en grand', () => api.claudeOpenMd(t.id));
+        act('i-copy', 'Copier le résultat', () => { api.mdCopy(t.output); toast('Résultat copié'); });
+        // îlot relié : le retrouver s'il existe, sinon l'ouvrir avec les sources du résultat
+        if (clIslandOf(t.id)) act('i-spark', 'Voir l’îlot de la tâche', () => api.claudeFocusIsland(t.id), 'accent');
+        else if ((t.tabs && t.tabs.length) || /https?:\/\//.test(t.output)) act('i-globe', 'Rouvrir l’îlot d’onglets', () => api.claudeOpenIsland(t.id), 'accent');
+      }
+      actions.appendChild(el('span', 'spacer'));
+      if (t.status === 'running') act('i-stop', 'Arrêter la tâche', () => api.claudeCancel(t.id), 'danger');
+      else act('i-trash', 'Supprimer la tâche', () => api.claudeRemove(t.id), 'danger');
+      card.appendChild(actions);
+    }
+    box.appendChild(card);
+  }
+}
+
+function clRun() {
+  const input = $('claude-prompt');
+  const p = input.value.trim();
+  if (!p) return;
+  input.value = '';
+  clSyncField();
+  api.claudeRun(p);
+}
+// champ qui grandit avec le texte ; bouton ✦ actif seulement s'il y a quelque chose à lancer
+function clSyncField() {
+  const input = $('claude-prompt');
+  $('claude-run').disabled = !input.value.trim();
+  input.style.height = 'auto';
+  input.style.height = Math.min(150, input.scrollHeight) + 'px';
+}
+$('claude-prompt').addEventListener('input', clSyncField);
+$('claude-btn').onclick = () => api.claudeToggle();
+$('claude-close').onclick = () => api.claudeToggle();
+$('claude-run').onclick = clRun;
+$('claude-prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); clRun(); }
+  e.stopPropagation(); // ne pas déclencher les raccourcis globaux pendant la saisie
+});
+$('claude-clear').onclick = () => api.claudeClearDone();
+api.onClaudeTasks((tasks) => { clTasks = tasks || []; renderClaudeTasks(); });
+api.claudeTasks().then((tasks) => { clTasks = tasks || []; renderClaudeTasks(); });
+// badge ✦ d'un îlot : déplie la tâche correspondante dans le panneau et la met en évidence
+api.onClaudeReveal((taskId) => {
+  clOpenTask = taskId;
+  renderClaudeTasks();
+  const card = document.querySelector('#claude-tasks .cl-task[data-task="' + taskId + '"]');
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    card.classList.add('cl-flash');
+    card.addEventListener('animationend', () => card.classList.remove('cl-flash'), { once: true });
+  }
+});
