@@ -652,6 +652,16 @@ function wirePageBasics(wc) {
     if (response === 1 && !wc.isDestroyed()) wc.forcefullyCrashRenderer(); // → render-process-gone → page « Oups »
   });
 }
+// Les vues d'interface (liste d'onglets, menus, calques…) ont accès à window.api, mots de passe compris :
+// elles ne doivent JAMAIS charger autre chose que leur fichier. Sans ce verrou, un lien glissé-déposé sur la
+// liste d'onglets (ou cliqué dans l'aperçu Markdown) remplaçait l'interface par la page, qui héritait du pont.
+// Le lien s'ouvre à la place dans un nouvel onglet, comme dans Chrome.
+function lockUiContents(wc) {
+  const openInTab = (url) => { if (/^(https?|file):/i.test(url || '')) newTab({ url }); };
+  wc.on('will-navigate', (e, url) => { e.preventDefault(); openInTab(url); });
+  wc.on('will-redirect', (e) => e.preventDefault());
+  wc.setWindowOpenHandler(({ url }) => { openInTab(url); return { action: 'deny' }; });
+}
 function isOnScreen(wc) { return [contentView, splitView].some((v) => v && wcOf(v) === wc); }
 
 // Bulle d'adresse du lien survolé : dessinée dans l'overlay des tooltips (au-dessus des vues natives),
@@ -1444,6 +1454,7 @@ function ensurePeekWin() {
     transparent: true, // la page dessine un panneau arrondi + ombre (même langage que les panneaux de l'app)
     webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
   });
+  lockUiContents(peekWin.webContents);
   peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'));
   peekWin.on('blur', () => hidePeek());
   return peekWin;
@@ -1479,6 +1490,7 @@ function ensureFlyWin() {
     maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
     webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
   });
+  lockUiContents(flyWin.webContents);
   flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'));
   flyWin.on('blur', () => hideFly());
   return flyWin;
@@ -1562,6 +1574,7 @@ function ensureMenuWin() {
     minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
     backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'menu-preload.js') },
   });
+  lockUiContents(menuWin.webContents);
   menuWin.loadFile(path.join(__dirname, 'ui', 'menu.html'));
   menuWin.on('blur', () => hideMenu());
   return menuWin;
@@ -1578,6 +1591,7 @@ function ensureTipWin() {
     backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'tip-preload.js') },
   });
   tipWin.setIgnoreMouseEvents(true); // laisse tout passer : ne bloque jamais l'app
+  lockUiContents(tipWin.webContents);
   tipWin.loadFile(path.join(__dirname, 'ui', 'tip.html'));
   tipWin.webContents.once('did-finish-load', () => { syncTipBounds(); tipWin.showInactive(); });
   return tipWin;
@@ -1597,6 +1611,7 @@ function ensureFindWin() {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1f2b' : '#ffffff',
     webPreferences: { preload: path.join(__dirname, 'find-preload.js') },
   });
+  lockUiContents(findWin.webContents);
   findWin.loadFile(path.join(__dirname, 'ui', 'find.html'));
   return findWin;
 }
@@ -1621,6 +1636,7 @@ function ensureSuggestWin() {
     minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
     backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'suggest-preload.js') },
   });
+  lockUiContents(suggestWin.webContents);
   suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'));
   return suggestWin;
 }
@@ -2497,6 +2513,7 @@ function createWindow() {
     else if (cmd === 'browser-forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
     else if (cmd === 'browser-refresh') wc.reload();
   });
+  lockUiContents(chrome.webContents);
   chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
   chrome.webContents.once('did-finish-load', () => {
     if (startupMode === 'home') { tabs = []; groups = []; current = null; newTab(); }
