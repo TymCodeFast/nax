@@ -379,6 +379,20 @@
         </div>
       </div>
       <!-- Guide d'export Chrome -->
+      <!-- Partage d'écran demandé par une page (Meet, Teams, Zoom…) : choix de l'écran ou de la fenêtre -->
+      <div id="display-pick" class="overlay hidden">
+        <div class="panel glow dp-panel">
+          <div class="panel-head">
+            <div><h2>Partager ton écran</h2><span id="dp-host" class="muted"></span></div>
+            <button id="dp-close" class="icon-btn" title="Annuler"><svg><use href="#i-close"/></svg></button>
+          </div>
+          <div id="dp-body" class="dp-body"></div>
+          <div class="dp-foot">
+            <label id="dp-audio-row" class="dp-audio"><input id="dp-audio" type="checkbox"> Partager aussi le son de l'ordinateur</label>
+            <div class="actions"><button id="dp-cancel">Annuler</button><button id="dp-share" class="primary" disabled>Partager</button></div>
+          </div>
+        </div>
+      </div>
       <!-- Authentification HTTP demandée par un site (Basic/NTLM) ou un proxy -->
       <div id="auth" class="overlay hidden">
         <form id="auth-form" class="panel small glow" autocomplete="off">

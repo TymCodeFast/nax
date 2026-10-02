@@ -989,6 +989,7 @@ let overlayParent = null; // overlay masqué sous une modale ouverte « par-dess
 function showOverlay(id, opts) {
   const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
   if (openOverlay === 'auth' && id !== 'auth') settleAuth(null); // un autre panneau remplace la demande : annulée
+  if (openOverlay === 'display-pick' && id !== 'display-pick') settleDisplay(null);
   if (openOverlay) $(openOverlay).classList.add('hidden');
   overlayParent = over ? openOverlay : null;
   openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
@@ -996,6 +997,7 @@ function showOverlay(id, opts) {
 function closeOverlay() {
   if (!openOverlay) return;
   if (openOverlay === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
+  if (openOverlay === 'display-pick') settleDisplay(null);
   $(openOverlay).classList.add('hidden');
   if (overlayParent) { openOverlay = overlayParent; overlayParent = null; $(openOverlay).classList.remove('hidden'); return; }
   openOverlay = null; api.overlay(false);
@@ -1707,7 +1709,7 @@ const PERM_LABELS = {
   'idle-detection': 'Détection d’inactivité', 'window-management': 'Gestion des fenêtres', hid: 'Périphériques HID',
   serial: 'Port série', usb: 'Périphériques USB', bluetooth: 'Bluetooth',
 };
-const permLabel = (p) => PERM_LABELS[p] || (p || 'Autorisation');
+const permLabel = (p) => PERM_LABELS[p] || (/^openExternal:/.test(p || '') ? `Ouvrir les liens ${p.slice(13)} dans une autre appli` : (p || 'Autorisation'));
 const BD_CATS = [
   { key: 'history', name: 'Historique de navigation', icon: 'i-globe' },
   { key: 'cookies', name: 'Cookies et données de sites', icon: 'i-lock' },
@@ -2199,6 +2201,51 @@ $('auth-form').onsubmit = (e) => {
   closeOverlay();
 };
 $('auth-cancel').onclick = () => closeOverlay();
+
+// Partage d'écran : la page (Meet, Teams…) a appelé getDisplayMedia ; on choisit un écran ou une fenêtre.
+let dpReq = null, dpSel = null;
+function settleDisplay(choice) {
+  if (!dpReq) return;
+  const id = dpReq.id; dpReq = null; dpSel = null;
+  api.displayChoose(choice ? { id, ...choice } : { id, cancel: true });
+}
+function renderDisplayPick() {
+  const body = $('dp-body'); body.innerHTML = '';
+  const groups = [['Écrans', dpReq.sources.filter((x) => x.screen)], ['Fenêtres', dpReq.sources.filter((x) => !x.screen)]];
+  for (const [label, list] of groups) {
+    if (!list.length) continue;
+    body.appendChild(el('div', 'dp-cat', label));
+    const grid = el('div', 'dp-grid');
+    for (const src of list) {
+      const tile = el('button', 'dp-tile' + (dpSel === src.id ? ' sel' : ''));
+      const th = el('div', 'dp-thumb'); if (src.thumb) th.style.backgroundImage = `url("${src.thumb}")`; tile.appendChild(th);
+      const nm = el('div', 'dp-name');
+      if (src.icon) { const im = el('img'); im.src = src.icon; im.alt = ''; nm.appendChild(im); }
+      nm.appendChild(el('span', null, src.name || (src.screen ? 'Écran' : 'Fenêtre'))); tile.appendChild(nm);
+      tile.onclick = () => { dpSel = src.id; $('dp-share').disabled = false; renderDisplayPick(); };
+      tile.ondblclick = () => { dpSel = src.id; $('dp-share').click(); };
+      grid.appendChild(tile);
+    }
+    body.appendChild(grid);
+  }
+}
+api.onDisplayPick((req) => {
+  if (dpReq) settleDisplay(null);
+  dpReq = req; dpSel = null;
+  $('dp-host').textContent = (req.host || 'Une page') + ' veut voir le contenu de ton écran.';
+  $('dp-audio-row').classList.toggle('hidden', !req.audio);
+  $('dp-audio').checked = false;
+  $('dp-share').disabled = true;
+  renderDisplayPick();
+  showOverlay('display-pick', { over: true });
+});
+$('dp-share').onclick = () => {
+  if (!dpReq || !dpSel) return;
+  settleDisplay({ sourceId: dpSel, audio: $('dp-audio').checked });
+  closeOverlay();
+};
+$('dp-cancel').onclick = () => closeOverlay();
+$('dp-close').onclick = () => closeOverlay();
 api.onOpenPalette(() => (openOverlay === 'palette' ? closeOverlay() : openPalette()));
 api.onRenameGroup((id) => { renamingGroup = id; render(); });
 api.onRenameFav((id) => {

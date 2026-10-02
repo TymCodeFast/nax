@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
   onDownloads: on('downloads'), onDownloadStarted: on('download-started'),
   onAuthRequest: on('auth-request'), authReply: (r) => ipcRenderer.send('auth-reply', r),
   onUiCommand: on('ui-command'),
+  onDisplayPick: on('display-pick'), displayChoose: (r) => ipcRenderer.send('display-choose', r),
   defaultBrowserStatus: () => ipcRenderer.invoke('default-browser-status'),
   defaultBrowserSet: () => ipcRenderer.invoke('default-browser-set'),
 });

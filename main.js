@@ -1,7 +1,7 @@
 // Browser — process principal.
 // Fenêtre = une vue "chrome" (rail d'applis + liste d'onglets + barre de nav) qui couvre
 // toute la fenêtre, et UNE vue de contenu (onglet ou appli) posée par-dessus dans la zone principale.
-const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, nativeImage, net, screen, shell } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, nativeImage, net, screen, shell, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -124,16 +124,38 @@ function defaultDownloadDir() { return downloadDir || app.getPath('downloads'); 
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
 function applyLanguages() {
-  const ses = session.defaultSession;
-  try { ses.setSpellCheckerEnabled(!!spellcheckOn); } catch {}
-  if (spellcheckOn) {
-    try { const avail = ses.availableSpellCheckerLanguages || []; const use = spellLangs.filter((l) => avail.includes(l)); if (use.length) ses.setSpellCheckerLanguages(use); } catch {}
-  }
+  for (const ses of configuredSessions) applySpellcheck(ses);
   const base = spellLangs.length ? spellLangs : ['fr'];
   const ordered = [];
   for (const l of base) { if (!ordered.includes(l)) ordered.push(l); const p = l.split('-')[0]; if (!ordered.includes(p)) ordered.push(p); }
   acceptLanguage = ordered.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
 }
+function applySpellcheck(ses) {
+  try { ses.setSpellCheckerEnabled(!!spellcheckOn); } catch {}
+  if (spellcheckOn) {
+    try { const avail = ses.availableSpellCheckerLanguages || []; const use = spellLangs.filter((l) => avail.includes(l)); if (use.length) ses.setSpellCheckerLanguages(use); } catch {}
+  }
+}
+
+// ---------- sessions ----------
+// Chaque session (principale, onglets privés, « autre session ») reçoit les mêmes règles : autorisations,
+// téléchargements, partage d'écran, correcteur, langues. Sans ça, Electron accepte d'office caméra, micro et
+// position dans les onglets privés, et leurs téléchargements n'apparaissent pas dans le panneau.
+const configuredSessions = new Set();
+function configureSession(ses) {
+  if (!ses || configuredSessions.has(ses)) return;
+  configuredSessions.add(ses);
+  initDownloads(ses);
+  initPermissions(ses);
+  initDisplayMedia(ses);
+  applySpellcheck(ses);
+  // Langues préférées des pages (Accept-Language), piloté par les Paramètres.
+  ses.webRequest.onBeforeSendHeaders((details, cb) => {
+    if (acceptLanguage) details.requestHeaders['Accept-Language'] = acceptLanguage;
+    cb({ requestHeaders: details.requestHeaders });
+  });
+}
+
 // webContents d'une vue, ou null si elle est détruite. Une page qui appelle window.close() détruit son webContents :
 // view.webContents devient alors undefined (et non un objet « isDestroyed »), donc tout accès direct peut planter.
 function wcOf(view) { try { const w = view && view.webContents; return w && !w.isDestroyed() ? w : null; } catch { return null; } }
@@ -467,6 +489,7 @@ function toUrl(input) {
   const s = (input || '').trim();
   if (!s) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^view-source:/i.test(s)) return s;
+  if (/^(mailto|tel|callto|sms|sip|msteams|zoommtg|zoomus|slack|spotify|vscode|skype):[^\s]+$/i.test(s)) return s;
   if (/^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(s) || /^localhost(:\d+)?/.test(s)) return 'https://' + s;
   return searchUrl(s);
 }
@@ -592,6 +615,7 @@ function visibleWC() { return wcOf(contentView) || currentWC(); }
 const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'page-favicon-updated'];
 function createView(onEvent, partition) {
   const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
+  configureSession(view.webContents.session);
   for (const ev of NAV_EVENTS) view.webContents.on(ev, (...args) => onEvent(ev, ...args));
   wirePageBasics(view.webContents);
   return view;
@@ -683,6 +707,7 @@ function wakeTab(tab) {
     if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
     // blocage des pop-ups : uniquement les fenêtres scriptées (window.open avec options), pas les liens _blank
     if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
+    if (isExternalScheme(url)) { openExternalFrom(wc, url); return { action: 'deny' }; }
     newTab({ url, openerId: tab.id, activate: disposition !== 'background-tab' });
     return { action: 'deny' };
   });
@@ -788,6 +813,11 @@ function closeTab(id, { toArchive = true } = {}) {
 function navigateCurrent(input) {
   const url = toUrl(input);
   if (!url) return;
+  if (isExternalScheme(url)) {
+    let scheme = ''; try { scheme = new URL(url).protocol.toLowerCase(); } catch {}
+    if (scheme && !BLOCKED_SCHEMES.has(scheme)) shell.openExternal(url).catch(() => {});
+    return;
+  }
   const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
   const dup = tabs.find((t) => t !== cur && sameTarget(url, t.url));
   if (dup) {
@@ -973,8 +1003,8 @@ function uniquePath(p) {
 // (clic droit → Enregistrer l'image / le lien sous…).
 const saveAsUrls = new Set();
 function downloadAs(wc, url) { if (!url) return; saveAsUrls.add(url); wc.downloadURL(url); }
-function initDownloads() {
-  session.defaultSession.on('will-download', (_event, item) => {
+function initDownloads(ses) {
+  ses.on('will-download', (_event, item) => {
     let savePath = '';
     if (saveAsUrls.delete(item.getURL()) || askDownloadPath) {
       // on ne fixe pas le chemin : Electron affiche la boîte native « Enregistrer sous »
@@ -991,6 +1021,40 @@ function initDownloads() {
     const syncPath = () => { const p = item.getSavePath(); if (p && p !== rec.savePath) { rec.savePath = p; rec.filename = path.basename(p); } };
     item.on('updated', (_e, state) => { syncPath(); rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes(); rec.paused = item.isPaused(); rec.state = state === 'interrupted' ? 'interrupted' : (rec.paused ? 'paused' : 'progressing'); sendDownloads(); });
     item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); });
+  });
+}
+
+// ---------- partage d'écran (getDisplayMedia : Meet, Teams, Zoom web…) ----------
+// Electron refuse le partage tant qu'aucun gestionnaire n'est posé. On liste écrans et fenêtres, et l'interface
+// affiche un sélecteur ; le son de l'ordinateur peut être joint (capture « loopback » de Windows).
+let displayPick = null; // demande en attente : { id, callback, sources }
+let displaySeq = 1;
+function settleDisplayPick(choice) {
+  const p = displayPick; if (!p) return;
+  displayPick = null;
+  const src = choice && p.sources.find((x) => x.id === choice.sourceId);
+  try {
+    if (!src) p.callback({});
+    else p.callback({ video: src, ...(choice.audio && p.audio && process.platform === 'win32' ? { audio: 'loopback' } : {}) });
+  } catch {}
+}
+function initDisplayMedia(ses) {
+  ses.setDisplayMediaRequestHandler(async (request, callback) => {
+    if (!request.videoRequested) return callback({});
+    settleDisplayPick(null); // une seule demande à la fois : la précédente est refusée
+    let sources = [];
+    try { sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: true }); } catch {}
+    // les fenêtres-calques de NaX (infobulles, menus, recherche…) ne sont pas des choix sensés
+    const own = new Set(BrowserWindow.getAllWindows().map((w) => { try { return w.getMediaSourceId(); } catch { return ''; } }));
+    sources = sources.filter((x) => !own.has(x.id));
+    if (!sources.length || !chrome || chrome.webContents.isDestroyed()) return callback({});
+    const id = displaySeq++;
+    displayPick = { id, callback, sources, audio: !!request.audioRequested };
+    const origin = request.securityOrigin || (request.frame && request.frame.origin) || '';
+    chrome.webContents.send('display-pick', {
+      id, host: hostOf(origin) || origin, audio: !!request.audioRequested,
+      sources: sources.map((x) => ({ id: x.id, name: x.name, screen: x.id.startsWith('screen:'), thumb: x.thumbnail.isEmpty() ? '' : x.thumbnail.toDataURL(), icon: x.appIcon && !x.appIcon.isEmpty() ? x.appIcon.toDataURL() : '' })),
+    });
   });
 }
 
@@ -1024,17 +1088,60 @@ const PERM_LABELS = { media: 'utiliser votre caméra et/ou votre micro', 'clipbo
 const PERM_ASK = new Set(['media', 'geolocation', 'notifications', 'midi-sysex', 'clipboard-read']);
 const PERM_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'idle-detection', 'background-sync']);
 function originOf(u) { try { return new URL(u).origin; } catch { return u || ''; } }
-function initPermissions() {
-  const ses = session.defaultSession;
+// Liens vers d'autres applis (mailto:, tel:, msteams:, zoommtg:…). Schémas capables de lancer du code ou
+// d'ouvrir des fichiers locaux : jamais, même sur confirmation.
+const BLOCKED_SCHEMES = new Set(['file:', 'javascript:', 'vbscript:', 'data:', 'blob:', 'ms-msdt:', 'search-ms:', 'search:', 'ms-cxh:', 'ms-cxh-full:', 'hcp:', 'shell:', 'ms-officecmd:']);
+const EXTERNAL_APPS = { 'mailto:': 'ta messagerie', 'tel:': 'ton application d’appel', 'callto:': 'ton application d’appel', 'sms:': 'ton application de SMS', 'msteams:': 'Microsoft Teams', 'zoommtg:': 'Zoom', 'zoomus:': 'Zoom', 'slack:': 'Slack', 'spotify:': 'Spotify', 'vscode:': 'Visual Studio Code', 'skype:': 'Skype', 'sip:': 'ton application d’appel' };
+const isWebScheme = (u) => /^(https?|about|view-source|data|blob|file):/i.test(u || '');
+const isExternalScheme = (u) => /^[a-z][a-z0-9+.-]*:/i.test(u || '') && !isWebScheme(u);
+// Demande avant d'ouvrir une autre appli depuis une page (comme Chrome), avec « toujours autoriser » par site.
+// grants : décisions mémorisées de la session (persistées pour les sessions conservées, en mémoire pour le privé).
+async function confirmExternal(origin, url, grants) {
+  let scheme; try { scheme = new URL(url).protocol.toLowerCase(); } catch { return false; }
+  if (BLOCKED_SCHEMES.has(scheme)) return false;
+  const key = origin + '|openExternal:' + scheme;
+  if (grants.get(key) === true) return true;
+  let host = ''; try { host = new URL(origin).hostname; } catch {}
+  const what = EXTERNAL_APPS[scheme] || `l’application associée aux liens « ${scheme} »`;
+  const res = await dialog.showMessageBox(win, {
+    type: 'none', title: 'Ouvrir une application', icon: path.join(__dirname, 'assets', 'icon.png'),
+    message: `${host || 'Cette page'} veut ouvrir ${what}.`, detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
+    buttons: ['Ouvrir', 'Annuler'], defaultId: 0, cancelId: 1, noLink: true,
+    ...(host ? { checkboxLabel: `Toujours autoriser ${host} à ouvrir ce type de lien`, checkboxChecked: false } : {}),
+  }).catch(() => ({ response: 1 }));
+  if (res.response !== 0) return false;
+  if (res.checkboxChecked && host) { grants.set(key, true); if (grants === permGrants) persist(); }
+  return true;
+}
+const sessionGrants = new WeakMap(); // session non conservée (privée) → décisions en mémoire, oubliées à la fermeture
+function grantsOf(ses) {
+  if (!ses || ses.isPersistent()) return permGrants;
+  if (!sessionGrants.has(ses)) sessionGrants.set(ses, new Map());
+  return sessionGrants.get(ses);
+}
+// Lien externe ouvert en nouvel onglet (target=_blank) : pas d'onglet vide, on passe directement à l'appli.
+async function openExternalFrom(wc, url) {
+  const origin = wc && !wc.isDestroyed() ? originOf(wc.getURL()) : '';
+  if (await confirmExternal(origin, url, grantsOf(wc && !wc.isDestroyed() ? wc.session : null))) shell.openExternal(url).catch(() => {});
+}
+function initPermissions(ses) {
+  const grants = grantsOf(ses);
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (PERM_ALLOW.has(permission)) return callback(true);
+    if (permission === 'openExternal') {
+      const origin = originOf((details && details.requestingUrl) || (wc && wc.getURL()));
+      return callback(await confirmExternal(origin, (details && details.externalURL) || '', grants));
+    }
+    // getDisplayMedia passe d'abord par une demande « media » SANS périphérique (mediaTypes vide) :
+    // le vrai consentement est le sélecteur d'écran (initDisplayMedia), pas une question « caméra/micro ».
+    if (permission === 'media' && details && Array.isArray(details.mediaTypes) && !details.mediaTypes.length) return callback(true);
     if (!PERM_ASK.has(permission)) return callback(false);
     // politique par défaut de l'utilisateur : « bloquer » = refus sans demander
     const dkey = permission === 'media' ? 'media' : permission === 'geolocation' ? 'geolocation' : permission === 'notifications' ? 'notifications' : null;
     if (dkey && permDefaults[dkey] === 'block') return callback(false);
     const origin = originOf((details && details.requestingUrl) || (wc && wc.getURL()));
     const key = origin + '|' + permission;
-    if (permGrants.has(key)) return callback(permGrants.get(key));
+    if (grants.has(key)) return callback(grants.get(key));
     const host = (() => { try { return new URL(origin).hostname; } catch { return origin; } })();
     const res = await dialog.showMessageBox(win, {
       type: 'none', title: 'Autorisation', icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -1042,8 +1149,8 @@ function initPermissions() {
       buttons: ['Autoriser', 'Bloquer'], defaultId: 0, cancelId: 1, noLink: true,
     });
     const ok = res.response === 0;
-    permGrants.set(key, ok);
-    persist(); // mémorise la décision entre les sessions (plus de prompt répété)
+    grants.set(key, ok);
+    if (grants === permGrants) persist(); // mémorise la décision entre les sessions (plus de prompt répété)
     callback(ok);
   });
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
@@ -1051,7 +1158,7 @@ function initPermissions() {
     const dkey = permission === 'media' ? 'media' : permission === 'geolocation' ? 'geolocation' : permission === 'notifications' ? 'notifications' : null;
     if (dkey && permDefaults[dkey] === 'block') return false;
     const key = originOf(requestingOrigin) + '|' + permission;
-    return permGrants.get(key) === true;
+    return grants.get(key) === true;
   });
 }
 
@@ -1139,6 +1246,7 @@ function ensureAppView(a) {
     });
     v.webContents.setWindowOpenHandler(({ url, disposition }) => {
       if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
+      if (isExternalScheme(url)) { openExternalFrom(v.webContents, url); return { action: 'deny' }; }
       newTab({ url }); return { action: 'deny' };
     });
     v.webContents.on('context-menu', (_e, params) => pageContextMenu(v.webContents, params, null));
@@ -2263,6 +2371,7 @@ function registerIpc() {
   ipcMain.on('archive-restore', (_e, index) => { const a = archive[index]; if (!a) return; archive.splice(index, 1); newTab({ url: a.url }); });
   ipcMain.on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
   ipcMain.on('auth-reply', (_e, r) => answerAuth(r));
+  ipcMain.on('display-choose', (_e, r) => { if (displayPick && r && r.id === displayPick.id) settleDisplayPick(r.cancel ? null : r); });
   ipcMain.handle('default-browser-status', () => defaultBrowserStatus());
   ipcMain.handle('default-browser-set', () => makeDefaultBrowser());
   ipcMain.on('open-url', (_e, url) => navigateCurrent(url));
@@ -2390,16 +2499,10 @@ function createWindow() {
     ensureTipWin();                       // overlay des tooltips personnalisés
     openLaunchTargets(process.argv);      // lien cliqué dans une autre appli alors que NaX était fermé
   });
-  initDownloads();
   initHttpAuth();
   registerAsBrowser();
-  initPermissions();
-  applyLanguages();
-  // Langues préférées des pages (Accept-Language), piloté par les Paramètres.
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, cb) => {
-    if (acceptLanguage) details.requestHeaders['Accept-Language'] = acceptLanguage;
-    cb({ requestHeaders: details.requestHeaders });
-  });
+  applyLanguages(); // calcule Accept-Language avant la 1re requête
+  configureSession(session.defaultSession);
   buildMenu();
   registerIpc();
   setInterval(housekeeping, 60 * 1000);

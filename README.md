@@ -303,6 +303,16 @@ dessous ailleurs, avec repli au-dessus si débordement.
 - **Clic droit sur une page** : corrections orthographiques (et « Ajouter au dictionnaire »),
   image (ouvrir, enregistrer sous, copier, copier l'adresse), lien (onglet privé, enregistrer
   sous), vidéo/audio (enregistrer sous), page (enregistrer sous, imprimer, code source).
+- **Liens vers d'autres applis** (`mailto:`, `tel:`, Teams, Zoom, Slack…) : NaX demande avant
+  d'ouvrir l'appli, avec « Toujours autoriser ce site ». Un tel lien en `target=_blank` ne laisse
+  plus d'onglet vide ; tapé dans la barre d'adresse, il s'ouvre directement. Les schémas capables
+  de lancer du code ou d'ouvrir des fichiers locaux (`file:`, `ms-msdt:`, `search-ms:`…) restent
+  bloqués.
+- **Partage d'écran** (Meet, Teams, Zoom web) : sélecteur d'écran ou de fenêtre dans l'interface,
+  avec option « son de l'ordinateur » (capture loopback de Windows).
+- **Sessions isolées** : onglets privés et « autre session » ont les mêmes règles que la session
+  principale (autorisations, téléchargements, partage d'écran, correcteur, langues). En privé, les
+  autorisations accordées sont oubliées à la fermeture.
 - **Enregistrer la page (Ctrl+S)** : page complète (`.html` + dossier), un seul fichier
   (`.mhtml`) ou HTML seul (`.htm`), selon l'extension choisie.
 
