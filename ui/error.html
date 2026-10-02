@@ -46,12 +46,6 @@
   .btn.primary:hover { filter: brightness(1.08); background: var(--grad); }
   .btn.hidden { display: none; }
 
-  /* nouvelle tentative automatique (serveur local) */
-  #auto { display: none; align-items: center; justify-content: center; gap: 8px; margin-top: 20px; color: var(--dim); font-size: 12.5px; }
-  #auto.on { display: flex; }
-  #auto .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--c1); animation: pulse 1.3s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(115,133,255,.4); } 60% { box-shadow: 0 0 0 6px rgba(115,133,255,0); } }
-
   .code { margin-top: 26px; }
   .code span { color: var(--dim); font: 500 10.5px "JetBrains Mono", ui-monospace, monospace; letter-spacing: .04em;
     background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; user-select: text; }
@@ -70,7 +64,6 @@
       <a class="btn primary" id="retry">Réessayer</a>
       <a class="btn hidden" id="search">Rechercher sur Google</a>
     </div>
-    <div id="auto"><span class="pulse"></span><span id="auto-label">Nouvelle tentative automatique…</span></div>
     <div class="code"><span id="code"></span></div>
   </div>
 </div>
@@ -111,8 +104,9 @@
   $('retry').href = url || 'https://www.google.com';
 
   // serveur local qui ne répond pas : cas typique du dev — on le dit, et on guette son retour
-  if (isLocal && (code === '-102' || code === '-118' || code === '-7')) {
-    $('hint').textContent = 'Serveur local : il n’est sans doute pas lancé, ou il n’écoute pas sur ce port.';
+  const localDown = isLocal && url && (code === '-102' || code === '-118' || code === '-7');
+  if (localDown) {
+    $('hint').textContent = 'Serveur local : il n’est sans doute pas lancé. La page reviendra toute seule dès qu’il répondra.';
   } else if (k.hint) {
     $('hint').textContent = k.hint;
   }
@@ -122,18 +116,22 @@
     s.href = 'https://www.google.com/search?q=' + encodeURIComponent(host);
   }
 
-  // Nouvelle tentative automatique pour les serveurs locaux : la page revient toute seule
-  // dès que le serveur répond (npm run dev relancé, par exemple).
-  if (isLocal && url && (code === '-102' || code === '-118' || code === '-7')) {
-    $('auto').classList.add('on');
-    let tries = 0;
-    const probe = async () => {
-      tries++;
-      $('auto-label').textContent = 'Nouvelle tentative automatique… (' + tries + ')';
-      try { await fetch(url, { mode: 'no-cors', cache: 'no-store' }); location.replace(url); return; } catch {}
-      setTimeout(probe, 3000);
-    };
-    setTimeout(probe, 3000);
+  // Sonde silencieuse et frugale du serveur local : backoff 2 s → 30 s, requêtes coupées à 1,5 s,
+  // totalement en pause quand l'onglet n'est pas visible (reprise rapide au retour).
+  if (localDown) {
+    let delay = 2000, timer = null;
+    const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(probe, ms); };
+    async function probe() {
+      if (document.hidden) return; // onglet en arrière-plan : on ne consomme rien
+      const ctl = new AbortController();
+      const kill = setTimeout(() => ctl.abort(), 1500);
+      try { await fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal }); clearTimeout(kill); location.replace(url); return; }
+      catch {} finally { clearTimeout(kill); }
+      delay = Math.min(30000, Math.round(delay * 1.6));
+      schedule(delay);
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { delay = 2000; schedule(300); } });
+    schedule(delay);
   }
 </script>
 </body>
