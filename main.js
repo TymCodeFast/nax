@@ -133,10 +133,13 @@ function applyLanguages() {
   for (const l of base) { if (!ordered.includes(l)) ordered.push(l); const p = l.split('-')[0]; if (!ordered.includes(p)) ordered.push(p); }
   acceptLanguage = ordered.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
 }
+// webContents d'une vue, ou null si elle est détruite. Une page qui appelle window.close() détruit son webContents :
+// view.webContents devient alors undefined (et non un objet « isDestroyed »), donc tout accès direct peut planter.
+function wcOf(view) { try { const w = view && view.webContents; return w && !w.isDestroyed() ? w : null; } catch { return null; } }
 function allWebContents() {
   const list = [];
-  for (const t of tabs) if (t.view && !t.view.webContents.isDestroyed()) list.push(t.view.webContents);
-  for (const v of appViews.values()) if (v && !v.webContents.isDestroyed()) list.push(v.webContents);
+  for (const t of tabs) { const w = wcOf(t.view); if (w) list.push(w); }
+  for (const v of appViews.values()) { const w = wcOf(v); if (w) list.push(w); }
   return list;
 }
 function applyZoom(wc) { try { if (!wc || wc.isDestroyed()) return; const host = hostOf(wc.getURL()); const f = (host && zoomHosts[host]) || defaultZoom || 1; wc.setZoomFactor(f); } catch {} }
@@ -207,11 +210,12 @@ function setTabSession(id, makePrivate) {
   if (!!tab.partition === !!makePrivate) return; // déjà dans l'état voulu
   if (makePrivate) tab.partition = splitPartition('private'); else delete tab.partition;
   if (tab.splitMode) tab.splitMode = makePrivate ? 'private' : 'shared';
-  if (tab.view && !tab.view.webContents.isDestroyed()) {
-    tab.url = tab.view.webContents.getURL() || tab.url;
+  if (tab.view) {
+    const w = wcOf(tab.view);
+    if (w) tab.url = w.getURL() || tab.url;
     if (contentView === tab.view) attach(null);
     if (splitView === tab.view) setSplitView(null);
-    tab.view.webContents.close();
+    if (w) w.close();
   }
   tab.view = null;
   wakeTab(tab); // recrée la vue dans la nouvelle session et recharge l'URL
@@ -530,7 +534,7 @@ function sendState() {
     const live = wc && !wc.isDestroyed();
     const ct = current && current.kind === 'tab' ? tabById(current.id) : null;
     chrome.webContents.send('state', {
-      tabs: tabs.map(({ view, ...t }) => ({ ...t, dormant: !view, loading: !!view && !view.webContents.isDestroyed() && view.webContents.isLoading() })),
+      tabs: tabs.map(({ view, ...t }) => { const w = wcOf(view); return { ...t, dormant: !w, loading: !!w && w.isLoading() }; }),
       groups: groups.map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
       apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
       railPins: railPins.map((p) => {
@@ -568,11 +572,11 @@ function sendState() {
 }
 function currentWC() {
   if (!current) return null;
-  if (current.kind === 'tab') { const t = tabById(current.id); return t && t.view ? t.view.webContents : null; }
-  const v = appViews.get(current.id); return v ? v.webContents : null;
+  if (current.kind === 'tab') { const t = tabById(current.id); return t ? wcOf(t.view) : null; }
+  return wcOf(appViews.get(current.id));
 }
 // Vue réellement affichée (celle attachée), pour les actions qui doivent viser l'écran (recherche…).
-function visibleWC() { return contentView && !contentView.webContents.isDestroyed() ? contentView.webContents : currentWC(); }
+function visibleWC() { return wcOf(contentView) || currentWC(); }
 
 // ---------- onglets ----------
 const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'page-favicon-updated'];
@@ -582,11 +586,18 @@ function createView(onEvent, partition) {
   return view;
 }
 
+// Fenêtres de connexion : les fournisseurs d'identité ouvrent un popup qui dialogue avec la page d'origine
+// (window.opener, postMessage) puis se ferme seul. Converti en onglet, ce lien serait perdu et la connexion n'aboutirait pas.
+const AUTH_POPUP_HOSTS = /(^|\.)(accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|appleid\.apple\.com|id\.atlassian\.com|okta\.com|auth0\.com)$/i;
+function isAuthPopupUrl(url) { try { const u = new URL(url); return u.protocol === 'https:' && AUTH_POPUP_HOSTS.test(u.hostname); } catch { return false; } }
+function authPopupOptions() {
+  return { action: 'allow', overrideBrowserWindowOptions: { parent: win, width: 520, height: 720, title: 'Connexion', autoHideMenuBar: true, minimizable: false, webPreferences: { sandbox: true } } };
+}
 function wakeTab(tab) {
   if (tab.view) return;
   tab.view = createView((ev, _e, arg) => {
-    if (!tab.view) return;
-    const wc = tab.view.webContents;
+    const wc = wcOf(tab.view);
+    if (!wc) return;
     const onErr = isErrorPage(wc.getURL());
     if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0]) tab.favicon = arg[0];
     if (ev === 'did-navigate') { tab.url = onErr ? (tab.errorURL || tab.url) : wc.getURL(); if (!onErr) { tab.favicon = null; tab.errorURL = null; } }
@@ -604,8 +615,20 @@ function wakeTab(tab) {
     if (isCurrentTab(tab.id)) win.setTitle((onErr ? hostOf(tab.url) : tab.title) || 'NaX');
     sendState();
   }, tab.partition);
-  const wc = tab.view.webContents;
+  const view = tab.view;
+  const wc = view.webContents;
+  // La page se ferme d'elle-même (window.close() : fin d'un flux de connexion, par exemple) : on ferme l'onglet.
+  // Si tab.view n'est plus cette vue, c'est une fermeture voulue (sleepTab / closeTab) déjà prise en charge.
+  wc.on('destroyed', () => {
+    if (tab.view !== view) return;
+    if (contentView === view) attach(null);
+    if (splitView === view) setSplitView(null);
+    tab.view = null;
+    closeTab(tab.id, { toArchive: false });
+  });
   wc.setWindowOpenHandler(({ url, disposition }) => {
+    // connexion (Google, Microsoft, Okta…) : vraie fenêtre fille, pour que window.opener / postMessage fonctionnent
+    if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
     // blocage des pop-ups : uniquement les fenêtres scriptées (window.open avec options), pas les liens _blank
     if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
     newTab({ url, openerId: tab.id, activate: disposition !== 'background-tab' });
@@ -631,7 +654,7 @@ function sleepTab(tab) {
   const pair = cur ? pairOf(cur) : null;
   if (pair && (tab.id === pair.primary.id || tab.id === pair.secondary.id)) return;
   const v = tab.view; tab.view = null;
-  v.webContents.close();
+  const w = wcOf(v); if (w) w.close();
   sendState();
 }
 
@@ -665,7 +688,7 @@ function activateTab(id) {
   tabMRU = [activeTab.id, ...tabMRU.filter((x) => x !== activeTab.id)]; // ordre d'utilisation : le plus récent en tête
   current = { kind: 'tab', id: activeTab.id };
   showActive();
-  if (activeTab.view) activeTab.view.webContents.focus();
+  { const w = wcOf(activeTab.view); if (w) w.focus(); }
   win.setTitle(activeTab.title || 'NaX');
   hidePeek(); hideFind();
   sendState();
@@ -694,7 +717,7 @@ function closeTab(id, { toArchive = true } = {}) {
   tabMRU = tabMRU.filter((x) => x !== id);
   if (!tabs.some((t) => t.groupId === tab.groupId)) groups = groups.filter((x) => x.id !== tab.groupId);
   const wasCurrent = isCurrentTab(id);
-  if (tab.view) { if (contentView === tab.view) attach(null); if (splitView === tab.view) setSplitView(null); tab.view.webContents.close(); tab.view = null; }
+  if (tab.view) { if (contentView === tab.view) attach(null); if (splitView === tab.view) setSplitView(null); const w = wcOf(tab.view); if (w) w.close(); tab.view = null; }
   if (wasCurrent) {
     current = null;
     // le dernier onglet utilisé d'abord, sinon un voisin du même groupe, sinon l'onglet à la même position
@@ -716,7 +739,8 @@ function navigateCurrent(input) {
     activateTab(dup.id);
     return;
   }
-  if (cur && cur.view) cur.view.webContents.loadURL(url);
+  const curWc = cur ? wcOf(cur.view) : null;
+  if (curWc) curWc.loadURL(url);
   else newTab({ url });
 }
 
@@ -953,9 +977,10 @@ function leaveHtmlFullscreen() { if (!htmlFullscreen) return; htmlFullscreen = f
 const ERROR_FILE = path.join(__dirname, 'ui', 'error.html');
 function isErrorPage(u) { try { return decodeURIComponent(u).startsWith('file://') && u.includes('/ui/error.html'); } catch { return false; } }
 function loadErrorPage(tab, failedUrl, code, desc) {
-  if (!tab.view) return;
+  const w = wcOf(tab.view);
+  if (!w) return;
   tab.errorURL = failedUrl;
-  tab.view.webContents.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } });
+  w.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } });
 }
 
 // ---------- autocomplétion de la barre d'adresse ----------
@@ -1015,7 +1040,18 @@ function ensureAppView(a) {
   let v = appViews.get(a.id);
   if (!v) {
     v = createView((ev, _e, arg) => { if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0] && !a.icon) { a.favicon = arg[0]; } sendState(); });
-    v.webContents.setWindowOpenHandler(({ url }) => { newTab({ url }); return { action: 'deny' }; });
+    const appView = v;
+    v.webContents.on('destroyed', () => {
+      if (appViews.get(a.id) !== appView) return;
+      appViews.delete(a.id);
+      if (contentView === appView) attach(null);
+      if (current && current.kind === 'app' && current.id === a.id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
+      sendState();
+    });
+    v.webContents.setWindowOpenHandler(({ url, disposition }) => {
+      if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
+      newTab({ url }); return { action: 'deny' };
+    });
     v.webContents.on('context-menu', (_e, params) => pageContextMenu(v.webContents, params, null));
     v.webContents.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
     v.webContents.on('enter-html-full-screen', () => { if (current && current.kind === 'app' && current.id === a.id) enterHtmlFullscreen(); });
@@ -1290,7 +1326,7 @@ function railHover(id, kind, clientY) {
 function removeApp(id) {
   apps = apps.filter((a) => a.id !== id);
   const v = appViews.get(id);
-  if (v) { if (contentView === v) attach(null); v.webContents.close(); appViews.delete(id); }
+  if (v) { if (contentView === v) attach(null); appViews.delete(id); const w = wcOf(v); if (w) w.close(); }
   if (current && current.kind === 'app' && current.id === id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
   sendState();
 }
@@ -1426,7 +1462,7 @@ function tabContextMenu(id) {
 }
 function appContextMenu(id) {
   popupMenu([
-    { label: 'Recharger', click: () => { const v = appViews.get(id); if (v) v.webContents.reload(); } },
+    { label: 'Recharger', click: () => { const w = wcOf(appViews.get(id)); if (w) w.reload(); } },
     { label: 'Raccourcis au survol…', click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
     { type: 'separator' },
     { label: 'Retirer du rail', danger: true, click: () => removeApp(id) },
@@ -2223,6 +2259,11 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(createWindow);
 }
+// Une exception non interceptée du processus principal ouvrait une boîte d'erreur bloquante. On la journalise
+// (userData/crash.log, à joindre à un retour de bug) et NaX continue de fonctionner.
+process.on('uncaughtException', (err) => {
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), new Date().toISOString() + ' v' + app.getVersion() + '\n' + (err && err.stack || err) + '\n\n'); } catch {}
+});
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   destroyChatView();
