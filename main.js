@@ -1098,15 +1098,19 @@ function destroyChatView() { if (chatView) { try { chatView.webContents.close();
 const CHAT_EXTRACT = `(() => {
   // Les premiers spans d'une conversation sont souvent des libellés de statut (« Unread », heure…) :
   // on prend le nom dans l'attribut title, sinon le premier texte plausible, sinon l'aria-label nettoyé.
-  const BAD = /^(non lus?|unread|nouveau\\w*|new|épinglé\\w*|pinned|muted|masqué\\w*|en sourdine|active?|away|absent\\w*|hors ligne|online|offline|statut|status)$/i;
+  const BAD = /^(non lus?|unread|nouveau\\w*|new|épinglé\\w*|pinned|muted|masqué\\w*|en sourdine|active?|away|absent\\w*|hors ligne|online|offline|statut|status|idle|inacti\\w*|occupé\\w*|busy|dnd|do not disturb|ne pas déranger|disponible|available|focus|en réunion|in a meeting|hors du bureau|out of office)$/i;
   const TIMEY = /^(\\d{1,2}[:h]\\d{2}|hier|yesterday|aujourd|today|\\d+ (min|h|j|d)\\b)/i;
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
   const plausible = (v) => v && v.length >= 2 && v.length <= 60 && !BAD.test(v) && !TIMEY.test(v) && !/non lu|unread/i.test(v);
+  // tous les candidats, puis préférence à un « Prénom Nom » (contient une espace), sinon le plus long —
+  // les statuts de présence (Idle, Busy…) sont des mots courts uniques, un vrai nom gagne toujours.
   const nameOf = (el, label) => {
-    for (const t of el.querySelectorAll('[title]')) { const v = clean(t.getAttribute('title')); if (plausible(v)) return v; }
-    for (const sp of el.querySelectorAll('span')) { const v = clean(sp.textContent); if (plausible(v)) return v; }
-    for (const part of (label || '').split(/[,.;·]/)) { const v = clean(part); if (plausible(v)) return v; }
-    return '';
+    const cand = [];
+    for (const t of el.querySelectorAll('[title]')) { const v = clean(t.getAttribute('title')); if (plausible(v)) cand.push(v); }
+    for (const sp of el.querySelectorAll('span')) { const v = clean(sp.textContent); if (plausible(v)) cand.push(v); }
+    for (const part of (label || '').split(/[,.;·]/)) { const v = clean(part); if (plausible(v)) cand.push(v); }
+    if (!cand.length) return '';
+    return cand.find((v) => v.includes(' ')) || cand.reduce((a, b) => (b.length > a.length ? b : a));
   };
   const seen = new Set(); const items = [];
   for (const el of document.querySelectorAll('[data-group-id]')) {
