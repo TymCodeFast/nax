@@ -524,6 +524,14 @@ function attach(view) {
 }
 
 // ---------- état → UI ----------
+// L'ordre d'affichage des groupes suit l'ordre des onglets (premier onglet de chaque groupe), et non l'ordre de
+// création de la liste groups : sinon un groupe déplacé ne bouge pas à l'écran, et un onglet déposé entre deux
+// groupes (nouveau groupe, ajouté en fin de liste) s'affiche toujours en dernier.
+function orderedGroups() {
+  const rank = new Map();
+  for (const t of tabs) if (!rank.has(t.groupId)) rank.set(t.groupId, rank.size);
+  return [...groups].sort((x, y) => (rank.has(x.id) ? rank.get(x.id) : 1e9) - (rank.has(y.id) ? rank.get(y.id) : 1e9));
+}
 let stateScheduled = false;
 function sendState() {
   if (stateScheduled) return;
@@ -535,7 +543,7 @@ function sendState() {
     const ct = current && current.kind === 'tab' ? tabById(current.id) : null;
     chrome.webContents.send('state', {
       tabs: tabs.map(({ view, ...t }) => { const w = wcOf(view); return { ...t, dormant: !w, loading: !!w && w.isLoading() }; }),
-      groups: groups.map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
+      groups: orderedGroups().map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
       apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
       railPins: railPins.map((p) => {
         const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît

@@ -775,17 +775,27 @@ function tabPlan(ev) {
     if (band > 0.28 && band < 0.72) return { kind: 'join', groupId: ht.groupId, afterTabId: +hover.dataset.afterid, hoverRow: hover, multi: members(ht.groupId) > 1 };
     return reorderPlan(rows, hover, band >= 0.5, tabOf);
   }
-  // Pas pile sur une ligne mais sur l'encadré d'un groupe (en-tête, marges, zone repliée) → rejoindre ce groupe.
-  for (const gEl of box.querySelectorAll('.group.multi, .group.pair')) {
-    const b = gEl.getBoundingClientRect();
-    if (y >= b.top && y <= b.bottom) {
+  // Pas pile sur une ligne visible (groupe replié, en-tête, espacement entre groupes) : on raisonne par groupes.
+  // Avant, ce cas retombait sur « après la dernière ligne » : l'onglet allait toujours en dernier.
+  const unitRows = (gEl) => rows.filter((r) => gEl.contains(r)); // lignes (hors onglets déplacés) de ce groupe, même repliées
+  const units = [...box.children].filter((c) => c.classList.contains('group') && !c.classList.contains('leave') && unitRows(c).length);
+  for (const gEl of units) {
+    const b = gEl.getBoundingClientRect(); if (!b.height) continue;
+    const ur = unitRows(gEl);
+    if (y < b.top) return reorderPlan(rows, ur[0], false, tabOf); // dans l'espacement au-dessus de ce groupe : juste avant lui
+    if (y <= b.bottom) { // sur l'encadré du groupe
+      if (!gEl.classList.contains('multi') && !gEl.classList.contains('pair')) continue; // onglet seul : déjà traité via ses lignes
+      const band = (y - b.top) / b.height, edge = Math.min(0.3, 9 / b.height);
+      if (band < edge) return reorderPlan(rows, ur[0], false, tabOf);                    // bord haut : avant le groupe
+      if (band > 1 - edge) return reorderPlan(rows, ur[ur.length - 1], true, tabOf);     // bord bas : après le groupe
       const gid = +gEl.dataset.key;
       const gm = state.tabs.filter((t) => t.groupId === gid && !excluded.has(t.id));
       if (!gm.length) continue;
-      return { kind: 'join', groupId: gid, afterTabId: gm[gm.length - 1].id, hoverRow: gEl, multi: true };
+      return { kind: 'join', groupId: gid, afterTabId: gm[gm.length - 1].id, hoverRow: gEl, multi: true }; // milieu : rejoindre
     }
   }
-  return reorderPlan(rows, rows[rows.length - 1] || null, true, tabOf);
+  const lastUnit = units[units.length - 1];
+  return reorderPlan(rows, lastUnit ? unitRows(lastUnit).slice(-1)[0] : (rows[rows.length - 1] || null), true, tabOf);
 }
 function reorderPlan(rows, ref, after, tabOf) {
   let prev, next;
@@ -803,9 +813,10 @@ function paintTabPlan(plan) {
     else plan.hoverRow.classList.add('drop-merge');
     return;
   }
+  const rectFor = (row) => { const r = row.getBoundingClientRect(); return r.height ? r : row.closest('.group').getBoundingClientRect(); }; // ligne d'un groupe replié : rectangle du groupe
   let yPix;
-  if (plan.next) yPix = plan.next.getBoundingClientRect().top;
-  else if (plan.prev) yPix = plan.prev.getBoundingClientRect().bottom;
+  if (plan.next) yPix = rectFor(plan.next).top;
+  else if (plan.prev) yPix = rectFor(plan.prev).bottom;
   else yPix = tabsBox().getBoundingClientRect().top + 4;
   showLine(yPix, plan.makeNewGroup);
 }
@@ -826,7 +837,7 @@ function beginGroupDrag(startEvent, groupId) {
 }
 function groupPlan(ev) {
   const box = tabsBox();
-  const gidOf = (gEl) => { const r = gEl.querySelector('.tab'); return r ? (state.tabs.find((t) => t.id === +r.dataset.key) || {}).groupId : null; };
+  const gidOf = (gEl) => +gEl.dataset.key; // chaque groupe est indexé par son identifiant (sync)
   const others = [...box.querySelectorAll('.group')].filter((gEl) => gidOf(gEl) !== dnd.groupId);
   const y = ev.clientY;
   for (const gEl of others) { const b = gEl.getBoundingClientRect(); if (y < b.top + b.height / 2) return { beforeGroupId: gidOf(gEl), ref: gEl, pos: 'before' }; }
