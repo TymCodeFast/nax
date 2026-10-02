@@ -1096,13 +1096,24 @@ async function pollGmail() {
 let chatView = null, chatViewIdle = null, chatCache = null; // cache 60 s : la SPA met ~3 s à peindre
 function destroyChatView() { if (chatView) { try { chatView.webContents.close(); } catch {} chatView = null; } }
 const CHAT_EXTRACT = `(() => {
+  // Les premiers spans d'une conversation sont souvent des libellés de statut (« Unread », heure…) :
+  // on prend le nom dans l'attribut title, sinon le premier texte plausible, sinon l'aria-label nettoyé.
+  const BAD = /^(non lus?|unread|nouveau\\w*|new|épinglé\\w*|pinned|muted|masqué\\w*|en sourdine|active?|away|absent\\w*|hors ligne|online|offline|statut|status)$/i;
+  const TIMEY = /^(\\d{1,2}[:h]\\d{2}|hier|yesterday|aujourd|today|\\d+ (min|h|j|d)\\b)/i;
+  const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  const plausible = (v) => v && v.length >= 2 && v.length <= 60 && !BAD.test(v) && !TIMEY.test(v) && !/non lu|unread/i.test(v);
+  const nameOf = (el, label) => {
+    for (const t of el.querySelectorAll('[title]')) { const v = clean(t.getAttribute('title')); if (plausible(v)) return v; }
+    for (const sp of el.querySelectorAll('span')) { const v = clean(sp.textContent); if (plausible(v)) return v; }
+    for (const part of (label || '').split(/[,.;·]/)) { const v = clean(part); if (plausible(v)) return v; }
+    return '';
+  };
   const seen = new Set(); const items = [];
   for (const el of document.querySelectorAll('[data-group-id]')) {
     const id = el.getAttribute('data-group-id') || '';
     if (!id || seen.has(id)) continue; seen.add(id);
     const label = el.getAttribute('aria-label') || '';
-    const nameEl = el.querySelector('span[title]') || el.querySelector('span');
-    const name = ((nameEl && nameEl.textContent) || label.split(',')[0] || '').trim();
+    const name = nameOf(el, label);
     if (!name) continue;
     const unread = /non lu|unread/i.test(label) || !!el.querySelector('[aria-label*="non lu" i], [aria-label*="unread" i]');
     items.push({ id, name: name.slice(0, 80), unread });
