@@ -80,4 +80,8 @@ contextBridge.exposeInMainWorld('api', {
   dlList: () => ipcRenderer.invoke('dl-list'),
   dlOpen: send('dl-open'), dlFolder: send('dl-folder'), dlCancel: send('dl-cancel'), dlRemove: send('dl-remove'), dlClear: send('dl-clear'),
   onDownloads: on('downloads'), onDownloadStarted: on('download-started'),
+  onAuthRequest: on('auth-request'), authReply: (r) => ipcRenderer.send('auth-reply', r),
+  onUiCommand: on('ui-command'),
+  defaultBrowserStatus: () => ipcRenderer.invoke('default-browser-status'),
+  defaultBrowserSet: () => ipcRenderer.invoke('default-browser-set'),
 });

@@ -16,12 +16,32 @@
     opacity: 0; transform: translateY(2px); transition: opacity .1s ease, transform .1s ease; }
   #tip.show { opacity: 1; transform: none; }
   #tip .sub { display: block; opacity: .6; font-weight: 400; font-size: 10.5px; }
+  /* adresse du lien survolé, collée en bas à gauche de la page (comme la bulle d'état de Chrome) */
+  #status { position: fixed; z-index: 5; padding: 3px 9px; border-radius: 0 7px 0 0;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-left: 0; border-bottom: 0;
+    font: 400 11.5px Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+    opacity: 0; transition: opacity .12s ease; }
+  #status.show { opacity: 1; }
 </style>
 </head>
 <body>
 <div id="tip"></div>
+<div id="status"></div>
 <script>
   const tip = document.getElementById('tip');
+  const status = document.getElementById('status');
+  // d = { text, bounds: rectangle de la page dans la fenêtre, dark } ou null pour masquer
+  tipapi.onLinkStatus((d) => {
+    if (!d || !d.text) { status.classList.remove('show'); return; }
+    document.body.classList.toggle('light', !d.dark);
+    const b = d.bounds;
+    status.textContent = d.text;
+    status.style.left = b.x + 'px';
+    status.style.bottom = Math.max(0, window.innerHeight - (b.y + b.height)) + 'px';
+    status.style.maxWidth = Math.max(120, Math.round(b.width * 0.6)) + 'px';
+    status.classList.add('show');
+  });
   tipapi.onHide(() => tip.classList.remove('show'));
   tipapi.onShow((d) => {
     document.body.classList.toggle('light', !d.dark);

@@ -988,12 +988,14 @@ let openOverlay = null;
 let overlayParent = null; // overlay masqué sous une modale ouverte « par-dessus » ({ over: true }), restauré à la fermeture
 function showOverlay(id, opts) {
   const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
+  if (openOverlay === 'auth' && id !== 'auth') settleAuth(null); // un autre panneau remplace la demande : annulée
   if (openOverlay) $(openOverlay).classList.add('hidden');
   overlayParent = over ? openOverlay : null;
   openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
 }
 function closeOverlay() {
   if (!openOverlay) return;
+  if (openOverlay === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
   $(openOverlay).classList.add('hidden');
   if (overlayParent) { openOverlay = overlayParent; overlayParent = null; $(openOverlay).classList.remove('hidden'); return; }
   openOverlay = null; api.overlay(false);
@@ -1913,6 +1915,7 @@ async function renderAppearanceZoom() {
 
 // Au démarrage
 async function renderStartupPane() {
+  renderDefaultBrowser();
   cfg = await api.settingsGet().catch(() => ({})) || {};
   makeSelect($('startup-dd'), cfg.startupMode || 'restore', [
     { value: 'restore', label: 'Reprendre mes onglets' },
@@ -1935,6 +1938,25 @@ async function renderStartupPane() {
   $('newtab-input').value = isCustom ? (cfg.newTabUrl || '') : '';
 }
 $('homepage-input').addEventListener('change', async (e) => { await api.settingsSet({ homepage: e.target.value }); });
+
+// Navigateur par défaut : Windows ne laisse aucune appli se déclarer seule ; NaX s'enregistre puis ouvre
+// la page des Paramètres Windows où l'utilisateur le choisit.
+async function renderDefaultBrowser() {
+  const st = await api.defaultBrowserStatus().catch(() => ({ supported: false }));
+  const btn = $('default-browser-btn'), desc = $('default-browser-desc');
+  btn.disabled = !st.supported || st.isDefault;
+  btn.lastChild.textContent = st.isDefault ? ' NaX est par défaut' : ' Définir par défaut';
+  desc.textContent = !st.supported
+    ? 'Disponible dans l’application installée (pas en mode développement).'
+    : st.isDefault ? 'Les liens cliqués dans les autres applis s’ouvrent dans NaX.'
+      : 'Ouvrir dans NaX les liens cliqués dans les autres applis (mails, Teams…). Windows te demandera de confirmer.';
+}
+$('default-browser-btn').onclick = async () => {
+  const r = await api.defaultBrowserSet().catch(() => ({ ok: false }));
+  toast(r.ok ? 'Choisis NaX dans les Paramètres Windows qui viennent de s’ouvrir' : 'Enregistrement auprès de Windows impossible');
+};
+// retour depuis les Paramètres Windows : on relit l'état
+window.addEventListener('focus', () => { if (openOverlay === 'settings' && !document.querySelector('.settings-pane[data-pane="startup"]').classList.contains('hidden')) renderDefaultBrowser(); });
 $('newtab-input').addEventListener('change', async (e) => { await api.settingsSet({ newTabUrl: e.target.value.trim() || 'about:blank' }); });
 
 // Téléchargements
@@ -2148,6 +2170,35 @@ $('md-download').onclick = async () => { const r = await api.mdDownload({ filena
 // ---------- messages du process principal ----------
 api.onState((s) => { state = s; render(); reflectTheme(); });
 api.onFocusUrl(() => { closeOverlay(); urlEl.focus(); });
+// raccourcis clavier du menu (Ctrl+H, Ctrl+J, Ctrl+Maj+Suppr) qui ouvrent un panneau de l'interface
+api.onUiCommand((cmd) => {
+  if (cmd === 'history') { if (openOverlay === 'history') closeOverlay(); else $('history-btn').click(); }
+  else if (cmd === 'downloads') { if (openOverlay === 'downloads') closeOverlay(); else $('downloads-btn').click(); }
+  else if (cmd === 'privacy') openSettings('privacy');
+});
+
+// Authentification HTTP (intranet, routeur, proxy…) : une demande à la fois, posée par le processus principal.
+let authReq = null;
+function settleAuth(creds) {
+  if (!authReq) return;
+  const id = authReq.id; authReq = null;
+  api.authReply(creds ? { id, ...creds } : { id, cancel: true });
+}
+api.onAuthRequest((req) => {
+  if (authReq) settleAuth(null); // ne devrait pas arriver (file côté main) : on ne laisse rien en suspens
+  authReq = req;
+  $('auth-msg').textContent = (req.isProxy ? 'Le proxy ' : 'Le site ') + req.host + ' demande un identifiant'
+    + (req.realm ? ` (« ${req.realm} »).` : '.');
+  $('auth-user').value = ''; $('auth-pass').value = '';
+  showOverlay('auth', { over: true });
+  setTimeout(() => $('auth-user').focus(), 0);
+});
+$('auth-form').onsubmit = (e) => {
+  e.preventDefault();
+  settleAuth({ username: $('auth-user').value, password: $('auth-pass').value });
+  closeOverlay();
+};
+$('auth-cancel').onclick = () => closeOverlay();
 api.onOpenPalette(() => (openOverlay === 'palette' ? closeOverlay() : openPalette()));
 api.onRenameGroup((id) => { renamingGroup = id; render(); });
 api.onRenameFav((id) => {

@@ -84,6 +84,7 @@
     refused: '<path d="M12 3v8"/><path d="M6.3 6.5a8 8 0 1 0 11.4 0"/>',
     slow: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
     cert: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M12 8v4M12 15.5v.5"/>',
+    crash: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M8 14l2-2 2 2 2-2 2 2"/>',
     generic: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16.5v.5"/>',
   };
   const KINDS = {
@@ -92,6 +93,8 @@
     '-102': { icon: 'refused', title: 'Connexion refusée', msg: 'Le serveur a répondu, mais il refuse la connexion sur ce port.' },
     '-118': { icon: 'slow', title: 'Le site met trop de temps', msg: 'Pas de réponse dans les délais. Le site est peut-être surchargé.' },
     '-7':   { icon: 'slow', title: 'Le site met trop de temps', msg: 'Pas de réponse dans les délais. Le site est peut-être surchargé.' },
+    crash:  { icon: 'crash', title: 'Oups, la page a planté', msg: 'Un problème a arrêté l’affichage de cette page. Le reste de NaX n’est pas touché.', hint: 'Si ça se reproduit, la page est peut-être en cause.', retry: 'Recharger' },
+    oom:    { icon: 'crash', title: 'Mémoire insuffisante', msg: 'La page a utilisé trop de mémoire et a été arrêtée.', hint: 'Fermer quelques onglets peut aider avant de recharger.', retry: 'Recharger' },
     '-201': { icon: 'cert', title: 'Connexion non sûre', msg: 'Le certificat de sécurité du site pose problème. NaX a bloqué la page.' },
   };
   const k = KINDS[code] || { icon: 'generic', title: 'Cette page est inaccessible', msg: 'Impossible de charger le site.' };
@@ -102,6 +105,7 @@
   $('url').textContent = url;
   $('code').textContent = desc || ('ERR ' + code);
   $('retry').href = url || 'https://www.google.com';
+  if (k.retry) $('retry').textContent = k.retry;
 
   // serveur local qui ne répond pas : cas typique du dev — on le dit, et on guette son retour
   const localDown = isLocal && url && (code === '-102' || code === '-118' || code === '-7');

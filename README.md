@@ -137,13 +137,26 @@ logique.
 | Touche | Action |
 |---|---|
 | Ctrl+T / Ctrl+W | nouvel onglet / fermer |
+| Ctrl+Shift+N | nouvel onglet privé |
 | Ctrl+Shift+T | rouvrir le dernier fermé |
-| Ctrl+L | barre d'adresse |
+| Ctrl+L / Alt+D / F6 | barre d'adresse |
 | Ctrl+K | rechercher partout |
 | Ctrl+B | replier la liste des onglets |
 | Ctrl+Tab | dernier onglet utilisé (bascule) |
 | Ctrl+Shift+Tab | onglet précédent (ordre de la liste) |
-| Alt+← / Alt+→ | précédent / suivant |
+| Ctrl+PgSuiv / Ctrl+PgPréc | onglet suivant / précédent (ordre de la liste) |
+| Ctrl+1 … Ctrl+8 / Ctrl+9 | n-ième onglet / dernier onglet |
+| Alt+← / Alt+→, boutons latéraux de la souris | précédent / suivant |
+| Alt+Début | page d'accueil |
+| Ctrl+R, F5 / Ctrl+Shift+R, Ctrl+F5, Maj+F5 | recharger / recharger sans le cache |
+| Ctrl+F | rechercher dans la page |
+| Ctrl+D | ajouter/retirer des favoris |
+| Ctrl+H / Ctrl+J | historique / téléchargements |
+| Ctrl+Shift+Suppr | effacer les données de navigation |
+| Ctrl+S / Ctrl+P | enregistrer la page / imprimer |
+| Ctrl+U | code source de la page |
+| Ctrl+= / Ctrl+- / Ctrl+0 | zoom |
+| F11 | plein écran |
 | F12 / Ctrl+Shift+I | devtools page / devtools interface |
 
 ## Structure
@@ -278,10 +291,37 @@ dessous ailleurs, avec repli au-dessus si débordement.
 - **Impression (Ctrl+P)**.
 - **Page d'erreur** : en cas d'échec de chargement (hors ligne, domaine invalide…), une page
   au style de NaX explique le problème avec un bouton Réessayer ; l'omnibox garde l'adresse
-  visée.
+  visée. Même page (« Oups, la page a planté », bouton Recharger) quand le processus d'une page
+  plante ou manque de mémoire, au lieu d'un onglet blanc.
+- **Page figée** : si la page à l'écran ne répond plus, NaX propose d'attendre ou de l'arrêter.
+- **Quitter la page ?** : une page avec des modifications non enregistrées (`beforeunload`)
+  demande confirmation avant d'être quittée. Sans ce gestionnaire, Electron annulait la
+  navigation sans rien dire.
+- **Connexion HTTP** (Basic, NTLM, proxy) : une modale demande l'identifiant et le mot de passe
+  (intranets, Jira hébergé, routeurs…). Échap ou Annuler renvoie le refus du site.
+- **Adresse du lien survolé** : affichée en bas à gauche de la page, dans l'overlay des tooltips.
+- **Clic droit sur une page** : corrections orthographiques (et « Ajouter au dictionnaire »),
+  image (ouvrir, enregistrer sous, copier, copier l'adresse), lien (onglet privé, enregistrer
+  sous), vidéo/audio (enregistrer sous), page (enregistrer sous, imprimer, code source).
+- **Enregistrer la page (Ctrl+S)** : page complète (`.html` + dossier), un seul fichier
+  (`.mhtml`) ou HTML seul (`.htm`), selon l'extension choisie.
 
 Fichiers associés : `ui/find.html` + `find-preload.js` (recherche), `ui/error.html` (erreurs),
 et la gestion des téléchargements / permissions / plein écran dans `main.js`.
+
+### Navigateur par défaut
+
+Réglages → Au démarrage → **Navigateur par défaut**. Windows interdit à une appli de se
+déclarer elle-même navigateur par défaut : NaX s'enregistre comme navigateur (clés `HKCU`,
+sans droits admin : `NaXURL` pour http/https, `NaXHTML` pour .html/.pdf/.svg…, et
+`Software\Clients\StartMenuInternet\NaX`), puis ouvre sa fiche dans Paramètres Windows →
+Applications par défaut, où l'utilisateur confirme. L'enregistrement est refait au lancement si
+l'exécutable a changé de place. Uniquement sur l'appli installée (en dev, l'exécutable est
+`electron.exe`). Les clés sont retirées à la désinstallation, mais pas lors d'une mise à jour
+(`build/installer.nsh`).
+
+Un lien ou un fichier reçu en ligne de commande (`NaX.exe <url>`) s'ouvre dans un nouvel onglet,
+ou ramène à l'onglet s'il est déjà ouvert ; si NaX tourne déjà, la 2e instance lui passe le lien.
 
 ## Autocomplétion de la barre d'adresse
 

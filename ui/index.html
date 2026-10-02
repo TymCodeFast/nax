@@ -251,6 +251,10 @@
             <section class="settings-pane hidden" data-pane="startup">
               <h2>Au démarrage</h2>
               <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Navigateur par défaut</div><div id="default-browser-desc" class="setting-desc muted">Ouvrir dans NaX les liens cliqués dans les autres applis (mails, Teams…).</div></div>
+                <button id="default-browser-btn" class="btn ghost"><svg><use href="#i-globe"/></svg> Définir par défaut</button>
+              </div>
+              <div class="setting-row">
                 <div class="setting-label"><div class="setting-name">À l'ouverture de NaX</div><div class="setting-desc muted">Reprendre vos onglets ou repartir sur la page d'accueil.</div></div>
                 <div id="startup-dd" class="dropdown"></div>
               </div>
@@ -375,6 +379,16 @@
         </div>
       </div>
       <!-- Guide d'export Chrome -->
+      <!-- Authentification HTTP demandée par un site (Basic/NTLM) ou un proxy -->
+      <div id="auth" class="overlay hidden">
+        <form id="auth-form" class="panel small glow" autocomplete="off">
+          <h2><svg class="h-ico"><use href="#i-lock"/></svg> Connexion requise</h2>
+          <p id="auth-msg" class="muted"></p>
+          <input id="auth-user" class="txt-field auth-field" type="text" spellcheck="false" autocomplete="off" placeholder="Nom d'utilisateur">
+          <input id="auth-pass" class="txt-field auth-field" type="password" autocomplete="off" placeholder="Mot de passe">
+          <div class="actions"><button type="button" id="auth-cancel">Annuler</button><button type="submit" class="primary">Se connecter</button></div>
+        </form>
+      </div>
       <div id="pw-guide" class="overlay hidden">
         <div class="panel small glow">
           <h2><svg class="h-ico"><use href="#i-shield"/></svg> Exporter depuis Chrome</h2>

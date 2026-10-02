@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { execFile } = require('child_process');
+const { pathToFileURL } = require('url');
 // Script d'overlay Picture-in-Picture, injecté dans le monde principal de chaque page (voir wakeTab).
 const PIP_INJECT = (() => { try { return fs.readFileSync(path.join(__dirname, 'content-preload.js'), 'utf8'); } catch { return ''; } })();
 
@@ -465,7 +466,7 @@ function sameTarget(wanted, tabUrl) {
 function toUrl(input) {
   const s = (input || '').trim();
   if (!s) return null;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^view-source:/i.test(s)) return s;
   if (/^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(s) || /^localhost(:\d+)?/.test(s)) return 'https://' + s;
   return searchUrl(s);
 }
@@ -514,6 +515,7 @@ function attach(view) {
   if (contentView === view) return;
   if (contentView) win.contentView.removeChildView(contentView);
   contentView = view;
+  hideLinkStatus(); // la bulle d'adresse appartenait à la page qu'on quitte
   if (view) {
     win.contentView.addChildView(view);
     view.setVisible(!overlayOpen);
@@ -591,8 +593,50 @@ const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'di
 function createView(onEvent, partition) {
   const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
   for (const ev of NAV_EVENTS) view.webContents.on(ev, (...args) => onEvent(ev, ...args));
+  wirePageBasics(view.webContents);
   return view;
 }
+// Comportements de navigateur communs à toutes les pages (onglets, volets, applis du rail).
+function wirePageBasics(wc) {
+  // « Quitter la page ? » : sans ce gestionnaire, Electron annule la navigation EN SILENCE
+  // dès que la page a des modifications non enregistrées (beforeunload) — taper une adresse ne faisait rien.
+  wc.on('will-prevent-unload', (e) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question', buttons: ['Quitter la page', 'Rester'], defaultId: 1, cancelId: 1, noLink: true,
+      title: 'Quitter la page ?', message: 'Quitter cette page ?',
+      detail: 'Les modifications que tu as apportées ne seront peut-être pas enregistrées.',
+    });
+    if (choice === 0) e.preventDefault(); // preventDefault = ignorer le beforeunload et laisser partir
+  });
+  // adresse du lien survolé, en bas à gauche de la page (vérifier où mène un lien avant de cliquer)
+  wc.on('update-target-url', (_e, url) => showLinkStatus(wc, url));
+  // page figée (boucle infinie…) : on propose de l'arrêter, seulement si elle est à l'écran
+  let hangAsked = false;
+  wc.on('unresponsive', async () => {
+    if (hangAsked || !isOnScreen(wc)) return;
+    hangAsked = true;
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Attendre', 'Arrêter la page'], defaultId: 0, cancelId: 0, noLink: true,
+      title: 'Page figée', message: 'Cette page ne répond pas',
+      detail: `${hostOf(wc.getURL()) || 'La page'} ne répond plus. Tu peux attendre qu’elle reprenne, ou l’arrêter (elle pourra être rechargée).`,
+    }).catch(() => ({ response: 0 }));
+    hangAsked = false;
+    if (response === 1 && !wc.isDestroyed()) wc.forcefullyCrashRenderer(); // → render-process-gone → page « Oups »
+  });
+}
+function isOnScreen(wc) { return [contentView, splitView].some((v) => v && wcOf(v) === wc); }
+
+// Bulle d'adresse du lien survolé : dessinée dans l'overlay des tooltips (au-dessus des vues natives),
+// calée en bas à gauche de la vue qui l'a émise (page principale ou volet de droite).
+function showLinkStatus(wc, url) {
+  if (!tipWin || tipWin.isDestroyed()) return;
+  const view = [contentView, splitView].find((v) => v && wcOf(v) === wc);
+  let text = '';
+  if (url && view && !overlayOpen) { try { text = decodeURI(url); } catch { text = url; } }
+  const payload = text ? { text, bounds: view.getBounds(), dark: nativeTheme.shouldUseDarkColors } : null;
+  try { tipWin.webContents.send('link-status', payload); } catch {}
+}
+function hideLinkStatus() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('link-status', null); } catch {} } }
 
 // Fenêtres de connexion : les fournisseurs d'identité ouvrent un popup qui dialogue avec la page d'origine
 // (window.opener, postMessage) puis se ferme seul. Converti en onglet, ce lien serait perdu et la connexion n'aboutirait pas.
@@ -614,7 +658,7 @@ function wakeTab(tab) {
     if (ev === 'did-stop-loading' && !onErr) {
       tab.title = wc.getTitle() || tab.title;
       // navigation privée / session isolée : aucune trace dans l'historique
-      if (!isIsolated(tab)) {
+      if (!isIsolated(tab) && !/^view-source:/i.test(tab.url)) {
         const key = normalize(tab.url);
         const h = history[key] || { count: 0 };
         history[key] = { title: tab.title, url: tab.url, count: h.count + 1, last: Date.now() };
@@ -649,6 +693,11 @@ function wakeTab(tab) {
   wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
     // -3 = requête abandonnée (navigation normale), on ignore ; on ignore aussi les échecs de la page d'erreur elle-même
     if (isMainFrame && code !== -3 && !isErrorPage(failedUrl) && failedUrl && failedUrl !== 'about:blank') loadErrorPage(tab, failedUrl, code, desc);
+  });
+  // La page a planté (mémoire, bug, arrêt forcé) : sinon l'onglet resterait blanc, sans rien pour le relancer.
+  wc.on('render-process-gone', (_e, d) => {
+    if (tab.view !== view || d.reason === 'clean-exit') return; // fermeture voulue (veille, fermeture)
+    loadErrorPage(tab, tab.errorURL || tab.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
   });
   // Injecte l'overlay « Détacher la vidéo » (PiP) + applique le zoom (par site ou par défaut) à chaque chargement.
   wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(PIP_INJECT).catch(() => {}); applyZoom(wc); });
@@ -920,10 +969,14 @@ function uniquePath(p) {
   for (let i = 1; i < 1000; i++) { const cand = path.join(dir, `${base} (${i})${ext}`); if (!fs.existsSync(cand)) return cand; }
   return p;
 }
+// URLs à enregistrer en demandant l'emplacement, même si le réglage « demander » est coupé
+// (clic droit → Enregistrer l'image / le lien sous…).
+const saveAsUrls = new Set();
+function downloadAs(wc, url) { if (!url) return; saveAsUrls.add(url); wc.downloadURL(url); }
 function initDownloads() {
   session.defaultSession.on('will-download', (_event, item) => {
     let savePath = '';
-    if (askDownloadPath) {
+    if (saveAsUrls.delete(item.getURL()) || askDownloadPath) {
       // on ne fixe pas le chemin : Electron affiche la boîte native « Enregistrer sous »
     } else {
       savePath = uniquePath(path.join(defaultDownloadDir(), item.getFilename()));
@@ -939,6 +992,31 @@ function initDownloads() {
     item.on('updated', (_e, state) => { syncPath(); rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes(); rec.paused = item.isPaused(); rec.state = state === 'interrupted' ? 'interrupted' : (rec.paused ? 'paused' : 'progressing'); sendDownloads(); });
     item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); });
   });
+}
+
+// ---------- authentification HTTP (Basic, NTLM, proxy) ----------
+// Sans gestionnaire, Electron annule la demande : intranets, Jira hébergé, routeurs… affichaient un simple 401.
+// Les demandes sont mises en file et posées une par une dans une modale de l'interface.
+const authQueue = [];
+let authSeq = 1;
+function initHttpAuth() {
+  app.on('login', (e, _wc, _details, authInfo, callback) => {
+    e.preventDefault();
+    const port = authInfo.port && ![80, 443].includes(authInfo.port) ? ':' + authInfo.port : '';
+    authQueue.push({ id: authSeq++, host: authInfo.host + port, realm: authInfo.realm || '', isProxy: !!authInfo.isProxy, callback });
+    if (authQueue.length === 1) showNextAuth();
+  });
+}
+function showNextAuth() {
+  const a = authQueue[0];
+  if (a && chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('auth-request', { id: a.id, host: a.host, realm: a.realm, isProxy: a.isProxy });
+}
+function answerAuth({ id, username, password, cancel } = {}) {
+  const i = authQueue.findIndex((a) => a.id === id);
+  if (i < 0) return;
+  const [a] = authQueue.splice(i, 1);
+  try { if (cancel) a.callback(); else a.callback(String(username || ''), String(password || '')); } catch {}
+  showNextAuth();
 }
 
 // ---------- permissions (caméra, micro, notifications, géoloc…) ----------
@@ -988,7 +1066,10 @@ function loadErrorPage(tab, failedUrl, code, desc) {
   const w = wcOf(tab.view);
   if (!w) return;
   tab.errorURL = failedUrl;
-  w.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } });
+  showErrorPage(w, failedUrl, code, desc);
+}
+function showErrorPage(w, failedUrl, code, desc) {
+  w.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } }).catch(() => {});
 }
 
 // ---------- autocomplétion de la barre d'adresse ----------
@@ -1064,6 +1145,11 @@ function ensureAppView(a) {
     v.webContents.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
     v.webContents.on('enter-html-full-screen', () => { if (current && current.kind === 'app' && current.id === a.id) enterHtmlFullscreen(); });
     v.webContents.on('leave-html-full-screen', () => leaveHtmlFullscreen());
+    v.webContents.on('render-process-gone', (_e, d) => {
+      if (appViews.get(a.id) !== appView || d.reason === 'clean-exit') return;
+      const u = v.webContents.getURL();
+      showErrorPage(v.webContents, u && !isErrorPage(u) ? u : a.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
+    });
     v.webContents.loadURL(a.url);
     appViews.set(a.id, v);
   }
@@ -1523,13 +1609,54 @@ async function exportMarkdown(wc) {
   if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', data);
 }
 
+// Ctrl+S : page complète (.html + dossier), un seul fichier (.mhtml) ou HTML seul (.htm), selon l'extension choisie.
+async function savePageAs(wc) {
+  if (!wc || wc.isDestroyed() || isErrorPage(wc.getURL())) return;
+  const base = (wc.getTitle() || hostOf(wc.getURL()) || 'page').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'page';
+  const res = await dialog.showSaveDialog(win, {
+    title: 'Enregistrer la page sous', defaultPath: path.join(defaultDownloadDir(), base + '.html'),
+    filters: [{ name: 'Page web complète', extensions: ['html'] }, { name: 'Page web, un seul fichier', extensions: ['mhtml'] }, { name: 'Page web, HTML uniquement', extensions: ['htm'] }],
+  });
+  if (res.canceled || !res.filePath) return;
+  const ext = path.extname(res.filePath).toLowerCase();
+  const type = ext === '.mhtml' || ext === '.mht' ? 'MHTML' : ext === '.htm' ? 'HTMLOnly' : 'HTMLComplete';
+  try { await wc.savePage(res.filePath, type); }
+  catch (err) { dialog.showMessageBox(win, { type: 'error', title: 'Enregistrement impossible', message: 'La page n’a pas pu être enregistrée.', detail: String((err && err.message) || err) }).catch(() => {}); }
+}
+// Ctrl+U : le code source s'ouvre dans un onglet voisin (moteur Chromium, schéma view-source:).
+function viewSource(wc, openerId = null) {
+  const u = wc && !wc.isDestroyed() ? wc.getURL() : '';
+  if (u && !isErrorPage(u) && !/^view-source:/i.test(u)) newTab({ url: 'view-source:' + u, openerId });
+}
+
 // wc = webContents de la page (onglet OU appli du rail) ; openerId = onglet ouvreur (null pour une appli).
 function pageContextMenu(wc, p, openerId = null) {
   if (!wc || wc.isDestroyed()) return;
   const items = [];
+  // mot souligné par le correcteur : suggestions en tête, comme dans Chrome
+  if (p.misspelledWord) {
+    const sugg = (p.dictionarySuggestions || []).slice(0, 5);
+    for (const w of sugg) items.push({ label: w, click: () => wc.replaceMisspelling(w) });
+    if (!sugg.length) items.push({ label: 'Aucune suggestion', enabled: false });
+    items.push({ label: 'Ajouter au dictionnaire', click: () => wc.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
+    items.push({ type: 'separator' });
+  }
   if (p.linkURL) {
     items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: p.linkURL, openerId, activate: false }) });
+    items.push({ label: 'Ouvrir dans un onglet privé', click: () => newTab({ url: p.linkURL, partition: splitPartition('private') }) });
     items.push({ label: 'Copier le lien', click: () => clipboard.writeText(p.linkURL) });
+    items.push({ label: 'Enregistrer le lien sous…', click: () => downloadAs(wc, p.linkURL) });
+    items.push({ type: 'separator' });
+  }
+  if (p.mediaType === 'image' && p.srcURL) {
+    items.push({ label: 'Ouvrir l’image dans un nouvel onglet', click: () => newTab({ url: p.srcURL, openerId, activate: false }) });
+    items.push({ label: 'Enregistrer l’image sous…', click: () => downloadAs(wc, p.srcURL) });
+    items.push({ label: 'Copier l’image', click: () => wc.copyImageAt(p.x, p.y) });
+    items.push({ label: 'Copier l’adresse de l’image', click: () => clipboard.writeText(p.srcURL) });
+    items.push({ type: 'separator' });
+  } else if ((p.mediaType === 'video' || p.mediaType === 'audio') && /^https?:/i.test(p.srcURL || '')) {
+    items.push({ label: p.mediaType === 'video' ? 'Enregistrer la vidéo sous…' : 'Enregistrer l’audio sous…', click: () => downloadAs(wc, p.srcURL) });
+    items.push({ label: 'Copier l’adresse du média', click: () => clipboard.writeText(p.srcURL) });
     items.push({ type: 'separator' });
   }
   if (p.selectionText) {
@@ -1548,8 +1675,12 @@ function pageContextMenu(wc, p, openerId = null) {
   items.push({ label: 'Suivant', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
   items.push({ label: 'Recharger', click: () => wc.reload() });
   items.push({ type: 'separator' });
+  items.push({ label: 'Enregistrer la page sous…', click: () => savePageAs(wc) });
+  items.push({ label: 'Imprimer…', click: () => wc.print() });
   items.push({ label: 'Exporter en Markdown', click: () => exportMarkdown(wc) });
   items.push({ label: 'Copier l’adresse de la page', click: () => clipboard.writeText(wc.getURL()) });
+  items.push({ type: 'separator' });
+  items.push({ label: 'Afficher le code source', click: () => viewSource(wc, openerId) });
   items.push({ label: 'Inspecter', click: () => wc.inspectElement(p.x, p.y) });
   popupMenu(items);
 }
@@ -1568,6 +1699,15 @@ function buildMenu() {
     const i = current && current.kind === 'tab' ? tabs.findIndex((t) => t.id === current.id) : -1;
     activateTab(tabs[(i + dir + tabs.length) % tabs.length].id);
   };
+  // Ctrl+1…8 : n-ième onglet de la liste ; Ctrl+9 : le dernier (comme Chrome). Un volet secondaire suit son primaire.
+  const tabAt = (n) => {
+    const list = tabs.filter((t) => !t.splitParent);
+    const t = n === 9 ? list[list.length - 1] : list[n - 1];
+    if (t) activateTab(t.id);
+  };
+  const uiCommand = (cmd) => () => uiFocus('ui-command', cmd);
+  const hardReload = withWC((wc) => wc.reloadIgnoringCache());
+  const focusUrl = () => uiFocus('focus-url');
   const tpl = [{
     label: 'NaX',
     submenu: [
@@ -1575,16 +1715,31 @@ function buildMenu() {
       { label: 'Nouvel onglet privé', accelerator: 'CmdOrCtrl+Shift+N', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
       { label: "Fermer l'onglet", accelerator: 'CmdOrCtrl+W', click: () => { if (current && current.kind === 'tab') closeTab(current.id); } },
       { label: 'Rouvrir le dernier onglet fermé', accelerator: 'CmdOrCtrl+Shift+T', click: () => { const a = archive.shift(); if (a) newTab({ url: a.url }); } },
-      { label: 'Adresse', accelerator: 'CmdOrCtrl+L', click: () => uiFocus('focus-url') },
+      { label: 'Adresse', accelerator: 'CmdOrCtrl+L', click: focusUrl },
+      { label: 'Adresse (Alt+D)', accelerator: 'Alt+D', visible: false, click: focusUrl },
+      { label: 'Adresse (F6)', accelerator: 'F6', visible: false, click: focusUrl },
       { label: 'Rechercher', accelerator: 'CmdOrCtrl+K', click: () => uiFocus('open-palette') },
       { label: 'Ajouter/retirer des favoris', accelerator: 'CmdOrCtrl+D', click: () => { const t = current && current.kind === 'tab' ? tabById(current.id) : null; if (t) toggleFavoriteUrl(t.url, t.title, t.favicon); } },
       { label: 'Afficher/masquer la liste', accelerator: 'CmdOrCtrl+B', click: () => { sidebarOpen = !sidebarOpen; layout(); sendState(); } },
       { label: 'Dernier onglet utilisé', accelerator: 'Ctrl+Tab', click: () => { const id = lastUsedTab(); if (id) activateTab(id); } },
       { label: 'Onglet précédent', accelerator: 'Ctrl+Shift+Tab', click: () => cycle(-1) },
+      { label: 'Onglet suivant (liste)', accelerator: 'Ctrl+PageDown', click: () => cycle(1) },
+      { label: 'Onglet précédent (liste)', accelerator: 'Ctrl+PageUp', click: () => cycle(-1) },
+      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ label: n === 9 ? 'Dernier onglet' : `Onglet ${n}`, accelerator: `CmdOrCtrl+${n}`, visible: false, click: () => tabAt(n) })),
       { label: 'Recharger', accelerator: 'CmdOrCtrl+R', click: withWC((wc) => wc.reload()) },
       { label: 'Recharger (F5)', accelerator: 'F5', visible: false, click: withWC((wc) => wc.reload()) },
+      { label: 'Recharger sans le cache', accelerator: 'CmdOrCtrl+Shift+R', click: hardReload },
+      { label: 'Recharger sans le cache (Ctrl+F5)', accelerator: 'CmdOrCtrl+F5', visible: false, click: hardReload },
+      { label: 'Recharger sans le cache (Maj+F5)', accelerator: 'Shift+F5', visible: false, click: hardReload },
+      { label: 'Page d’accueil', accelerator: 'Alt+Home', click: () => navigateCurrent(homepage) },
+      { label: 'Historique', accelerator: 'CmdOrCtrl+H', click: uiCommand('history') },
+      { label: 'Téléchargements', accelerator: 'CmdOrCtrl+J', click: uiCommand('downloads') },
+      { label: 'Effacer les données de navigation', accelerator: 'CmdOrCtrl+Shift+Delete', click: uiCommand('privacy') },
       { label: 'Rechercher dans la page', accelerator: 'CmdOrCtrl+F', click: () => showFind() },
       { label: 'Imprimer…', accelerator: 'CmdOrCtrl+P', click: withWC((wc) => wc.print()) },
+      { label: 'Enregistrer la page sous…', accelerator: 'CmdOrCtrl+S', click: withWC((wc) => savePageAs(wc)) },
+      { label: 'Afficher le code source', accelerator: 'CmdOrCtrl+U', click: withWC((wc) => viewSource(wc, current && current.kind === 'tab' ? current.id : null)) },
+      { label: 'Plein écran', accelerator: 'F11', click: () => { if (htmlFullscreen) leaveHtmlFullscreen(); else win.setFullScreen(!win.isFullScreen()); } },
       { label: 'Quitter le plein écran', accelerator: 'Escape', visible: false, click: () => { if (htmlFullscreen) leaveHtmlFullscreen(); } },
       { label: 'Précédent', accelerator: 'Alt+Left', click: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
       { label: 'Suivant', accelerator: 'Alt+Right', click: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
@@ -2063,6 +2218,7 @@ function registerIpc() {
   ipcMain.on('sidebar-resize-end', () => { if (contentView) contentView.setVisible(!overlayOpen); layout(); sendState(); });
   ipcMain.on('overlay', (_e, open) => {
     overlayOpen = !!open;
+    if (overlayOpen) hideLinkStatus();
     if (contentView) contentView.setVisible(!overlayOpen);
     if (splitView) splitView.setVisible(!overlayOpen);
     if (overlayOpen) chrome.webContents.focus();
@@ -2106,6 +2262,9 @@ function registerIpc() {
   ipcMain.handle('archive-list', () => archive.slice(0, 300));
   ipcMain.on('archive-restore', (_e, index) => { const a = archive[index]; if (!a) return; archive.splice(index, 1); newTab({ url: a.url }); });
   ipcMain.on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
+  ipcMain.on('auth-reply', (_e, r) => answerAuth(r));
+  ipcMain.handle('default-browser-status', () => defaultBrowserStatus());
+  ipcMain.handle('default-browser-set', () => makeDefaultBrowser());
   ipcMain.on('open-url', (_e, url) => navigateCurrent(url));
   ipcMain.on('open-url-new', (_e, url) => { const u = toUrl(url); if (u) newTab({ url: u }); });
 
@@ -2212,6 +2371,15 @@ function createWindow() {
   win.on('move', () => { hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); });
   win.on('hide', () => { hidePeek(); hideMenu(); hideTip(); hideSuggest(); });
   win.on('blur', () => hideTip());
+  // Boutons latéraux de la souris (et touches Précédent/Suivant des claviers multimédia) : Windows les envoie
+  // à la fenêtre sous forme de commande d'application, que Chromium-sous-Electron ne traite pas lui-même.
+  win.on('app-command', (_e, cmd) => {
+    const wc = pageWCAtCursor();
+    if (!wc) return;
+    if (cmd === 'browser-backward' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+    else if (cmd === 'browser-forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+    else if (cmd === 'browser-refresh') wc.reload();
+  });
   chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
   chrome.webContents.once('did-finish-load', () => {
     if (startupMode === 'home') { tabs = []; groups = []; current = null; newTab(); }
@@ -2220,8 +2388,11 @@ function createWindow() {
     setTimeout(pollGmail, 5000);          // pastille du compteur Gmail
     setInterval(pollGmail, 3 * 60 * 1000);
     ensureTipWin();                       // overlay des tooltips personnalisés
+    openLaunchTargets(process.argv);      // lien cliqué dans une autre appli alors que NaX était fermé
   });
   initDownloads();
+  initHttpAuth();
+  registerAsBrowser();
   initPermissions();
   applyLanguages();
   // Langues préférées des pages (Accept-Language), piloté par les Paramètres.
@@ -2233,6 +2404,96 @@ function createWindow() {
   registerIpc();
   setInterval(housekeeping, 60 * 1000);
   initAutoUpdate();
+}
+
+// Page sous le curseur (vue divisée : le volet visé), sinon la page affichée ; rien si une modale couvre les pages.
+function pageWCAtCursor() {
+  if (!win || overlayOpen) return null;
+  const pt = screen.getCursorScreenPoint(), b = win.getContentBounds();
+  const x = pt.x - b.x, y = pt.y - b.y;
+  for (const v of [splitView, contentView]) {
+    if (!v) continue;
+    const r = v.getBounds();
+    if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) return wcOf(v);
+  }
+  return visibleWC();
+}
+
+// ---------- navigateur par défaut ----------
+// Liens et fichiers reçus en ligne de commande (« NaX.exe <url> », posé par Windows quand NaX est le navigateur
+// par défaut). Les options (--xxx) sont ignorées : une URL http(s) ne peut pas être prise pour une option.
+const LAUNCH_FILE_EXT = /\.(html?|xhtml|shtml|pdf|svg|webp)$/i;
+function launchTargets(argv) {
+  const out = [];
+  for (const a of (argv || []).slice(1)) {
+    if (!a || a.startsWith('-')) continue;
+    if (/^(https?|file):/i.test(a)) out.push(a);
+    else if (LAUNCH_FILE_EXT.test(a)) { try { const f = path.resolve(a); if (fs.existsSync(f)) out.push(pathToFileURL(f).href); } catch {} }
+  }
+  return out;
+}
+function openLaunchTargets(argv) {
+  if (!chrome || chrome.webContents.isDestroyed() || chrome.webContents.isLoading()) return;
+  for (const url of launchTargets(argv)) {
+    const open = tabs.find((t) => normalize(t.url) === normalize(url)); // déjà ouvert : on y va
+    if (open) activateTab(open.id); else newTab({ url });
+  }
+}
+
+// Enregistrement auprès de Windows (HKCU, sans droits admin) : NaX apparaît dans Paramètres → Applications
+// par défaut. Windows interdit de se déclarer navigateur par défaut soi-même : l'utilisateur confirme là-bas.
+// Uniquement pour l'appli installée (en dev, l'exécutable est electron.exe). Nettoyé par build/installer.nsh.
+const REG_APP = 'NaX', REG_URL_PROGID = 'NaXURL', REG_FILE_PROGID = 'NaXHTML';
+const REG_FILE_TYPES = ['.htm', '.html', '.shtml', '.xhtml', '.pdf', '.svg', '.webp'];
+function regQuery(key, value) {
+  return new Promise((resolve) => {
+    execFile('reg', ['query', key, ...(value ? ['/v', value] : ['/ve'])], { windowsHide: true }, (err, out) => resolve(err ? '' : String(out)));
+  });
+}
+async function registerAsBrowser({ force = false } = {}) {
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  const exe = process.execPath;
+  const cmd = `"${exe}" "%1"`;
+  if (!force && (await regQuery(`HKCU\\Software\\Classes\\${REG_URL_PROGID}\\shell\\open\\command`)).includes(exe)) return true; // déjà à jour
+  const q = (v) => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  const icon = `${exe},0`;
+  const cap = `HKEY_CURRENT_USER\\Software\\Clients\\StartMenuInternet\\${REG_APP}`;
+  const progId = (id, desc, isUrl) => [
+    `[HKEY_CURRENT_USER\\Software\\Classes\\${id}]`, `@=${q(desc)}`, ...(isUrl ? ['"URL Protocol"=""'] : []), '',
+    `[HKEY_CURRENT_USER\\Software\\Classes\\${id}\\DefaultIcon]`, `@=${q(icon)}`, '',
+    `[HKEY_CURRENT_USER\\Software\\Classes\\${id}\\shell\\open\\command]`, `@=${q(cmd)}`, '',
+  ];
+  const lines = [
+    'Windows Registry Editor Version 5.00', '',
+    ...progId(REG_URL_PROGID, 'Lien NaX', true),
+    ...progId(REG_FILE_PROGID, 'Document NaX'),
+    `[${cap}]`, `@=${q(REG_APP)}`, '',
+    `[${cap}\\DefaultIcon]`, `@=${q(icon)}`, '',
+    `[${cap}\\shell\\open\\command]`, `@=${q(`"${exe}"`)}`, '',
+    `[${cap}\\Capabilities]`, `"ApplicationName"=${q(REG_APP)}`, `"ApplicationDescription"=${q('Navigateur NaX, pensé pour l’organisation')}`, `"ApplicationIcon"=${q(icon)}`, '',
+    `[${cap}\\Capabilities\\StartMenu]`, `"StartMenuInternet"=${q(REG_APP)}`, '',
+    `[${cap}\\Capabilities\\URLAssociations]`, `"http"=${q(REG_URL_PROGID)}`, `"https"=${q(REG_URL_PROGID)}`, '',
+    `[${cap}\\Capabilities\\FileAssociations]`, ...REG_FILE_TYPES.map((x) => `"${x}"=${q(REG_FILE_PROGID)}`), '',
+    ...REG_FILE_TYPES.flatMap((x) => [`[HKEY_CURRENT_USER\\Software\\Classes\\${x}\\OpenWithProgids]`, `"${REG_FILE_PROGID}"=""`, '']),
+    '[HKEY_CURRENT_USER\\Software\\RegisteredApplications]', `${q(REG_APP)}=${q(`Software\\Clients\\StartMenuInternet\\${REG_APP}\\Capabilities`)}`, '',
+  ];
+  const file = path.join(app.getPath('temp'), 'nax-browser-registration.reg');
+  try { fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(lines.join('\r\n'), 'utf16le')])); } catch { return false; }
+  return new Promise((resolve) => execFile('reg', ['import', file], { windowsHide: true }, (err) => { try { fs.unlinkSync(file); } catch {} resolve(!err); }));
+}
+async function defaultBrowserStatus() {
+  if (process.platform !== 'win32' || !app.isPackaged) return { supported: false, isDefault: false };
+  // Windows 11 récent écrit le choix sous UserChoiceLatest, les versions plus anciennes sous UserChoice
+  const base = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\';
+  const out = (await regQuery(base + 'UserChoiceLatest', 'ProgId')) || (await regQuery(base + 'UserChoice', 'ProgId'));
+  return { supported: true, isDefault: new RegExp('\\b' + REG_URL_PROGID + '\\b').test(out) };
+}
+async function makeDefaultBrowser() {
+  if (!(await registerAsBrowser({ force: true }))) return { ok: false };
+  // ouvre la fiche de NaX dans Paramètres → Applications par défaut (Windows 11), sinon la page générale
+  try { await shell.openExternal(`ms-settings:defaultapps?registeredAppUser=${REG_APP}`); }
+  catch { try { await shell.openExternal('ms-settings:defaultapps'); } catch {} }
+  return { ok: true };
 }
 
 // Mise à jour automatique via les Releases GitHub (dépôt public défini dans build.publish).
@@ -2263,8 +2524,9 @@ function initAutoUpdate() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_e, argv) => {
     if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    openLaunchTargets(argv); // NaX déjà ouvert : le lien arrive par une 2e instance, qui s'arrête aussitôt
   });
   app.whenReady().then(createWindow);
 }
