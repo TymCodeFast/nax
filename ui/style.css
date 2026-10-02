@@ -240,9 +240,11 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .tab .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 450; }
 .tab.active .title { font-weight: 550; }
 .tab .sub { color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.tab .x { opacity: 0; width: 22px; height: 22px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; flex: none; transition: opacity var(--t), background var(--t), color var(--t); }
+/* le ✕ ne réserve pas de place au repos (le titre garde toute la largeur) ; au survol il prend la place de l'âge */
+.tab .x { display: none; width: 22px; height: 22px; border-radius: 6px; color: var(--muted); place-items: center; flex: none; transition: background var(--t), color var(--t); }
 .tab .x svg { width: 13px; height: 13px; }
-.tab:hover .x { opacity: 1; }
+.tab:hover .x { display: grid; }
+.tab:hover .sub { display: none; }
 .tab .x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
 .tab.dormant { color: var(--fg-2); }
 .tab.dormant .ico img { opacity: .9; }
@@ -287,9 +289,9 @@ body.private-tab #omni-icon { color: var(--c2); }
 .pair-tile .ico .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
 .pair-tile .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
 .pair-tile.dormant { color: var(--fg-2); }
-.pair-tile .x { opacity: 0; width: 20px; height: 20px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; flex: none; transition: opacity var(--t), background var(--t), color var(--t); }
+.pair-tile .x { display: none; width: 20px; height: 20px; border-radius: 6px; color: var(--muted); place-items: center; flex: none; transition: background var(--t), color var(--t); }
 .pair-tile .x svg { width: 12px; height: 12px; }
-.pair-tile:hover .x { opacity: 1; }
+.pair-tile:hover .x { display: grid; }
 .pair-tile .x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
 .pair-tile .tab-ses { display: none; }
 .pair-tile.private .tab-ses { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--c2); }
