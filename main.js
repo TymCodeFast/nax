@@ -1917,6 +1917,7 @@ function registerIpc() {
     availLangs: (() => { try { return session.defaultSession.availableSpellCheckerLanguages || []; } catch { return []; } })(),
     perm: { ...permDefaults },
     version: app.getVersion(),
+    electron: process.versions.electron, chrome: process.versions.chrome, packaged: app.isPackaged,
   }));
   ipcMain.handle('settings-set', (_e, p = {}) => {
     let langsChanged = false, zoomChanged = false;

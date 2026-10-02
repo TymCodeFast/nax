@@ -1072,3 +1072,14 @@ body.claude #split-tb-right { padding-right: 12px; }
 .fc-icon.sel { background: var(--active); border-color: var(--c1); color: var(--c1); }
 .fc-icon svg { width: 20px; height: 20px; }
 #fav-custom .actions { padding: 12px 20px 18px; }
+
+/* ---------- À propos ---------- */
+.about-card { display: flex; align-items: center; gap: 16px; padding: 18px; margin-bottom: 8px; background: var(--field); border: 1px solid var(--line); border-radius: 14px; }
+.about-logo { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 15px; background: #0b0d12; border: 1px solid var(--line-strong); }
+.about-logo svg { width: 32px; height: 32px; }
+.about-id { flex: 1; min-width: 0; }
+#about-copy { flex: none; }
+.about-name { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.about-version { font: 500 13px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); margin-left: 6px; letter-spacing: 0; }
+.about-pill { display: inline-block; white-space: nowrap; margin-top: 5px; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--c1); background: color-mix(in srgb, var(--c1) 14%, transparent); }
+.about-val { font: 400 12.5px "JetBrains Mono", ui-monospace, monospace; color: var(--fg2); user-select: text; text-align: right; }

@@ -1461,11 +1461,29 @@ function openSettings(pane = 'appearance') {
   selectSettingsPane(pane);
   if (pane === 'passwords') refreshPasswords();
 }
+// « À propos » : numéro de version (source unique : package.json via app.getVersion), moteur, canal
+let aboutText = '';
+async function renderAboutPane() {
+  let s = null; try { s = await api.settingsGet(); } catch {}
+  if (!s || !s.version) return;
+  const beta = /^0.0./.test(s.version); // 0.0.x = bêta fermée (voir README, « Versions »)
+  const channel = beta ? 'Bêta fermée' : (/^0./.test(s.version) ? 'Bêta' : 'Stable');
+  $('about-version').textContent = 'v' + s.version;
+  $('about-version-row').textContent = s.version;
+  $('about-channel').textContent = channel;
+  $('about-engine').textContent = 'Electron ' + s.electron + ' · Chromium ' + s.chrome;
+  $('about-update-desc').textContent = s.packaged
+    ? 'NaX cherche une version plus récente au démarrage, puis toutes les 6 h, et te propose de redémarrer pour l’installer.'
+    : 'Désactivées en mode développement (l’appli lancée avec npm start).';
+  aboutText = 'NaX v' + s.version + ' (' + channel + ') — Electron ' + s.electron + ', Chromium ' + s.chrome + ' — ' + (navigator.userAgentData && navigator.userAgentData.platform || navigator.platform);
+}
+$('about-copy').onclick = () => { if (aboutText) { api.mdCopy(aboutText); toast('Infos de version copiées'); } };
 function selectSettingsPane(pane) {
   document.querySelectorAll('.settings-navitem').forEach((b) => b.classList.toggle('active', b.dataset.pane === pane));
   document.querySelectorAll('.settings-pane').forEach((s) => s.classList.toggle('hidden', s.dataset.pane !== pane));
   if (pane === 'passwords') refreshPasswords();
   if (pane === 'dev') renderDevPane();
+  if (pane === 'about') renderAboutPane();
   if (pane === 'search') renderSearchPane();
   if (pane === 'favorites') renderFavPane();
   if (pane === 'privacy') { bdView = null; bdQuery = ''; renderPrivacyPane(); }

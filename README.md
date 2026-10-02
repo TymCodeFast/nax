@@ -201,11 +201,28 @@ de redémarrer pour l'appliquer. Le dépôt étant public, aucune authentificati
 côté utilisateur. Rien de tout cela ne s'active en dev (`npm start`), seulement sur l'app
 installée.
 
+### Versions
+
+Un seul numéro, dans `package.json` (`version`) : c'est lui qu'affichent l'installeur,
+Réglages → À propos et les mises à jour automatiques. Schéma [semver](https://semver.org/lang/fr/) :
+
+| Numéro | Étape |
+|---|---|
+| `0.0.x` | **bêta fermée** (actuelle) — un incrément à chaque release : `0.0.1`, `0.0.2`… |
+| `0.1.0`, `0.2.0`… | bêta publique |
+| `1.0.0` | première version stable |
+
+L'auto-update ne propose **jamais une version inférieure** à celle installée : une copie
+de NaX installée en `0.1.0` (ancien numéro, avant la bêta fermée) ne verra pas les `0.0.x`.
+Il suffit de la réinstaller une fois depuis l'installeur de la bêta.
+
 ### Publier une nouvelle version
 
 1. Renseigner le compte GitHub : remplacer `OWNER` dans `package.json` (voir en tête).
-2. Incrémenter `version` dans `package.json` (ex. `0.1.0` → `0.1.1`). L'auto-update ne se
-   déclenche que vers une version plus haute.
+2. Incrémenter la version : `npm run bump` (`0.0.1` → `0.0.2`), ou `npm run bump:minor`
+   (`0.0.x` → `0.1.0`). Aucun tag Git n'est créé ici : c'est la publication qui s'en charge.
+   La toute première release de la bêta garde `0.0.1` (pas de bump). Ne jamais republier un
+   numéro déjà publié : l'auto-update ne se déclenche que vers une version plus haute.
 3. Créer un jeton GitHub (Settings → Developer settings → Personal access tokens) avec la
    portée `repo` (ou `public_repo` si le dépôt est public), puis l'exposer :
 

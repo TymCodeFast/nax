@@ -218,6 +218,7 @@
             <button class="settings-navitem" data-pane="permissions"><svg><use href="#i-lock"/></svg><span>Autorisations</span></button>
             <button class="settings-navitem" data-pane="privacy"><svg><use href="#i-shield"/></svg><span>Données de navigation</span></button>
             <button class="settings-navitem" data-pane="dev"><svg><use href="#i-code"/></svg><span>Développeur</span></button>
+            <button class="settings-navitem" data-pane="about"><svg><use href="#i-spark"/></svg><span>À propos</span></button>
           </nav>
           <div class="settings-content">
             <button id="settings-close" class="icon-btn settings-x" title="Fermer"><svg><use href="#i-close"/></svg></button>
@@ -346,6 +347,29 @@
                 <label class="switch"><input id="dev-toggle" type="checkbox"><span class="track"></span></label>
               </div>
               <div id="dev-list" class="dev-list"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="about">
+              <h2>À propos</h2>
+              <div class="about-card">
+                <span class="about-logo"><svg><use href="#i-nax"/></svg></span>
+                <div class="about-id">
+                  <div class="about-name">NaX <span id="about-version" class="about-version"></span></div>
+                  <div class="about-channel"><span id="about-channel" class="about-pill"></span></div>
+                </div>
+                <button id="about-copy" class="btn ghost" title="Copier les infos de version (pour un retour ou un rapport de bug)"><svg><use href="#i-copy"/></svg> Copier</button>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Version</div><div class="setting-desc muted">Numéro à indiquer dans un retour ou un rapport de bug.</div></div>
+                <span id="about-version-row" class="about-val"></span>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Moteur</div><div class="setting-desc muted">Electron et Chromium embarqués.</div></div>
+                <span id="about-engine" class="about-val"></span>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Mises à jour</div><div class="setting-desc muted" id="about-update-desc"></div></div>
+              </div>
             </section>
           </div>
         </div>
