@@ -1238,7 +1238,7 @@ let peekWin = null, peekAppId = null, peekHideTimer = null;
 function ensurePeekWin() {
   if (peekWin && !peekWin.isDestroyed()) return peekWin;
   peekWin = new BrowserWindow({
-    width: 424, height: 560, show: false, frame: false, resizable: false, minimizable: false,
+    width: 400 + 32, height: 560, show: false, frame: false, resizable: false, minimizable: false,
     maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false,
     transparent: true, // la page dessine un panneau arrondi + ombre (même langage que les panneaux de l'app)
     webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
@@ -1256,9 +1256,10 @@ function showPeek(id, clientY) {
   let w;
   try { w = ensurePeekWin(); } catch { return; }
   const b = win.getContentBounds();
-  const H = Math.min(560, b.height - 24);
-  const y = Math.max(b.y + NAV, Math.min(b.y + (clientY || NAV) - 24, b.y + b.height - H - 12));
-  w.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 424, height: Math.round(H) }); // -4 : la marge d'ombre interne (12px) place le panneau à ~8px du rail
+  // dimensions du PANNEAU (la fenêtre transparente y ajoute les marges d'ombre : gauche 8, haut 8, droite 24, bas 28)
+  const panelH = Math.min(536, b.height - 48);
+  const panelTop = Math.max(b.y + NAV + 12, Math.min(b.y + (clientY || NAV) - 12, b.y + b.height - panelH - 24));
+  w.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(panelTop - 8), width: 400 + 32, height: Math.round(panelH + 36) });
   peekAppId = id;
   const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web' };
   const send = () => { try { w.webContents.send('peek-load', payload); } catch {} };
@@ -1273,7 +1274,7 @@ let flyWin = null, flyHideTimer = null;
 function ensureFlyWin() {
   if (flyWin && !flyWin.isDestroyed()) return flyWin;
   flyWin = new BrowserWindow({
-    width: 324, height: 220, show: false, frame: false, resizable: false, minimizable: false,
+    width: 300 + 32, height: 220, show: false, frame: false, resizable: false, minimizable: false,
     maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
     webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
   });
@@ -1288,9 +1289,9 @@ let flyClientY = 0;
 function flyPlace(H) {
   if (!win || !flyWin || flyWin.isDestroyed()) return;
   const b = win.getContentBounds();
-  H = Math.max(110, Math.min(Math.round(H), b.height - 24));
-  const y = Math.max(b.y + 8, Math.min(b.y + (flyClientY || 0) - 18, b.y + b.height - H - 8));
-  flyWin.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 324, height: H });
+  H = Math.max(110, Math.min(Math.round(H), b.height - 24)); // hauteur de la fenêtre, marges d'ombre comprises
+  const y = Math.max(b.y + 8, Math.min(b.y + (flyClientY || 0) - 6 - 8, b.y + b.height - H - 8)); // en-tête du panneau aligné sur l'icône survolée
+  flyWin.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(y), width: 300 + 32, height: H });
 }
 function showFly(payload, clientY) {
   if (!win) return;
@@ -1298,9 +1299,9 @@ function showFly(payload, clientY) {
   let w;
   try { w = ensureFlyWin(); } catch { return; }
   flyClientY = clientY || 0;
-  // estimation initiale (ombre 24 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
+  // estimation initiale (marges d'ombre 36 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
   const est = payload.items.reduce((n, it) => n + (it.type === 'folder' ? 38 : 44), 0) || 44;
-  flyPlace(24 + 47 + 12 + est);
+  flyPlace(36 + 47 + 12 + est);
   const send = () => { try { w.webContents.send('fly-load', payload); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
   w.showInactive();
