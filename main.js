@@ -75,6 +75,10 @@ function searchUrl(q) { return currentEngine().url.replace('%s', encodeURICompon
 
 // ---------- état ----------
 let win, chrome;
+// Fermeture de NaX : les pages affichées sont détruites AVEC la fenêtre. Ce n'est pas une page qui se ferme
+// d'elle-même : sans ce garde-fou, leur onglet serait retiré (et l'état enregistré sans lui).
+let quitting = false;
+const shuttingDown = () => quitting || !win || win.isDestroyed();
 let nextId = 1;
 let tabs = [];      // {id, url, title, favicon, groupId, lastActive, createdAt, view|null}
 let groups = [];    // {id, title|null}
@@ -696,7 +700,7 @@ function wakeTab(tab) {
   // La page se ferme d'elle-même (window.close() : fin d'un flux de connexion, par exemple) : on ferme l'onglet.
   // Si tab.view n'est plus cette vue, c'est une fermeture voulue (sleepTab / closeTab) déjà prise en charge.
   wc.on('destroyed', () => {
-    if (tab.view !== view) return;
+    if (tab.view !== view || shuttingDown()) return;
     if (contentView === view) attach(null);
     if (splitView === view) setSplitView(null);
     tab.view = null;
@@ -1238,7 +1242,7 @@ function ensureAppView(a) {
     v = createView((ev, _e, arg) => { if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0] && !a.icon) { a.favicon = arg[0]; } sendState(); });
     const appView = v;
     v.webContents.on('destroyed', () => {
-      if (appViews.get(a.id) !== appView) return;
+      if (appViews.get(a.id) !== appView || shuttingDown()) return;
       appViews.delete(a.id);
       if (contentView === appView) attach(null);
       if (current && current.kind === 'app' && current.id === a.id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
@@ -1344,15 +1348,18 @@ async function pollGmail() {
 let chatView = null, chatViewIdle = null, chatCache = null; // cache 60 s : la SPA met ~3 s à peindre
 function destroyChatView() { if (chatView) { try { chatView.webContents.close(); } catch {} chatView = null; } }
 const CHAT_EXTRACT = `(() => {
-  // Les premiers spans d'une conversation sont souvent des libellés de statut (« Unread », heure…) :
-  // on prend le nom dans l'attribut title, sinon le premier texte plausible, sinon l'aria-label nettoyé.
   const BAD = /^(non lus?|unread|nouveau\\w*|new|épinglé\\w*|pinned|muted|masqué\\w*|en sourdine|active?|away|absent\\w*|hors ligne|online|offline|statut|status|idle|inacti\\w*|occupé\\w*|busy|dnd|do not disturb|ne pas déranger|disponible|available|focus|en réunion|in a meeting|hors du bureau|out of office)$/i;
   const TIMEY = /^(\\d{1,2}[:h]\\d{2}|hier|yesterday|aujourd|today|\\d+ (min|h|j|d)\\b)/i;
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
   const plausible = (v) => v && v.length >= 2 && v.length <= 60 && !BAD.test(v) && !TIMEY.test(v) && !/non lu|unread/i.test(v);
-  // tous les candidats, puis préférence à un « Prénom Nom » (contient une espace), sinon le plus long —
-  // les statuts de présence (Idle, Busy…) sont des mots courts uniques, un vrai nom gagne toujours.
+  // Le span « Unread » existe dans TOUTES les conversations, Chat ne l'affiche que si elles sont non lues :
+  // seul le texte rendu (innerText) dit la vérité. Dans l'ordre : statut, « Unread », nom, sous-titre (« Conversation »…).
+  const UI = /^(open in a pop-up|ouvrir dans une fenêtre pop-up|options|conversation|meeting conversation|conversation de réunion|\\d+( notifications?)?)$/i;
+  const visibleLines = (el) => (el.innerText || '').split('\\n').map(clean).filter(Boolean);
+  // repli (texte rendu indisponible) : tous les candidats, préférence à un « Prénom Nom », sinon le plus long.
   const nameOf = (el, label) => {
+    const fromText = visibleLines(el).find((v) => plausible(v) && !UI.test(v));
+    if (fromText) return fromText;
     const cand = [];
     for (const t of el.querySelectorAll('[title]')) { const v = clean(t.getAttribute('title')); if (plausible(v)) cand.push(v); }
     for (const sp of el.querySelectorAll('span')) { const v = clean(sp.textContent); if (plausible(v)) cand.push(v); }
@@ -1367,7 +1374,7 @@ const CHAT_EXTRACT = `(() => {
     const label = el.getAttribute('aria-label') || '';
     const name = nameOf(el, label);
     if (!name) continue;
-    const unread = /non lu|unread/i.test(label) || !!el.querySelector('[aria-label*="non lu" i], [aria-label*="unread" i]');
+    const unread = visibleLines(el).some((v) => /^(non lus?|unread|\\d+ notifications?)$/i.test(v)) || /non lu|unread/i.test(label) || !!el.querySelector('[aria-label*="non lu" i], [aria-label*="unread" i]');
     items.push({ id, name: name.slice(0, 80), unread });
     if (items.length >= 40) break;
   }
@@ -2480,6 +2487,7 @@ function createWindow() {
   win.on('move', () => { hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); });
   win.on('hide', () => { hidePeek(); hideMenu(); hideTip(); hideSuggest(); });
   win.on('blur', () => hideTip());
+  win.on('close', () => { quitting = true; });
   // Boutons latéraux de la souris (et touches Précédent/Suivant des claviers multimédia) : Windows les envoie
   // à la fenêtre sous forme de commande d'application, que Chromium-sous-Electron ne traite pas lui-même.
   win.on('app-command', (_e, cmd) => {
@@ -2640,6 +2648,7 @@ process.on('uncaughtException', (err) => {
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  quitting = true;
   destroyChatView();
   for (const [id, proc] of claudeProcs) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
   clearTimeout(saveTimer);
