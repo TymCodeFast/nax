@@ -370,8 +370,14 @@
             <div><h2>Personnaliser le rail</h2><span class="muted">Tes applis toujours ouvertes, dans l'ordre que tu veux.</span></div>
             <button id="addapp-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
           </div>
-          <div class="aa-cat aa-rail-head">Ton rail — glisse pour réordonner, ✕ pour retirer</div>
-          <div id="addapp-rail" class="aa-rail"></div>
+          <div class="aa-rail-box">
+            <div class="aa-rail-label"><span class="aa-cat">Ton rail</span><span class="aa-hint">glisse pour réordonner · ✕ pour retirer</span></div>
+            <div id="addapp-rail" class="aa-rail"></div>
+          </div>
+          <div class="aa-filter">
+            <svg class="lead"><use href="#i-search"/></svg>
+            <input id="aa-filter" type="text" placeholder="Filtrer les suggestions…" spellcheck="false" autocomplete="off">
+          </div>
           <div id="addapp-grid"></div>
           <div class="addapp-custom">
             <input id="addapp-input" type="text" placeholder="ou une adresse personnalisée — ex. jira.exemple.fr" spellcheck="false">

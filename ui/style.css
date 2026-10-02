@@ -437,42 +437,60 @@ body.split #navbar { padding-right: 12px; flex: none; }
 #addapp-input:focus { box-shadow: var(--glow); border-color: transparent; }
 #addapp-input::placeholder { color: var(--dim); }
 
-/* ---------- catalogue d'applis pour le rail ---------- */
-.addapp-panel { width: min(640px, 92%); max-height: 82vh; }
-#addapp-grid { overflow-y: auto; min-height: 0; margin: 2px 0 4px; padding-right: 6px; }
-.aa-cat { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 14px 2px 8px; }
-#addapp-grid > .aa-cat:first-child { margin-top: 4px; }
-.aa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 7px; }
-.aa-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 13px 6px 10px; background: var(--field); border: 1px solid var(--line); border-radius: 11px; transition: background var(--t), border-color var(--t), transform var(--t); }
-.aa-tile:hover:not(.added) { background: var(--field-hover); border-color: var(--line-strong); transform: translateY(-1px); }
-.aa-tile:active:not(.added) { transform: scale(.97); }
-.aa-tile img { width: 26px; height: 26px; border-radius: 7px; }
-.aa-tile .letter { width: 26px; height: 26px; border-radius: 7px; background: var(--grad); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
-.aa-name { font-size: 11.5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.aa-tile.added { opacity: .55; }
-.aa-tile.added:hover { opacity: .9; border-color: color-mix(in srgb, var(--c3) 45%, transparent); }
-.aa-check, .aa-uncheck { position: absolute; top: 5px; right: 6px; display: none; }
-.aa-check { color: #3ecf8e; }
-.aa-uncheck { color: var(--c3); }
-.aa-check svg, .aa-uncheck svg { width: 12px; height: 12px; stroke-width: 2.5; }
-.aa-tile.added .aa-check { display: block; }
-.aa-tile.added:hover .aa-check { display: none; }
-.aa-tile.added:hover .aa-uncheck { display: block; }
+/* ---------- personnaliser le rail : « ton rail » + catalogue en puces ---------- */
+.addapp-panel { width: min(640px, 92%); }
+.aa-cat { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
 
-/* « Ton rail » : ordre + retrait */
-.aa-rail-head { margin-top: 2px; }
-.aa-rail { display: flex; flex-wrap: wrap; gap: 7px; margin: 2px 2px 6px; flex: none; }
-.aa-rail-empty { color: var(--dim); font-size: 12px; padding: 4px 2px; }
-.aa-rail-tile { display: flex; align-items: center; gap: 7px; padding: 7px 8px 7px 10px; background: var(--field); border: 1px solid var(--line-strong); border-radius: 10px; cursor: grab; transition: background var(--t), border-color var(--t), opacity var(--t); }
-.aa-rail-tile:hover { background: var(--field-hover); }
+/* carte « ton rail » : l'état actuel, réordonnable */
+.aa-rail-box { flex: none; margin: 16px 18px 0; background: var(--field); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px 12px; }
+.aa-rail-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.aa-hint { font-size: 11px; color: var(--dim); }
+.aa-rail { display: flex; flex-wrap: wrap; gap: 6px; }
+.aa-rail-empty { color: var(--dim); font-size: 12px; }
+
+/* puces communes (rail + catalogue) : favicon + nom + état */
+.aa-rail-tile, .aa-chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 8px 0 10px; border-radius: 999px; transition: background var(--t), border-color var(--t), opacity var(--t), transform var(--t); }
+.aa-rail-tile img, .aa-chip img { width: 16px; height: 16px; border-radius: 4px; }
+.aa-rail-tile .letter, .aa-chip .letter { width: 16px; height: 16px; border-radius: 4px; background: var(--grad); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 9px; }
+.aa-name { font-size: 12px; color: var(--fg); white-space: nowrap; }
+
+/* puces du rail : déplaçables, ✕ pour retirer */
+.aa-rail-tile { background: var(--hover); border: 1px solid var(--line-strong); cursor: grab; }
+.aa-rail-tile:hover { background: var(--active); }
 .aa-rail-tile.dragging { opacity: .35; cursor: grabbing; }
-.aa-rail-tile img { width: 18px; height: 18px; border-radius: 5px; }
-.aa-rail-tile .letter { width: 18px; height: 18px; border-radius: 5px; background: var(--grad); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 10px; }
-.aa-rail-tile .aa-name { font-size: 12px; color: var(--fg); }
-.aa-rail-x { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; color: var(--dim); transition: background var(--t), color var(--t); }
+.aa-rail-tile img { pointer-events: none; }
+.aa-rail-x { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; color: var(--dim); transition: background var(--t), color var(--t); }
 .aa-rail-x:hover { background: rgba(242,109,125,.16); color: var(--c3); }
 .aa-rail-x svg { width: 11px; height: 11px; }
-.addapp-custom { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 8px; }
+
+/* filtre des suggestions */
+.aa-filter { flex: none; display: flex; align-items: center; gap: 8px; margin: 12px 18px 0; padding: 0 11px; height: 34px; background: var(--field); border: 1px solid var(--line-strong); border-radius: 10px; transition: box-shadow var(--t), border-color var(--t); }
+.aa-filter:focus-within { box-shadow: var(--glow); border-color: transparent; }
+.aa-filter .lead { width: 14px; height: 14px; color: var(--dim); flex: none; }
+.aa-filter input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--fg); font-size: 12.5px; user-select: text; }
+.aa-filter input::placeholder { color: var(--dim); }
+
+/* catalogue : sections de puces */
+#addapp-grid { overflow-y: auto; min-height: 120px; padding: 0 18px 6px; }
+#addapp-grid .aa-cat { display: block; margin: 14px 2px 7px; }
+#addapp-grid > .aa-cat:first-child { margin-top: 10px; }
+.aa-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.aa-chip { background: var(--field); border: 1px solid var(--line); }
+.aa-chip:hover { background: var(--field-hover); border-color: var(--line-strong); }
+.aa-chip:active { transform: scale(.97); }
+.aa-state { width: 16px; height: 16px; display: grid; place-items: center; }
+.aa-state svg { width: 12px; height: 12px; stroke-width: 2.25; display: none; }
+.aa-state .plus { display: block; color: var(--dim); }
+.aa-chip:hover .aa-state .plus { color: var(--c1); }
+.aa-chip.added .aa-state .plus { display: none; }
+.aa-chip.added .aa-state .check { display: block; color: #3ecf8e; }
+.aa-chip.added:hover .aa-state .check { display: none; }
+.aa-chip.added:hover .aa-state .uncheck { display: block; color: var(--c3); }
+.aa-chip.added { border-color: color-mix(in srgb, #3ecf8e 35%, transparent); background: color-mix(in srgb, #3ecf8e 6%, transparent); }
+.aa-chip.added:hover { border-color: color-mix(in srgb, var(--c3) 45%, transparent); background: color-mix(in srgb, var(--c3) 7%, transparent); }
+
+/* adresse personnalisée */
+.addapp-custom { flex: none; display: flex; align-items: center; gap: 8px; margin: 0 18px; border-top: 1px solid var(--line); padding: 14px 0 18px; }
 .addapp-custom .primary { flex: none; padding: 10px 18px; border-radius: 10px; background: var(--grad); color: #fff; font-weight: 600; transition: filter var(--t), transform var(--t); }
 .addapp-custom .primary:hover { filter: brightness(1.1); }
 .addapp-custom .primary:active { transform: scale(.96); }

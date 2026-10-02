@@ -1197,37 +1197,45 @@ function renderRailCustomize() {
   box.ondragover = (e) => e.preventDefault();
   box.ondrop = (e) => { const srcId = e.dataTransfer.getData('text/nax-app'); if (srcId) api.appMove({ id: srcId, beforeId: null }); };
 }
-// Catalogue : clic = ajouter ; re-clic sur une appli cochée = la retirer.
+// Catalogue en puces : clic = ajouter ; re-clic sur une puce cochée = la retirer. Filtrable.
+let aaFilter = '';
 function renderAppCatalog() {
   renderRailCustomize();
   const box = $('addapp-grid');
   box.textContent = '';
   const apps = (state && state.apps) || [];
+  const f = aaFilter.toLowerCase();
   for (const sec of APP_CATALOG) {
+    const list = sec.apps.filter((a) => !f || a.name.toLowerCase().includes(f));
+    if (!list.length) continue;
     box.appendChild(el('div', 'aa-cat', sec.cat));
-    const grid = el('div', 'aa-grid');
-    for (const a of sec.apps) {
+    const row = el('div', 'aa-chips');
+    for (const a of list) {
       const cur = apps.find((x) => hostOf(x.url) === hostOf(a.url));
-      const tile = el('button', 'aa-tile' + (cur ? ' added' : ''));
+      const chip = el('button', 'aa-chip' + (cur ? ' added' : ''));
       const img = el('img'); img.alt = '';
       img.src = 'https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64';
       img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
-      tile.appendChild(img);
-      tile.appendChild(el('span', 'aa-name', a.name));
-      const chk = el('span', 'aa-check'); chk.appendChild(icon('i-check')); tile.appendChild(chk);
-      const unchk = el('span', 'aa-uncheck'); unchk.appendChild(icon('i-close')); tile.appendChild(unchk);
-      tile.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
-      tile.onclick = () => {
+      chip.appendChild(img);
+      chip.appendChild(el('span', 'aa-name', a.name));
+      const st = el('span', 'aa-state');
+      st.appendChild(icon('i-plus', 'plus')); st.appendChild(icon('i-check', 'check')); st.appendChild(icon('i-close', 'uncheck'));
+      chip.appendChild(st);
+      chip.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
+      chip.onclick = () => {
         if (cur) { api.appRemove(cur.id); toast(a.name + ' retirée du rail'); }
         else { api.appAddPreset({ name: a.name, url: a.url }); toast(a.name + ' ajoutée au rail'); }
       };
-      grid.appendChild(tile);
+      row.appendChild(chip);
     }
-    box.appendChild(grid);
+    box.appendChild(row);
   }
+  if (!box.children.length) box.appendChild(el('div', 'aa-rail-empty', 'Aucune suggestion ne correspond à « ' + aaFilter + ' ».'));
 }
-$('app-add').onclick = () => { showOverlay('addapp'); renderAppCatalog(); $('addapp-input').value = ''; };
+$('app-add').onclick = () => { showOverlay('addapp'); aaFilter = ''; $('aa-filter').value = ''; renderAppCatalog(); $('addapp-input').value = ''; };
 $('addapp-close').onclick = closeOverlay;
+$('aa-filter').addEventListener('input', () => { aaFilter = $('aa-filter').value.trim(); renderAppCatalog(); });
+$('aa-filter').addEventListener('keydown', (e) => e.stopPropagation());
 const addApp = () => { const v = $('addapp-input').value.trim(); if (v) api.appAdd(v); closeOverlay(); };
 $('addapp-ok').onclick = addApp;
 $('addapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addApp(); });
