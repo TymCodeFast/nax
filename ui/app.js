@@ -75,7 +75,7 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
-  renderApps(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
+  renderApps(); renderRailPins(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
   // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
   const showPill = !!state.navPrivate && !(state.split && state.split.active);
   document.body.classList.toggle('private-tab', showPill);
@@ -194,8 +194,8 @@ function renderApps() {
       b.oncontextmenu = (e) => { e.preventDefault(); api.appContext(a.id); };
       // aperçu au survol (petit panneau flottant)
       let peekTimer = null;
-      b.onmouseenter = () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => api.appPeek(b.dataset.appId, Math.round(b.getBoundingClientRect().top)), 320); };
-      b.onmouseleave = () => { clearTimeout(peekTimer); api.appPeekHideSoon(); };
+      b.onmouseenter = () => { clearTimeout(peekTimer); peekTimer = setTimeout(() => api.railHover({ id: b.dataset.appId, kind: 'app', clientY: Math.round(b.getBoundingClientRect().top) }), 320); };
+      b.onmouseleave = () => { clearTimeout(peekTimer); api.railHoverEnd(); };
       return b;
     },
     (b, a) => {
@@ -207,6 +207,36 @@ function renderApps() {
       const n = /mail\.google\.com/i.test(a.url) ? gmailUnread : 0;
       if (n > 0) { setText(badge, n > 99 ? '99+' : String(n)); badge.classList.add('on'); }
       else badge.classList.remove('on');
+    });
+}
+
+// Favoris épinglés au rail : lien (favicon, clic = ouvrir) ou dossier (icône Lucide teintée, survol/clic = flyout des liens).
+function renderRailPins() {
+  sync($('rail-pins'), state.railPins || [], (p) => p.id,
+    () => {
+      const b = el('button', 'app pin');
+      let hoverTimer = null;
+      b.onmouseenter = () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => api.railHover({ id: b.dataset.pinId, kind: 'pin', clientY: Math.round(b.getBoundingClientRect().top) }), 320); };
+      b.onmouseleave = () => { clearTimeout(hoverTimer); api.railHoverEnd(); };
+      b.onclick = () => { closeOverlay(); api.pinActivate({ id: b.dataset.pinId, clientY: Math.round(b.getBoundingClientRect().top) }); };
+      b.oncontextmenu = (e) => { e.preventDefault(); api.pinContext(b.dataset.pinId); };
+      return b;
+    },
+    (b, p) => {
+      b.dataset.pinId = p.id;
+      b.title = p.kind === 'favfolder' ? p.title + ' — ' + p.count + ' lien' + (p.count > 1 ? 's' : '') : p.title;
+      b.innerHTML = '';
+      if (p.kind === 'favfolder') {
+        const sp = el('span', 'pin-folder');
+        if (p.color) { sp.style.background = p.color + '26'; sp.style.color = p.color; }
+        sp.appendChild(lucideSvg(p.icon || 'Folder'));
+        b.appendChild(sp);
+      } else {
+        const img = el('img'); img.alt = '';
+        img.onerror = () => { img.replaceWith(el('span', 'letter', (p.title || '?')[0])); };
+        img.src = p.favicon || ('https://www.google.com/s2/favicons?domain=' + hostOf(p.url) + '&sz=64');
+        b.appendChild(img);
+      }
     });
 }
 
@@ -1237,6 +1267,39 @@ $('app-add').onclick = () => { showOverlay('addapp'); aaFilter = ''; $('aa-filte
 $('addapp-close').onclick = closeOverlay;
 $('aa-filter').addEventListener('input', () => { aaFilter = $('aa-filter').value.trim(); renderAppCatalog(); });
 $('aa-filter').addEventListener('keydown', (e) => e.stopPropagation());
+
+// ---------- raccourcis au survol d'une appli du rail ----------
+let scAppId = null;
+function scRow(name, url) {
+  const row = el('div', 'sc-row');
+  const n = el('input', 'sc-name'); n.placeholder = 'Nom — ex. Workspace A'; n.value = name; n.spellcheck = false;
+  const u = el('input', 'sc-url'); u.placeholder = 'https://…'; u.value = url; u.spellcheck = false;
+  [n, u].forEach((i) => i.addEventListener('keydown', (e) => e.stopPropagation()));
+  const x = el('button', 'icon-btn'); x.title = 'Supprimer ce raccourci'; x.appendChild(icon('i-trash'));
+  x.onclick = () => row.remove();
+  row.append(n, u, x);
+  return row;
+}
+api.onEditAppShortcuts((id) => {
+  const a = ((state && state.apps) || []).find((x) => x.id === id); if (!a) return;
+  scAppId = id;
+  $('sc-sub').textContent = a.name + ' — ces liens apparaissent au survol de l’appli dans le rail.';
+  const list = $('sc-list'); list.textContent = '';
+  for (const s of (a.shortcuts || [])) list.appendChild(scRow(s.name, s.url));
+  if (!list.children.length) list.appendChild(scRow('', ''));
+  showOverlay('app-sc');
+});
+$('sc-add').onclick = () => { const r = scRow('', ''); $('sc-list').appendChild(r); r.querySelector('.sc-name').focus(); };
+$('sc-close').onclick = closeOverlay;
+$('sc-cancel').onclick = closeOverlay;
+$('sc-save').onclick = () => {
+  const rows = [...$('sc-list').querySelectorAll('.sc-row')]
+    .map((r) => ({ name: r.querySelector('.sc-name').value.trim(), url: r.querySelector('.sc-url').value.trim() }))
+    .filter((x) => x.url);
+  api.appShortcutsSet({ id: scAppId, shortcuts: rows });
+  closeOverlay();
+  toast('Raccourcis enregistrés');
+};
 const addApp = () => { const v = $('addapp-input').value.trim(); if (v) api.appAdd(v); closeOverlay(); };
 $('addapp-ok').onclick = addApp;
 $('addapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addApp(); });

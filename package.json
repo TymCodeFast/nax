@@ -27,6 +27,7 @@
       "main.js",
       "preload.js",
       "peek-preload.js",
+      "fly-preload.js",
       "menu-preload.js",
       "tip-preload.js",
       "find-preload.js",

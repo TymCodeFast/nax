@@ -77,7 +77,8 @@ let win, chrome;
 let nextId = 1;
 let tabs = [];      // {id, url, title, favicon, groupId, lastActive, createdAt, view|null}
 let groups = [];    // {id, title|null}
-let apps = [];      // {id, name, url}
+let apps = [];      // {id, name, url, icon?, shortcuts?: [{id, name, url}] (liste d'options au survol)}
+let railPins = [];  // favoris épinglés au rail : {id, kind:'fav'|'favfolder', favId}
 let archive = [];   // {url, title, favicon, closedAt, groupTitle}
 let history = {};   // url normalisée -> {title, url, count, last}
 let passwords = []; // {id, name, url, username, password} — chiffré au repos via safeStorage (DPAPI)
@@ -241,6 +242,7 @@ function load() {
     tabs = (s.tabs || []).map((t) => ({ ...t, view: null }));
     groups = s.groups || [];
     apps = s.apps && s.apps.length ? s.apps : DEFAULT_APPS;
+    railPins = Array.isArray(s.railPins) ? s.railPins : [];
     archive = s.archive || [];
     history = s.history || {};
     favorites = (s.favorites || []).map(favMigrate);
@@ -291,7 +293,7 @@ function persistClaudeTasks() {
 }
 function snapshot() {
   return {
-    nextId, groups, apps, archive, history, favorites, sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
+    nextId, groups, apps, railPins, archive, history, favorites, sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
     homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
     perms: Object.fromEntries(permGrants),
     tabs: tabs.filter((t) => !isPrivate(t)).map(({ view, ...t }) => t), // onglets privés non persistés (rien sur le disque)
@@ -530,6 +532,13 @@ function sendState() {
       tabs: tabs.map(({ view, ...t }) => ({ ...t, dormant: !view, loading: !!view && !view.webContents.isDestroyed() && view.webContents.isLoading() })),
       groups: groups.map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
       apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
+      railPins: railPins.map((p) => {
+        const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît
+        const n = r.node;
+        return n.type === 'folder'
+          ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || 'Dossier', icon: n.icon || null, color: n.color || null, count: (n.children || []).filter((c) => c.type === 'link').length }
+          : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
+      }).filter(Boolean),
       claudeOpen, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
       favorites, favActive: !!(ct && favByUrl(ct.url)),
       devMode, devProjects,
@@ -1214,6 +1223,52 @@ function showPeek(id, clientY) {
 function hidePeek() { clearTimeout(peekHideTimer); if (peekWin && !peekWin.isDestroyed() && peekWin.isVisible()) peekWin.hide(); peekAppId = null; }
 function hidePeekSoon() { clearTimeout(peekHideTimer); peekHideTimer = setTimeout(hidePeek, 260); }
 
+// ---------- flyout du rail : options au survol (raccourcis d'appli, liens d'un dossier épinglé) ----------
+let flyWin = null, flyHideTimer = null;
+function ensureFlyWin() {
+  if (flyWin && !flyWin.isDestroyed()) return flyWin;
+  flyWin = new BrowserWindow({
+    width: 300, height: 220, show: false, frame: false, resizable: false, minimizable: false,
+    maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
+    webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
+  });
+  flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'));
+  flyWin.on('blur', () => hideFly());
+  return flyWin;
+}
+function hideFly() { clearTimeout(flyHideTimer); if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) flyWin.hide(); }
+function hideFlySoon() { clearTimeout(flyHideTimer); flyHideTimer = setTimeout(hideFly, 260); }
+function showFly(payload, clientY) {
+  if (!win) return;
+  clearTimeout(flyHideTimer);
+  let w;
+  try { w = ensureFlyWin(); } catch { return; }
+  const rows = payload.items.length + (payload.footer ? 1 : 0);
+  const H = Math.min(24 + 38 + rows * 34 + 10, win.getContentBounds().height - 24); // marges ombre + titre + lignes
+  const b = win.getContentBounds();
+  const y = Math.max(b.y + 8, Math.min(b.y + (clientY || 0) - 28, b.y + b.height - H - 8));
+  w.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 300, height: Math.round(H) });
+  const send = () => { try { w.webContents.send('fly-load', payload); } catch {} };
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+  w.showInactive();
+}
+// Survol d'un élément du rail : Gmail garde son widget, une appli à raccourcis ou un dossier épinglé a son flyout.
+function railHover(id, kind, clientY) {
+  if (kind === 'app') {
+    const a = apps.find((x) => x.id === id); if (!a) return;
+    if (isGmailApp(a)) return showPeek(id, clientY);
+    const sc = a.shortcuts || [];
+    if (!sc.length) return;
+    showFly({ kind: 'app', id, title: a.name, items: sc.map((s) => ({ id: s.id, name: s.name, url: s.url })), footer: 'Personnaliser…' }, clientY);
+  } else if (kind === 'pin') {
+    const p = railPins.find((x) => x.id === id); if (!p) return;
+    const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
+    const links = (r.node.children || []).filter((c) => c.type === 'link').slice(0, 14);
+    if (!links.length) return;
+    showFly({ kind: 'folder', id, title: r.node.title || 'Favoris', items: links.map((l) => ({ id: l.id, name: l.title || hostOf(l.url), url: l.url, favicon: l.favicon || null })) }, clientY);
+  }
+}
+
 function removeApp(id) {
   apps = apps.filter((a) => a.id !== id);
   const v = appViews.get(id);
@@ -1312,7 +1367,7 @@ function popupMenu(template) {
   // Masque les overlays flottants (aperçu Gmail, infobulle, suggestions) AVANT d'ouvrir le menu :
   // sinon, en prenant le focus, le menu fait perdre le focus au peek, ce qui déclenche une cascade
   // d'événements de focus qui rejouait l'animation du menu (bug « animation qui se répète »).
-  hidePeek(); hideTip(); hideSuggest();
+  hidePeek(); hideTip(); hideSuggest(); hideFly();
   const items = template.filter(Boolean);
   menuFns = items.map((i) => i.click || null);
   const view = items.map((i, idx) => i.type === 'separator' ? { sep: true } : { label: i.label, enabled: i.enabled !== false, danger: !!i.danger, idx });
@@ -1354,8 +1409,20 @@ function tabContextMenu(id) {
 function appContextMenu(id) {
   popupMenu([
     { label: 'Recharger', click: () => { const v = appViews.get(id); if (v) v.webContents.reload(); } },
+    { label: 'Raccourcis au survol…', click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
+    { type: 'separator' },
     { label: 'Retirer du rail', danger: true, click: () => removeApp(id) },
   ]);
+}
+function pinContextMenu(id) {
+  const p = railPins.find((x) => x.id === id); if (!p) return;
+  const r = favFind(p.favId);
+  const items = [];
+  if (r && r.node.type === 'folder') items.push({ label: 'Ouvrir tous les liens', enabled: !!(r.node.children || []).length, click: () => openAllInFolder(p.favId) });
+  if (r && r.node.type === 'link') items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: r.node.url }) });
+  items.push({ type: 'separator' });
+  items.push({ label: 'Retirer du rail', danger: true, click: () => { railPins = railPins.filter((x) => x.id !== id); sendState(); } });
+  popupMenu(items);
 }
 function favContextMenu(id) {
   const r = favFind(id); if (!r) return;
@@ -1368,6 +1435,10 @@ function favContextMenu(id) {
     items.push({ label: 'Nouveau sous-dossier', click: () => { const nid = createFolder({ parentId: id }); if (n.collapsed) toggleFolder(id); chrome.webContents.send('rename-fav', nid); } });
   }
   items.push({ type: 'separator' });
+  const pinned = railPins.find((x) => x.favId === id);
+  items.push(pinned
+    ? { label: 'Retirer du rail', click: () => { railPins = railPins.filter((x) => x.favId !== id); sendState(); } }
+    : { label: 'Épingler au rail', click: () => { railPins.push({ id: 'pin' + nextId++, kind: n.type === 'folder' ? 'favfolder' : 'fav', favId: id }); sendState(); } });
   items.push({ label: 'Renommer', click: () => chrome.webContents.send('rename-fav', id) });
   if (n.type === 'folder') items.push({ label: 'Personnaliser (icône, couleur)…', click: () => chrome.webContents.send('customize-fav', id) });
   items.push({ label: 'Supprimer', danger: true, click: () => removeFavorite(id) });
@@ -1710,6 +1781,40 @@ function registerIpc() {
   ipcMain.on('app-peek', (_e, { id, clientY } = {}) => showPeek(id, clientY));
   ipcMain.on('app-peek-hide-soon', () => hidePeekSoon());
   ipcMain.on('peek-hover', (_e, inside) => { if (inside) clearTimeout(peekHideTimer); else hidePeekSoon(); });
+  // ---------- flyout du rail + épingles favoris ----------
+  ipcMain.on('rail-hover', (_e, { id, kind, clientY } = {}) => railHover(id, kind, clientY));
+  ipcMain.on('rail-hover-end', () => { hideFlySoon(); hidePeekSoon(); });
+  ipcMain.on('fly-hover', (_e, inside) => { if (inside) clearTimeout(flyHideTimer); else hideFlySoon(); });
+  ipcMain.on('fly-click', (_e, o) => {
+    hideFly();
+    if (!o) return;
+    if (o.kind === 'app') { // raccourci programmé : on charge l'URL dans la vue de l'appli
+      const a = apps.find((x) => x.id === o.id); if (!a) return;
+      const s = (a.shortcuts || []).find((x) => x.id === o.itemId); if (!s) return;
+      const v = ensureAppView(a);
+      try { v.webContents.loadURL(s.url); } catch { return; }
+      current = { kind: 'app', id: a.id }; attach(v); v.webContents.focus(); win.setTitle(a.name); sendState();
+    } else if (o.kind === 'folder') { // lien d'un dossier épinglé
+      const r = favFind(o.itemId); if (r && r.node.type === 'link') navigateCurrent(r.node.url);
+    }
+  });
+  ipcMain.on('fly-edit', (_e, appId) => { hideFly(); if (apps.some((x) => x.id === appId) && chrome) chrome.webContents.send('edit-app-shortcuts', appId); });
+  ipcMain.on('app-shortcuts-set', (_e, o) => {
+    const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
+    a.shortcuts = (Array.isArray(o.shortcuts) ? o.shortcuts : []).map((s, i) => {
+      let u; try { u = new URL(toUrl(String(s.url || '')) || ''); } catch { return null; }
+      if (!/^https?:$/.test(u.protocol)) return null;
+      return { id: 'sc' + (i + 1), name: String(s.name || u.host).slice(0, 40), url: u.href };
+    }).filter(Boolean).slice(0, 12);
+    sendState();
+  });
+  ipcMain.on('pin-activate', (_e, { id, clientY } = {}) => {
+    const p = railPins.find((x) => x.id === id); if (!p) return;
+    const r = favFind(p.favId); if (!r) return;
+    if (r.node.type === 'link') navigateCurrent(r.node.url);
+    else railHover(id, 'pin', clientY); // clic sur un dossier = ouvre le flyout de ses liens
+  });
+  ipcMain.on('pin-context', (_e, id) => pinContextMenu(id));
   ipcMain.on('peek-open-full', () => { const id = peekAppId; hidePeek(); if (id) activateApp(id); });
   ipcMain.handle('gmail-feed', () => fetchGmailFeed());
   ipcMain.on('gmail-open', (_e, link) => openGmailMessage(link));

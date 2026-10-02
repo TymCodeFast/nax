@@ -60,6 +60,7 @@
   <nav id="rail">
     <div id="brand" title="NaX"><svg><use href="#i-nax"/></svg></div>
     <div id="apps"></div>
+    <div id="rail-pins"></div>
     <div id="dev-rail" class="hidden">
       <div class="rail-divider" title="Serveurs de dev en cours"></div>
       <div id="dev-projects"></div>
@@ -383,6 +384,18 @@
             <input id="addapp-input" type="text" placeholder="ou une adresse personnalisée — ex. jira.exemple.fr" spellcheck="false">
             <button id="addapp-ok" class="primary">Ajouter</button>
           </div>
+        </div>
+      </div>
+      <!-- Raccourcis au survol d'une appli du rail -->
+      <div id="app-sc" class="overlay hidden">
+        <div class="panel small glow">
+          <div class="panel-head" style="padding:0 0 4px;border:0">
+            <div><h2>Raccourcis au survol</h2><span class="muted" id="sc-sub"></span></div>
+            <button id="sc-close" class="icon-btn" title="Fermer"><svg><use href="#i-close"/></svg></button>
+          </div>
+          <div id="sc-list"></div>
+          <button id="sc-add" class="sc-add"><svg><use href="#i-plus"/></svg> Ajouter un raccourci</button>
+          <div class="actions"><button id="sc-cancel">Annuler</button><button id="sc-save" class="primary">Enregistrer</button></div>
         </div>
       </div>
       <!-- Export Markdown -->
