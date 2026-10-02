@@ -1750,7 +1750,9 @@ function registerIpc() {
     let u; try { u = new URL(o.url); } catch { return; }
     if (!/^https?:$/.test(u.protocol)) return;
     if (apps.some((a) => hostOf(a.url) === u.host)) return;
-    apps.push({ id: 'app' + nextId++, name: String(o.name || u.host).slice(0, 24), url: u.href });
+    const entry = { id: 'app' + nextId++, name: String(o.name || u.host).slice(0, 24), url: u.href };
+    if (typeof o.icon === 'string' && /^https:\/\//.test(o.icon)) entry.icon = o.icon; // icône explicite (ex. Jira : l'hôte de l'appli n'a pas de favicon)
+    apps.push(entry);
     sendState();
   });
 

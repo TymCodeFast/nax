@@ -1142,7 +1142,7 @@ const APP_CATALOG = [
     { name: 'GitHub', url: 'https://github.com' },
     { name: 'Figma', url: 'https://www.figma.com' },
     { name: 'Trello', url: 'https://trello.com' },
-    { name: 'Jira', url: 'https://start.atlassian.com' },
+    { name: 'Jira', url: 'https://start.atlassian.com', iconDomain: 'jira.atlassian.com' }, // start.atlassian.com n'a pas de favicon
     { name: 'Linear', url: 'https://linear.app' },
   ] },
   { cat: 'IA', apps: [
@@ -1213,8 +1213,9 @@ function renderAppCatalog() {
     for (const a of list) {
       const cur = apps.find((x) => hostOf(x.url) === hostOf(a.url));
       const chip = el('button', 'aa-chip' + (cur ? ' added' : ''));
+      const iconUrl = 'https://www.google.com/s2/favicons?domain=' + (a.iconDomain || hostOf(a.url)) + '&sz=64';
       const img = el('img'); img.alt = '';
-      img.src = 'https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64';
+      img.src = iconUrl;
       img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
       chip.appendChild(img);
       chip.appendChild(el('span', 'aa-name', a.name));
@@ -1224,7 +1225,7 @@ function renderAppCatalog() {
       chip.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
       chip.onclick = () => {
         if (cur) { api.appRemove(cur.id); toast(a.name + ' retirée du rail'); }
-        else { api.appAddPreset({ name: a.name, url: a.url }); toast(a.name + ' ajoutée au rail'); }
+        else { api.appAddPreset({ name: a.name, url: a.url, icon: a.iconDomain ? iconUrl : undefined }); toast(a.name + ' ajoutée au rail'); }
       };
       row.appendChild(chip);
     }
