@@ -1095,9 +1095,9 @@ let peekWin = null, peekAppId = null, peekHideTimer = null;
 function ensurePeekWin() {
   if (peekWin && !peekWin.isDestroyed()) return peekWin;
   peekWin = new BrowserWindow({
-    width: 400, height: 560, show: false, frame: false, resizable: false, minimizable: false,
+    width: 424, height: 560, show: false, frame: false, resizable: false, minimizable: false,
     maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0d1119' : '#ffffff',
+    transparent: true, // la page dessine un panneau arrondi + ombre (même langage que les panneaux de l'app)
     webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
   });
   peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'));
@@ -1115,7 +1115,7 @@ function showPeek(id, clientY) {
   const b = win.getContentBounds();
   const H = Math.min(560, b.height - 24);
   const y = Math.max(b.y + NAV, Math.min(b.y + (clientY || NAV) - 24, b.y + b.height - H - 12));
-  w.setBounds({ x: Math.round(b.x + RAIL + 8), y: Math.round(y), width: 400, height: Math.round(H) });
+  w.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 424, height: Math.round(H) }); // -4 : la marge d'ombre interne (12px) place le panneau à ~8px du rail
   peekAppId = id;
   const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web' };
   const send = () => { try { w.webContents.send('peek-load', payload); } catch {} };
