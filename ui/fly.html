@@ -9,58 +9,86 @@
   :root {
     --panel: rgba(21, 24, 31, .97); --fg: #eef1f6; --fg2: #c2c9d4; --muted: #8b93a3; --dim: #626a78;
     --line: rgba(255,255,255,.07); --line-strong: rgba(255,255,255,.13); --hover: rgba(255,255,255,.06);
-    --c1: #7385ff; --shadow: 0 18px 48px rgba(0,0,0,.5);
+    --c1: #7385ff; --c2: #9a86ff; --shadow: 0 18px 48px rgba(0,0,0,.5);
   }
   @media (prefers-color-scheme: light) {
     :root { --panel: rgba(255,255,255,.98); --fg: #12151c; --fg2: #3d4453; --muted: #616a79; --dim: #98a0ae;
       --line: rgba(15,23,42,.08); --line-strong: rgba(15,23,42,.15); --hover: rgba(15,23,42,.06);
-      --c1: #4d55e0; --shadow: 0 18px 48px rgba(15,23,42,.22); }
+      --c1: #4d55e0; --c2: #7c5cf0; --shadow: 0 18px 48px rgba(15,23,42,.22); }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; color: var(--fg);
-    font: 12.5px/1.4 Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
+    font: 12.5px/1.35 Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
   #wrap { display: flex; flex-direction: column; max-height: calc(100% - 24px); margin: 12px;
-    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 13px; box-shadow: var(--shadow); overflow: hidden; }
-  #title { flex: none; padding: 10px 13px 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #items { overflow-y: auto; padding: 0 5px 5px; }
+    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+
+  /* en-tête : logo + nom de l'appli, et le crayon « Personnaliser » à droite */
+  #head { flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); }
+  #hico { width: 20px; height: 20px; flex: none; border-radius: 5px; display: grid; place-items: center; color: var(--c1); }
+  #hico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #htitle { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hedit { width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--dim); cursor: pointer; display: none; place-items: center; transition: background .15s, color .15s; }
+  #hedit.on { display: grid; }
+  #hedit:hover { background: var(--hover); color: var(--fg); }
+  #hedit svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* lignes : icône, nom, hôte en dessous */
+  #items { overflow-y: auto; padding: 5px; }
   ::-webkit-scrollbar { width: 7px; } ::-webkit-scrollbar-thumb { background: rgba(128,128,128,.3); border-radius: 7px; }
-  .it { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px; cursor: pointer; transition: background .12s; }
+  .it { display: flex; align-items: center; gap: 11px; padding: 7px 10px 7px 9px; border-radius: 10px; cursor: pointer; transition: background .12s; }
   .it:hover { background: var(--hover); }
-  .it img { width: 15px; height: 15px; border-radius: 4px; flex: none; }
-  .it .dot { width: 15px; height: 15px; border-radius: 4px; flex: none; display: grid; place-items: center; font-size: 9px; font-weight: 700; }
-  .it span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg2); }
-  .it:hover span { color: var(--fg); }
-  .it.foot { border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; margin-top: 4px; color: var(--dim); }
-  .it.foot svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; flex: none; color: var(--dim); }
-  .it.foot span { color: var(--dim); font-size: 12px; }
-  .it.foot:hover span { color: var(--fg2); }
+  .it .ico { width: 22px; height: 22px; flex: none; display: grid; place-items: center; }
+  .it .ico img { width: 20px; height: 20px; border-radius: 5px; }
+  .it .ico .dot { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; }
+  .it .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .it .nm { font-size: 12.5px; font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .it .host { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .it .go { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; color: var(--dim); opacity: 0; transform: translateX(-3px); transition: opacity .15s, transform .15s; }
+  .it:hover .go { opacity: 1; transform: none; }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="title"></div>
+  <div id="head">
+    <span id="hico"></span>
+    <span id="htitle"></span>
+    <button id="hedit" title="Personnaliser les raccourcis"><svg viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4 20l4.5-1 9-9-4-4-9 9z"/></svg></button>
+  </div>
   <div id="items"></div>
 </div>
 <script>
   const esc = (s) => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const AV = ['#7385ff','#9a86ff','#5aa0f2','#38bda8','#e0a53a','#e07a8b','#7c8cff','#5fbf88'];
   const col = (s) => AV[[...(s||'?')].reduce((a,c)=>a+c.charCodeAt(0),0) % AV.length];
-  const favicon = (u) => { try { return 'https://www.google.com/s2/favicons?domain=' + new URL(u).hostname + '&sz=64'; } catch { return ''; } };
+  const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  const favicon = (u) => { const h = hostOf(u); return h ? 'https://www.google.com/s2/favicons?domain=' + h + '&sz=64' : ''; };
+  // icône d'une ligne ; repli sur une pastille à la lettre si l'image ne charge pas
+  const iconHtml = (src, name) => {
+    const c = col(name), l = esc((name[0] || '?').toUpperCase());
+    const dot = `<span class="dot" style="background:${c}24;color:${c}">${l}</span>`;
+    return src ? `<img src="${esc(src)}" onerror="this.outerHTML=this.dataset.fb" data-fb="${esc(dot)}">` : dot;
+  };
 
   fly.onLoad((d) => {
-    document.getElementById('title').textContent = d.title || '';
+    document.getElementById('htitle').textContent = d.title || '';
+    const hico = document.getElementById('hico');
+    hico.innerHTML = d.icon
+      ? `<img src="${esc(d.icon)}" width="20" height="20" style="border-radius:5px" onerror="this.remove()">`
+      : '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+    const edit = document.getElementById('hedit');
+    edit.classList.toggle('on', !!d.edit);
+    edit.onclick = () => fly.edit(d.id);
     const box = document.getElementById('items');
     box.innerHTML = d.items.map((it) => {
-      const src = it.favicon || favicon(it.url);
-      const c = col(it.name);
-      const ico = src
-        ? `<img src="${esc(src)}" onerror="this.outerHTML='<span class=dot style=background:${c}24;color:${c}>${esc((it.name[0]||'?').toUpperCase())}</span>'">`
-        : `<span class="dot" style="background:${c}24;color:${c}">${esc((it.name[0]||'?').toUpperCase())}</span>`;
-      return `<div class="it" data-id="${esc(it.id)}">${ico}<span>${esc(it.name)}</span></div>`;
-    }).join('') + (d.footer ? `<div class="it foot" id="foot"><svg viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4 20l4.5-1 9-9-4-4-9 9z"/></svg><span>${esc(d.footer)}</span></div>` : '');
-    box.querySelectorAll('.it[data-id]').forEach((el) => { el.onclick = () => fly.click({ kind: d.kind, id: d.id, itemId: el.dataset.id }); });
-    const foot = document.getElementById('foot'); if (foot) foot.onclick = () => fly.edit(d.id);
+      // une appli : ses raccourcis reprennent son logo (ex. deux espaces Jira) ; un dossier : le favicon de chaque lien
+      const src = d.kind === 'app' ? (d.icon || favicon(it.url)) : (it.favicon || favicon(it.url));
+      return `<div class="it" data-id="${esc(it.id)}">
+        <span class="ico">${iconHtml(src, it.name)}</span>
+        <span class="txt"><span class="nm">${esc(it.name)}</span><span class="host">${esc(hostOf(it.url))}</span></span>
+        <svg class="go" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </div>`;
+    }).join('');
+    box.querySelectorAll('.it').forEach((el) => { el.onclick = () => fly.click({ kind: d.kind, id: d.id, itemId: el.dataset.id }); });
   });
 
   document.addEventListener('mouseenter', () => fly.hover(true), true);

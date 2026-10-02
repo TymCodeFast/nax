@@ -1244,10 +1244,10 @@ function showFly(payload, clientY) {
   clearTimeout(flyHideTimer);
   let w;
   try { w = ensureFlyWin(); } catch { return; }
-  const rows = payload.items.length + (payload.footer ? 1 : 0);
-  const H = Math.min(24 + 38 + rows * 34 + 10, win.getContentBounds().height - 24); // marges ombre + titre + lignes
+  // marges d'ombre (24) + en-tête (46+1) + bordure/espacements (12) + lignes à deux niveaux (44 chacune)
+  const H = Math.min(24 + 47 + 12 + payload.items.length * 44, win.getContentBounds().height - 24);
   const b = win.getContentBounds();
-  const y = Math.max(b.y + 8, Math.min(b.y + (clientY || 0) - 28, b.y + b.height - H - 8));
+  const y = Math.max(b.y + 8, Math.min(b.y + (clientY || 0) - 18, b.y + b.height - H - 8)); // en-tête aligné sur l'icône survolée
   w.setBounds({ x: Math.round(b.x + RAIL - 4), y: Math.round(y), width: 300, height: Math.round(H) });
   const send = () => { try { w.webContents.send('fly-load', payload); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
@@ -1260,7 +1260,7 @@ function railHover(id, kind, clientY) {
     if (isGmailApp(a)) return showPeek(id, clientY);
     const sc = a.shortcuts || [];
     if (!sc.length) return;
-    showFly({ kind: 'app', id, title: a.name, items: sc.map((s) => ({ id: s.id, name: s.name, url: s.url })), footer: 'Personnaliser…' }, clientY);
+    showFly({ kind: 'app', id, title: a.name, icon: a.icon || a.favicon || null, edit: true, items: sc.map((s) => ({ id: s.id, name: s.name, url: s.url })) }, clientY);
   } else if (kind === 'pin') {
     const p = railPins.find((x) => x.id === id); if (!p) return;
     const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
