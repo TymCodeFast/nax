@@ -1735,6 +1735,15 @@ function registerIpc() {
     apps.push({ id: 'app' + nextId++, name, url });
     sendState();
   });
+  ipcMain.on('app-remove', (_e, id) => removeApp(id));
+  // réordonne le rail : place id avant beforeId (ou en fin si beforeId absent)
+  ipcMain.on('app-move', (_e, o) => {
+    const i = apps.findIndex((a) => a.id === (o && o.id)); if (i < 0) return;
+    const [a] = apps.splice(i, 1);
+    const j = o.beforeId ? apps.findIndex((x) => x.id === o.beforeId) : -1;
+    if (j < 0) apps.push(a); else apps.splice(j, 0, a);
+    sendState();
+  });
   // ajout depuis le catalogue de suggestions (nom connu, URL vérifiée, pas de doublon par hôte)
   ipcMain.on('app-add-preset', (_e, o) => {
     if (!o || typeof o.url !== 'string') return;

@@ -85,7 +85,7 @@ function render() {
   if (openOverlay === 'settings' && devPane && !devPane.classList.contains('hidden')) renderDevPane();
   const favPane = document.querySelector('.settings-pane[data-pane="favorites"]');
   if (openOverlay === 'settings' && favPane && !favPane.classList.contains('hidden') && !(dnd && dnd.kind === 'favmgr') && renamingFav === null) renderFavPane();
-  if (openOverlay === 'addapp') renderAppCatalog(); // coches « déjà dans le rail » tenues à jour
+  if (openOverlay === 'addapp' && !aaDragging) renderAppCatalog(); // coches et ordre tenus à jour (pas pendant un glisser)
 }
 
 function renderDevRail() {
@@ -1142,6 +1142,7 @@ const APP_CATALOG = [
     { name: 'GitHub', url: 'https://github.com' },
     { name: 'Figma', url: 'https://www.figma.com' },
     { name: 'Trello', url: 'https://trello.com' },
+    { name: 'Jira', url: 'https://start.atlassian.com' },
     { name: 'Linear', url: 'https://linear.app' },
   ] },
   { cat: 'IA', apps: [
@@ -1161,25 +1162,65 @@ const APP_CATALOG = [
     { name: 'Netflix', url: 'https://www.netflix.com' },
   ] },
 ];
+let aaDragging = false; // glisser en cours dans « Ton rail » : on suspend les re-rendus
+// Section « Ton rail » : les applis actuelles, dans l'ordre — glisser pour réordonner, ✕ pour retirer.
+function renderRailCustomize() {
+  const box = $('addapp-rail');
+  box.textContent = '';
+  const apps = (state && state.apps) || [];
+  if (!apps.length) { box.appendChild(el('span', 'aa-rail-empty', 'Rail vide — ajoute des applis ci-dessous.')); return; }
+  apps.forEach((a, idx) => {
+    const tile = el('div', 'aa-rail-tile');
+    tile.draggable = true;
+    const img = el('img'); img.alt = ''; img.draggable = false;
+    img.src = a.icon || a.favicon || ('https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64');
+    img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
+    tile.appendChild(img);
+    tile.appendChild(el('span', 'aa-name', a.name));
+    const x = el('button', 'aa-rail-x'); x.title = 'Retirer du rail'; x.appendChild(icon('i-close'));
+    x.onclick = (e) => { e.stopPropagation(); api.appRemove(a.id); toast(a.name + ' retirée du rail'); };
+    tile.appendChild(x);
+    tile.ondragstart = (e) => { aaDragging = true; e.dataTransfer.setData('text/nax-app', a.id); e.dataTransfer.effectAllowed = 'move'; tile.classList.add('dragging'); };
+    tile.ondragend = () => { aaDragging = false; tile.classList.remove('dragging'); renderRailCustomize(); };
+    tile.ondragover = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+    tile.ondrop = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const srcId = e.dataTransfer.getData('text/nax-app');
+      if (!srcId || srcId === a.id) return;
+      const r = tile.getBoundingClientRect();
+      const before = (e.clientX - r.left) < r.width / 2; // moitié gauche = avant cette tuile, droite = après
+      api.appMove({ id: srcId, beforeId: before ? a.id : (apps[idx + 1] ? apps[idx + 1].id : null) });
+    };
+    box.appendChild(tile);
+  });
+  // lâcher dans le vide de la rangée = déplacer en fin
+  box.ondragover = (e) => e.preventDefault();
+  box.ondrop = (e) => { const srcId = e.dataTransfer.getData('text/nax-app'); if (srcId) api.appMove({ id: srcId, beforeId: null }); };
+}
+// Catalogue : clic = ajouter ; re-clic sur une appli cochée = la retirer.
 function renderAppCatalog() {
+  renderRailCustomize();
   const box = $('addapp-grid');
   box.textContent = '';
-  const have = new Set(((state && state.apps) || []).map((a) => hostOf(a.url)));
+  const apps = (state && state.apps) || [];
   for (const sec of APP_CATALOG) {
     box.appendChild(el('div', 'aa-cat', sec.cat));
     const grid = el('div', 'aa-grid');
     for (const a of sec.apps) {
-      const added = have.has(hostOf(a.url));
-      const tile = el('button', 'aa-tile' + (added ? ' added' : ''));
+      const cur = apps.find((x) => hostOf(x.url) === hostOf(a.url));
+      const tile = el('button', 'aa-tile' + (cur ? ' added' : ''));
       const img = el('img'); img.alt = '';
       img.src = 'https://www.google.com/s2/favicons?domain=' + hostOf(a.url) + '&sz=64';
       img.onerror = () => { img.replaceWith(el('span', 'letter', a.name[0])); };
       tile.appendChild(img);
       tile.appendChild(el('span', 'aa-name', a.name));
       const chk = el('span', 'aa-check'); chk.appendChild(icon('i-check')); tile.appendChild(chk);
-      tile.title = added ? 'Déjà dans le rail' : 'Ajouter ' + a.name + ' au rail';
-      tile.disabled = added;
-      tile.onclick = () => { api.appAddPreset({ name: a.name, url: a.url }); toast(a.name + ' ajoutée au rail'); };
+      const unchk = el('span', 'aa-uncheck'); unchk.appendChild(icon('i-close')); tile.appendChild(unchk);
+      tile.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
+      tile.onclick = () => {
+        if (cur) { api.appRemove(cur.id); toast(a.name + ' retirée du rail'); }
+        else { api.appAddPreset({ name: a.name, url: a.url }); toast(a.name + ' ajoutée au rail'); }
+      };
       grid.appendChild(tile);
     }
     box.appendChild(grid);
