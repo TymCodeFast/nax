@@ -20,7 +20,14 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; color: var(--fg);
     font: 12.5px/1.35 Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
   #wrap { display: flex; flex-direction: column; max-height: calc(100% - 36px); margin: 8px 24px 28px 8px; /* marges = place de l'ombre dans la fenêtre transparente (voir main.js) */
-    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    opacity: 0; transform: translateY(4px) scale(.98); }
+  #wrap.pop { animation: pop 140ms cubic-bezier(.2,.8,.2,1) forwards; }
+  #wrap.closing { animation: pop 110ms cubic-bezier(.2,.8,.2,1) reverse forwards; }
+  @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
 
   /* en-tête : logo + nom de l'appli, et le crayon « Personnaliser » à droite */
   #head { flex: none; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); }
@@ -96,6 +103,8 @@
   const OPEN_ALL_SVG = '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
   const open = new Set();   // dossiers dépliés (réinitialisé à chaque nouvelle charge)
   let cur = null;
+  const wrapEl = document.getElementById('wrap');
+  let armed = false, closing = false;
 
   // hauteur exacte demandée à la fenêtre : en-tête + contenu + marges d'ombre
   function resize() {
@@ -156,7 +165,18 @@
     cur = d;
     resize();
   }
-  fly.onLoad((d) => { open.clear(); render(d); });
+  fly.onLoad((d) => {
+    open.clear(); render(d);
+    closing = false; wrapEl.classList.remove('closing'); // annule une sortie en cours si on rouvre avant la fin
+    if (d.fresh) { // nouvelle apparition (fenêtre masquée jusqu'ici) : rejoue l'entrée
+      wrapEl.classList.remove('pop');
+      void wrapEl.offsetWidth;
+      armed = true;
+      fly.ready();
+    }
+  });
+  fly.onPlay(() => { if (!armed) return; armed = false; requestAnimationFrame(() => wrapEl.classList.add('pop')); });
+  fly.onClose(() => { if (closing) return; closing = true; wrapEl.classList.add('closing'); });
 
   document.addEventListener('mouseenter', () => fly.hover(true), true);
   document.body.addEventListener('mouseleave', () => fly.hover(false));

@@ -25,7 +25,13 @@
     font: 13px/1.4 Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
   #wrap { display: flex; flex-direction: column; height: calc(100% - 36px); margin: 8px 24px 28px 8px;
     background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px;
-    box-shadow: var(--shadow); overflow: hidden; }
+    box-shadow: var(--shadow); overflow: hidden; opacity: 0; transform: translateY(4px) scale(.98); }
+  #wrap.pop { animation: pop 140ms cubic-bezier(.2,.8,.2,1) forwards; }
+  #wrap.closing { animation: pop 110ms cubic-bezier(.2,.8,.2,1) reverse forwards; }
+  @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
 
   /* en-tête : icône + nom + pastille non-lus, actions discrètes */
   #head { height: 48px; flex: none; display: flex; align-items: center; gap: 9px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); }
@@ -108,7 +114,8 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const nameEl = $('name'), icoEl = $('ico'), countEl = $('count'), refreshBtn = $('refresh');
-  const secMail = $('sec-mail'), secChat = $('sec-chat');
+  const secMail = $('sec-mail'), secChat = $('sec-chat'), wrapEl = $('wrap');
+  let armed = false, closing = false;
 
   // avatars teintés : fond à ~14 %, lettre dans la couleur
   const AV = ['#7385ff','#9a86ff','#5aa0f2','#38bda8','#e0a53a','#e07a8b','#7c8cff','#5fbf88'];
@@ -128,7 +135,16 @@
     nameEl.textContent = d.name || 'Gmail';
     if (d.icon) { icoEl.src = d.icon; icoEl.style.display = ''; } else icoEl.style.display = 'none';
     loadAll(false);
+    closing = false; wrapEl.classList.remove('closing'); // annule une sortie en cours si on rouvre avant la fin
+    if (d.fresh) { // nouvelle apparition (fenêtre masquée jusqu'ici) : rejoue l'entrée
+      wrapEl.classList.remove('pop');
+      void wrapEl.offsetWidth;
+      armed = true;
+      peek.ready();
+    }
   });
+  peek.onPlay(() => { if (!armed) return; armed = false; requestAnimationFrame(() => wrapEl.classList.add('pop')); });
+  peek.onClose(() => { if (closing) return; closing = true; wrapEl.classList.add('closing'); });
 
   function loadAll(force) {
     loadGmail();

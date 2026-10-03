@@ -5,10 +5,10 @@
   "description": "NaX — navigateur open source (Chromium via Electron) pensé pour l'organisation",
   "author": "NaX",
   "license": "MIT",
-  "homepage": "https://github.com/OWNER/nax",
+  "homepage": "https://github.com/TymCodeFast/nax",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/nax.git"
+    "url": "https://github.com/TymCodeFast/nax.git"
   },
   "main": "main.js",
   "scripts": {
@@ -42,7 +42,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "OWNER",
+        "owner": "TymCodeFast",
         "repo": "nax"
       }
     ],

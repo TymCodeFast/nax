@@ -13,7 +13,13 @@
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
     font: 13px Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #list { margin: 4px; padding: 5px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
-    box-shadow: var(--shadow); overflow: hidden; }
+    box-shadow: var(--shadow); overflow: hidden; opacity: 0; transform: translateY(4px) scale(.98); }
+  #list.pop { animation: pop 140ms cubic-bezier(.2,.8,.2,1) forwards; }
+  #list.closing { animation: pop 110ms cubic-bezier(.2,.8,.2,1) reverse forwards; }
+  @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
   .row { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 12px; border-radius: 10px; cursor: default; color: var(--fg); }
   .row.sel { background: var(--sel); box-shadow: inset 0 0 0 1px var(--line); }
   .row:hover { background: var(--hover); }
@@ -31,6 +37,7 @@
 <div id="list"></div>
 <script>
   const listEl = document.getElementById('list');
+  let armed = false, closing = false;
   const esc = (s) => (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
   const ICONS = {
@@ -65,7 +72,16 @@
       row.onmousedown = (e) => { e.preventDefault(); suggestui.choose(i); };
       listEl.appendChild(row);
     });
+    closing = false; listEl.classList.remove('closing'); // annule une sortie en cours si on rouvre avant la fin
+    if (d.fresh) { // nouvelle apparition (fenêtre masquée jusqu'ici) : rejoue l'entrée, pas à chaque frappe
+      listEl.classList.remove('pop');
+      void listEl.offsetWidth;
+      armed = true;
+      suggestui.ready();
+    }
   });
+  suggestui.onPlay(() => { if (!armed) return; armed = false; requestAnimationFrame(() => listEl.classList.add('pop')); });
+  suggestui.onClose(() => { if (closing) return; closing = true; listEl.classList.add('closing'); });
 </script>
 </body>
 </html>

@@ -91,7 +91,7 @@ let favorites = []; // {id, url, title, favicon}
 let current = null; // {kind:'tab'|'app', id}
 let sidebarOpen = true;
 let overlayOpen = false;
-let theme = 'dark'; // 'system' | 'light' | 'dark'
+let theme = 'light'; // 'system' | 'light' | 'dark'
 let devMode = false;      // mode développeur : détecte les serveurs de dev locaux
 let devProjects = [];     // [{port, url, title}]
 let devTimer = null;
@@ -1445,7 +1445,7 @@ function openChat(groupId) {
 }
 
 // ---------- panneau d'aperçu au survol (widget façon Opera) ----------
-let peekWin = null, peekAppId = null, peekHideTimer = null;
+let peekWin = null, peekAppId = null, peekHideTimer = null, peekCloseTimer = null;
 function ensurePeekWin() {
   if (peekWin && !peekWin.isDestroyed()) return peekWin;
   peekWin = new BrowserWindow({
@@ -1464,7 +1464,7 @@ function showPeek(id, clientY) {
   if (!a || !win) return;
   if (!isGmailApp(a)) return; // aperçu au survol réservé au widget Gmail
   if (current && current.kind === 'app' && current.id === id) return; // déjà en plein écran
-  clearTimeout(peekHideTimer);
+  clearTimeout(peekHideTimer); clearTimeout(peekCloseTimer);
   let w;
   try { w = ensurePeekWin(); } catch { return; }
   const b = win.getContentBounds();
@@ -1473,16 +1473,25 @@ function showPeek(id, clientY) {
   const panelTop = Math.max(b.y + NAV + 12, Math.min(b.y + (clientY || NAV) - 12, b.y + b.height - panelH - 24));
   w.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(panelTop - 8), width: 400 + 32, height: Math.round(panelH + 36) });
   peekAppId = id;
-  const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web' };
+  const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
+  const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web', fresh };
   const send = () => { try { w.webContents.send('peek-load', payload); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-  w.showInactive(); // n'attrape pas le focus, l'app reste active
+  if (!fresh) w.showInactive(); // sinon : on attend 'peek-ready' (contenu posé) avant de montrer la fenêtre
 }
-function hidePeek() { clearTimeout(peekHideTimer); if (peekWin && !peekWin.isDestroyed() && peekWin.isVisible()) peekWin.hide(); peekAppId = null; }
+function hidePeek() {
+  clearTimeout(peekHideTimer);
+  if (peekWin && !peekWin.isDestroyed() && peekWin.isVisible()) {
+    try { peekWin.webContents.send('peek-close'); } catch {}
+    clearTimeout(peekCloseTimer);
+    peekCloseTimer = setTimeout(() => { if (peekWin && !peekWin.isDestroyed()) peekWin.hide(); }, 110);
+  }
+  peekAppId = null;
+}
 function hidePeekSoon() { clearTimeout(peekHideTimer); peekHideTimer = setTimeout(hidePeek, 260); }
 
 // ---------- flyout du rail : options au survol (raccourcis d'appli, liens d'un dossier épinglé) ----------
-let flyWin = null, flyHideTimer = null;
+let flyWin = null, flyHideTimer = null, flyCloseTimer = null;
 function ensureFlyWin() {
   if (flyWin && !flyWin.isDestroyed()) return flyWin;
   flyWin = new BrowserWindow({
@@ -1495,7 +1504,14 @@ function ensureFlyWin() {
   flyWin.on('blur', () => hideFly());
   return flyWin;
 }
-function hideFly() { clearTimeout(flyHideTimer); if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) flyWin.hide(); }
+function hideFly() {
+  clearTimeout(flyHideTimer);
+  if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) {
+    try { flyWin.webContents.send('fly-close'); } catch {}
+    clearTimeout(flyCloseTimer);
+    flyCloseTimer = setTimeout(() => { if (flyWin && !flyWin.isDestroyed()) flyWin.hide(); }, 110);
+  }
+}
 function hideFlySoon() { clearTimeout(flyHideTimer); flyHideTimer = setTimeout(hideFly, 260); }
 let flyClientY = 0;
 // Place la fenêtre du flyout à côté du rail, en-tête aligné sur l'icône survolée ; H = hauteur voulue (ombre comprise).
@@ -1508,16 +1524,17 @@ function flyPlace(H) {
 }
 function showFly(payload, clientY) {
   if (!win) return;
-  clearTimeout(flyHideTimer);
+  clearTimeout(flyHideTimer); clearTimeout(flyCloseTimer);
   let w;
   try { w = ensureFlyWin(); } catch { return; }
   flyClientY = clientY || 0;
   // estimation initiale (marges d'ombre 36 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
   const est = payload.items.reduce((n, it) => n + (it.type === 'folder' ? 38 : 44), 0) || 44;
   flyPlace(36 + 47 + 12 + est);
-  const send = () => { try { w.webContents.send('fly-load', payload); } catch {} };
+  const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
+  const send = () => { try { w.webContents.send('fly-load', { ...payload, fresh }); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-  w.showInactive();
+  if (!fresh) w.showInactive(); // sinon : on attend 'fly-ready' (contenu posé, hauteur ajustée) avant de montrer la fenêtre
 }
 // Contenu d'un dossier de favoris, sous-dossiers compris (profondeur 4, 200 éléments max)
 function favTreeItems(children, depth, budget) {
@@ -1628,7 +1645,7 @@ function showFind() {
 function hideFind() { const wc = visibleWC(); if (wc && !wc.isDestroyed()) wc.stopFindInPage('clearSelection'); if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.hide(); }
 
 // ---------- overlay des suggestions (barre d'adresse) ----------
-let suggestWin = null;
+let suggestWin = null, suggestCloseTimer = null;
 function ensureSuggestWin() {
   if (suggestWin && !suggestWin.isDestroyed()) return suggestWin;
   suggestWin = new BrowserWindow({
@@ -1640,7 +1657,13 @@ function ensureSuggestWin() {
   suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'));
   return suggestWin;
 }
-function hideSuggest() { if (suggestWin && !suggestWin.isDestroyed() && suggestWin.isVisible()) suggestWin.hide(); }
+function hideSuggest() {
+  if (suggestWin && !suggestWin.isDestroyed() && suggestWin.isVisible()) {
+    try { suggestWin.webContents.send('suggest-close'); } catch {}
+    clearTimeout(suggestCloseTimer);
+    suggestCloseTimer = setTimeout(() => { if (suggestWin && !suggestWin.isDestroyed()) suggestWin.hide(); }, 110);
+  }
+}
 // template : liste de { label, click, enabled?, danger? } ou { type:'separator' }.
 function popupMenu(template) {
   if (!win) return;
@@ -2156,7 +2179,7 @@ function registerIpc() {
     if (a.shortcuts.length) railHover(a.id, 'app', flyClientY); else hideFly();
   });
   ipcMain.on('fly-open-all', (_e, favId) => { hideFly(); if (favFind(favId)) openAllInFolder(favId); });
-  ipcMain.on('fly-resize', (_e, h) => { if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible() && +h > 0) flyPlace(+h); });
+  ipcMain.on('fly-resize', (_e, h) => { if (flyWin && !flyWin.isDestroyed() && +h > 0) flyPlace(+h); });
   ipcMain.on('fly-edit', (_e, appId) => { hideFly(); if (apps.some((x) => x.id === appId) && chrome) chrome.webContents.send('edit-app-shortcuts', appId); });
   ipcMain.on('app-shortcuts-set', (_e, o) => {
     const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
@@ -2187,18 +2210,23 @@ function registerIpc() {
   ipcMain.handle('chat-feed', (_e, force) => fetchChatFeed(!!force));
   ipcMain.on('chat-open', (_e, groupId) => openChat(groupId));
   ipcMain.on('menu-ready', () => { if (menuWin && !menuWin.isDestroyed()) { menuWin.show(); menuWin.focus(); menuWin.webContents.send('menu-play'); } });
+  ipcMain.on('peek-ready', () => { if (peekWin && !peekWin.isDestroyed()) { peekWin.showInactive(); peekWin.webContents.send('peek-play'); } });
+  ipcMain.on('fly-ready', () => { if (flyWin && !flyWin.isDestroyed()) { flyWin.showInactive(); flyWin.webContents.send('fly-play'); } });
+  ipcMain.on('suggest-ready', () => { if (suggestWin && !suggestWin.isDestroyed()) { suggestWin.showInactive(); suggestWin.webContents.send('suggest-play'); } });
   ipcMain.on('tip-show', (_e, d) => { const w = ensureTipWin(); syncTipBounds(); const send = () => { try { w.webContents.send('tip-show', { ...d, dark: nativeTheme.shouldUseDarkColors }); } catch {} }; if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send(); });
   ipcMain.on('tip-hide', () => hideTip());
   ipcMain.handle('omni-suggest', (_e, q) => ({ local: omniSuggest(q), isUrl: looksLikeUrl(q || '') }));
   ipcMain.handle('omni-google', (_e, q) => googleSuggest(q));
   ipcMain.on('suggest-show', (_e, { items, sel, rect, dark, q } = {}) => {
     const w = ensureSuggestWin();
+    clearTimeout(suggestCloseTimer);
     const b = win.getContentBounds();
     const h = Math.min(420, 8 + (items ? items.length : 0) * 46 + 6);
     w.setBounds({ x: Math.round(b.x + rect.x), y: Math.round(b.y + rect.y), width: Math.round(rect.w), height: Math.max(1, Math.round(h)) });
-    const send = () => { try { w.webContents.send('suggest-render', { items, sel, dark, q }); } catch {} };
+    const fresh = !w.isVisible(); // déjà affiché : juste un re-rendu (frappe en cours), pas de rejeu de l'entrée
+    const send = () => { try { w.webContents.send('suggest-render', { items, sel, dark, q, fresh }); } catch {} };
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-    if (!w.isVisible()) w.showInactive();
+    if (!fresh) w.showInactive(); // sinon : on attend 'suggest-ready' avant de montrer la fenêtre
   });
   ipcMain.on('suggest-hide', () => hideSuggest());
   ipcMain.on('suggest-hover', (_e, idx) => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('suggest-hover', idx); });

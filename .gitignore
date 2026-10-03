@@ -6,3 +6,7 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Outils locaux (non liés au code de l'app)
+.agents/
+skills-lock.json

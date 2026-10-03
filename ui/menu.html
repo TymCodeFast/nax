@@ -21,7 +21,11 @@
     background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg);
     opacity: 0; transform: scale(.97); transform-origin: top left; }
   #menu.pop { animation: pop .13s cubic-bezier(.2,.8,.2,1) forwards; }
+  #menu.closing { animation: pop .11s cubic-bezier(.2,.8,.2,1) reverse forwards; }
   @keyframes pop { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
   .item { display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px;
     font-size: 13px; font-weight: 450; color: var(--fg); white-space: nowrap; cursor: default; gap: 10px; }
   .item:hover, .item.sel { background: var(--hover); }
@@ -37,11 +41,12 @@
   const menuEl = document.getElementById('menu');
   let items = [], sel = -1;
   let armed = false;                         // n'autorise qu'un seul jeu d'animation par ouverture
+  let closing = false;
 
   ctxmenu.onShow((d) => {
     document.body.classList.toggle('light', !d.dark);
     items = d.items || []; sel = -1;
-    menuEl.classList.remove('pop');          // repart de l'état fermé
+    menuEl.classList.remove('pop', 'closing'); closing = false; // repart de l'état fermé
     // force un reflow pour que le retrait de .pop soit pris en compte avant le prochain ajout
     void menuEl.offsetWidth;
     armed = true;
@@ -74,6 +79,14 @@
   // Le garde `armed` ignore tout rejeu de 'menu-play' (cascade de focus après un survol du rail).
   ctxmenu.onPlay(() => { if (!armed) return; armed = false; requestAnimationFrame(() => menuEl.classList.add('pop')); });
 
+  // joue la sortie avant de prévenir le process principal (symétrique de l'entrée armed/ready/play)
+  function requestClose() {
+    if (closing) return;
+    closing = true;
+    menuEl.classList.add('closing');
+    setTimeout(() => ctxmenu.close(), 110);
+  }
+
   const rows = () => [...menuEl.querySelectorAll('.item:not(.disabled)')];
   function setSel(i) {
     const list = [...menuEl.querySelectorAll('.item')];
@@ -89,15 +102,15 @@
     }
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') ctxmenu.close();
+    if (e.key === 'Escape') requestClose();
     else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
     else if (e.key === 'Enter') { const list = [...menuEl.querySelectorAll('.item')]; if (list[sel] && list[sel].dataset.idx) ctxmenu.select(+list[sel].dataset.idx); }
   });
   // clic en dehors du menu → fermer
-  document.body.addEventListener('mousedown', (e) => { if (!menuEl.contains(e.target)) ctxmenu.close(); });
-  window.addEventListener('blur', () => ctxmenu.close());
-  document.body.addEventListener('contextmenu', (e) => { e.preventDefault(); ctxmenu.close(); });
+  document.body.addEventListener('mousedown', (e) => { if (!menuEl.contains(e.target)) requestClose(); });
+  window.addEventListener('blur', () => requestClose());
+  document.body.addEventListener('contextmenu', (e) => { e.preventDefault(); requestClose(); });
 </script>
 </body>
 </html>

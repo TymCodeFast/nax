@@ -3,10 +3,6 @@
 Navigateur **open source** basé sur Chromium (Electron). Objectif : repenser onglets et
 favoris pour qu'ils s'organisent tout seuls, pas refaire un navigateur complet. Licence MIT.
 
-> Avant de publier : remplacer `OWNER` par le compte GitHub qui héberge le dépôt, dans
-> `package.json` (`homepage`, `repository`, et `build.publish[0].owner`). C'est ce compte
-> qui pilote les mises à jour automatiques.
-
 ## Lancer
 
     npm start
@@ -191,10 +187,10 @@ Prérequis de build : `npm install` (une fois).
 
         npm run dist
 
-   Résultat : `dist/NaX Setup 0.1.0.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`
+   Résultat : `dist/NaX Setup 0.0.1.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`
    (version décompressée, lançable telle quelle).
 
-2. Installer : double-clic sur `NaX Setup 0.1.0.exe`. Choix du dossier, raccourcis menu
+2. Installer : double-clic sur `NaX Setup 0.0.1.exe`. Choix du dossier, raccourcis menu
    Démarrer et bureau créés. L'app n'est pas signée, donc Windows SmartScreen peut avertir :
    « Informations complémentaires » puis « Exécuter quand même ».
 
@@ -231,12 +227,11 @@ Il suffit de la réinstaller une fois depuis l'installeur de la bêta.
 
 ### Publier une nouvelle version
 
-1. Renseigner le compte GitHub : remplacer `OWNER` dans `package.json` (voir en tête).
-2. Incrémenter la version : `npm run bump` (`0.0.1` → `0.0.2`), ou `npm run bump:minor`
+1. Incrémenter la version : `npm run bump` (`0.0.1` → `0.0.2`), ou `npm run bump:minor`
    (`0.0.x` → `0.1.0`). Aucun tag Git n'est créé ici : c'est la publication qui s'en charge.
    La toute première release de la bêta garde `0.0.1` (pas de bump). Ne jamais republier un
    numéro déjà publié : l'auto-update ne se déclenche que vers une version plus haute.
-3. Créer un jeton GitHub (Settings → Developer settings → Personal access tokens) avec la
+2. Créer un jeton GitHub (Settings → Developer settings → Personal access tokens) avec la
    portée `repo` (ou `public_repo` si le dépôt est public), puis l'exposer :
 
         # PowerShell
@@ -246,7 +241,7 @@ Il suffit de la réinstaller une fois depuis l'installeur de la bêta.
    electron-builder construit l'installeur et crée/complète une Release GitHub taguée
    `v<version>` avec `NaX Setup <version>.exe` et le fichier `latest.yml` que l'app lit pour
    détecter les mises à jour.
-4. Les utilisateurs installés reçoivent la mise à jour automatiquement au prochain lancement.
+3. Les utilisateurs installés reçoivent la mise à jour automatiquement au prochain lancement.
 
 Le tag Git de la Release doit être `v<version>` (electron-builder s'en occupe avec
 `--publish always`).

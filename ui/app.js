@@ -986,21 +986,30 @@ $('split-divider').addEventListener('mousedown', (e) => {
 // ---------- overlays ----------
 let openOverlay = null;
 let overlayParent = null; // overlay masqué sous une modale ouverte « par-dessus » ({ over: true }), restauré à la fermeture
+let overlayCloseTimer = null;
 function showOverlay(id, opts) {
   const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
   if (openOverlay === 'auth' && id !== 'auth') settleAuth(null); // un autre panneau remplace la demande : annulée
   if (openOverlay === 'display-pick' && id !== 'display-pick') settleDisplay(null);
-  if (openOverlay) $(openOverlay).classList.add('hidden');
+  if (openOverlay) { clearTimeout(overlayCloseTimer); $(openOverlay).classList.remove('closing'); $(openOverlay).classList.add('hidden'); }
   overlayParent = over ? openOverlay : null;
   openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
 }
 function closeOverlay() {
   if (!openOverlay) return;
-  if (openOverlay === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
-  if (openOverlay === 'display-pick') settleDisplay(null);
-  $(openOverlay).classList.add('hidden');
-  if (overlayParent) { openOverlay = overlayParent; overlayParent = null; $(openOverlay).classList.remove('hidden'); return; }
-  openOverlay = null; api.overlay(false);
+  const id = openOverlay;
+  const node = $(id);
+  if (node.classList.contains('closing')) return; // fermeture déjà en cours
+  if (id === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
+  if (id === 'display-pick') settleDisplay(null);
+  node.classList.add('closing');
+  clearTimeout(overlayCloseTimer);
+  overlayCloseTimer = setTimeout(() => {
+    node.classList.remove('closing'); node.classList.add('hidden');
+    if (openOverlay !== id) return; // remplacé entretemps par showOverlay()
+    if (overlayParent) { openOverlay = overlayParent; overlayParent = null; $(openOverlay).classList.remove('hidden'); return; }
+    openOverlay = null; api.overlay(false);
+  }, 160);
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openOverlay) { e.preventDefault(); closeOverlay(); } });
 document.querySelectorAll('.overlay').forEach((o) => o.addEventListener('mousedown', (e) => { if (e.target === o) closeOverlay(); }));
@@ -1511,7 +1520,16 @@ function selectSettingsPane(pane) {
 const ENGINE_DOMAIN = { google: 'google.com', duckduckgo: 'duckduckgo.com', bing: 'bing.com', qwant: 'qwant.com', ecosia: 'ecosia.org', brave: 'search.brave.com', startpage: 'startpage.com' };
 function engFavicon(id) { const im = el('img', 'dd-fav'); im.alt = ''; im.src = `https://www.google.com/s2/favicons?domain=${ENGINE_DOMAIN[id] || 'google.com'}&sz=32`; im.onerror = () => { im.style.visibility = 'hidden'; }; return im; }
 let ddOutside = null;
-function closeEngineDD() { const dd = $('engine-dd'); const m = dd.querySelector('.dd-menu'); if (m) m.classList.add('hidden'); dd.classList.remove('open'); if (ddOutside) { document.removeEventListener('mousedown', ddOutside, true); ddOutside = null; } }
+let ddCloseTimer = null;
+function closeEngineDD() {
+  const dd = $('engine-dd'); const m = dd.querySelector('.dd-menu');
+  dd.classList.remove('open');
+  if (ddOutside) { document.removeEventListener('mousedown', ddOutside, true); ddOutside = null; }
+  if (!m || m.classList.contains('hidden') || m.classList.contains('closing')) return;
+  m.classList.add('closing');
+  clearTimeout(ddCloseTimer);
+  ddCloseTimer = setTimeout(() => { m.classList.remove('closing'); m.classList.add('hidden'); }, 110);
+}
 function renderSearchPane() {
   const dd = $('engine-dd');
   const engines = (state && state.searchEngines) || [];
@@ -1874,7 +1892,15 @@ function makeSelect(container, value, options, onChange) {
   container.appendChild(btn);
   const menu = el('div', 'dd-menu hidden');
   let outside = null;
-  const close = () => { menu.classList.add('hidden'); container.classList.remove('open'); if (outside) { document.removeEventListener('mousedown', outside, true); outside = null; } };
+  let closeTimer = null;
+  const close = () => {
+    container.classList.remove('open');
+    if (outside) { document.removeEventListener('mousedown', outside, true); outside = null; }
+    if (menu.classList.contains('hidden') || menu.classList.contains('closing')) return;
+    menu.classList.add('closing');
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => { menu.classList.remove('closing'); menu.classList.add('hidden'); }, 110);
+  };
   options.forEach((o) => {
     const it = el('div', 'dd-option' + (o.value === value ? ' sel' : ''));
     it.appendChild(el('span', 'dd-name', o.label));
