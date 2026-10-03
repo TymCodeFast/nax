@@ -1108,6 +1108,12 @@ body.claude #split-tb-right { padding-right: 12px; }
 .about-card { display: flex; align-items: center; gap: 16px; padding: 18px; margin-bottom: 8px; background: var(--field); border: 1px solid var(--line); border-radius: 14px; }
 .about-logo { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 15px; background: #0b0d12; border: 1px solid var(--line-strong); }
 .about-logo svg { width: 32px; height: 32px; }
+.about-sub { margin: 26px 0 8px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+.changelog { max-height: 360px; overflow-y: auto; padding-right: 6px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.changelog h2 { font-size: 13px; margin: 14px 0 4px; color: var(--fg); }
+.changelog h3 { font-size: 12px; margin: 10px 0 2px; color: var(--fg-2); text-transform: uppercase; letter-spacing: .04em; }
+.changelog ul { margin: 2px 0 6px; padding-left: 18px; }
+.changelog h1 { display: none; }
 .about-id { flex: 1; min-width: 0; }
 #about-copy { flex: none; }
 .about-name { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }

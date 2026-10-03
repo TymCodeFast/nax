@@ -2452,6 +2452,8 @@ function registerIpc() {
   ipcMain.on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
   ipcMain.on('auth-reply', (_e, r) => answerAuth(r));
   ipcMain.on('display-choose', (_e, r) => { if (displayPick && r && r.id === displayPick.id) settleDisplayPick(r.cancel ? null : r); });
+  // Changelog affiché dans Réglages → À propos : même fichier que celui du dépôt (CHANGELOG.md)
+  ipcMain.handle('changelog-get', () => { try { return fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8'); } catch { return ''; } });
   ipcMain.handle('default-browser-status', () => defaultBrowserStatus());
   ipcMain.handle('default-browser-set', () => makeDefaultBrowser());
   ipcMain.on('open-url', (_e, url) => navigateCurrent(url));
