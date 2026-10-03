@@ -13,19 +13,22 @@
   <a href="https://github.com/TymCodeFast/nax/releases/latest"><img src="https://img.shields.io/github/v/release/TymCodeFast/nax?label=version&color=2f6fe4" alt="Dernière version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-22c55e" alt="Licence MIT"></a>
   <img src="https://img.shields.io/badge/gratuit-oui-0ea5e9" alt="Gratuit">
+  <img src="https://img.shields.io/badge/open%20source-oui-7385ff" alt="Open source">
 </p>
 
 <p align="center">
   <a href="https://github.com/TymCodeFast/nax/releases/latest"><b>⬇ Télécharger NaX</b></a>
+  &nbsp;·&nbsp;
+  <a href="#fonctionnalités"><b>Fonctionnalités</b></a>
+  &nbsp;·&nbsp;
+  <a href="#installer"><b>Installer</b></a>
+  &nbsp;·&nbsp;
+  <a href="#pour-les-développeurs"><b>Développer</b></a>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/apercu.png" alt="Aperçu de NaX : onglets groupés à gauche, favoris en bas, page web au centre" width="900">
 </p>
-
-NaX est un navigateur **open source** basé sur Chromium. Il organise vos onglets pendant que
-vous travaillez : les pages ouvertes depuis une autre restent ensemble, les onglets oubliés
-partent en veille, et rien ne disparaît jamais.
 
 ---
 
@@ -35,18 +38,9 @@ Un navigateur classique finit toujours avec quarante onglets et aucun moyen de l
 Tout le monde a promis de les ranger plus tard. NaX prend le problème dans l'autre sens :
 **on organise après, ou jamais.**
 
-- **Des onglets qui se rangent seuls.** Une page ouverte depuis une autre reste collée à sa
-  source. Vos recherches et vos projets forment des groupes sans effort.
-- **Un ménage automatique.** Un onglet inactif depuis 2 h passe en veille. Un onglet fermé
-  ou en veille depuis 3 jours part dans l'archive. Un clic le ramène.
-- **Rien ne se perd.** Tout ce qui a été ouvert, fermé ou mis en veille se retrouve dans la
-  recherche globale (Ctrl+K).
-- **Vos applis à portée de clic.** Gmail, Agenda et Drive vivent dans un rail, à côté de
-  vos onglets, sans prendre la place des onglets.
-- **Vos mots de passe, en sécurité.** Le coffre est chiffré par le coffre Windows : jamais
-  en clair sur le disque.
-- **Open source et gratuit.** Le code est public, sous licence MIT. Vous pouvez le lire,
-  le modifier, le partager.
+NaX regroupe automatiquement ce que vous ouvrez ensemble, met en veille ce que vous ne
+touchez plus, et garde tout ce qui a été ouvert à portée de recherche. Vous gardez la main,
+sans effort de rangement.
 
 ---
 
@@ -54,86 +48,57 @@ Tout le monde a promis de les ranger plus tard. NaX prend le problème dans l'au
 
 ### Des onglets qui s'organisent seuls
 
-- **Îlots automatiques** : une page ouverte avec Ctrl+clic, depuis un lien dans une autre
-  page, ou par clic droit → nouvel onglet, reste groupée avec celle qui l'a ouverte. Le nom
-  du groupe est deviné automatiquement, et se renomme d'un double-clic.
-- **Groupes repliables** : un clic réduit un groupe à une seule barre (nom, favicons empilés,
-  compteur). Il se déplie d'un autre clic, et NaX se souvient de l'état.
-- **Pas de doublons** : taper l'adresse d'une page déjà ouverte vous y ramène. Ctrl+Entrée
-  force un nouvel onglet.
-- **Veille et archive** : les onglets inactifs s'endorment grisés, sans perdre leur place.
+| | |
+|---|---|
+| **Îlots automatiques** | Une page ouverte depuis une autre reste groupée avec celle qui l'a ouverte. Le groupe se nomme tout seul, et se renomme d'un double-clic. |
+| **Groupes repliables** | Un clic réduit un groupe à une barre (nom, favicons, compteur). NaX mémorise l'état. |
+| **Pas de doublons** | Taper l'adresse d'une page déjà ouverte vous y ramène. Ctrl+Entrée force un nouvel onglet. |
+| **Veille** | Un onglet inactif depuis 2 h s'endort, grisé, sans perdre sa place. Un clic le réveille. |
+| **Archive** | Un onglet fermé, ou en veille depuis 3 jours, part dans l'archive. Rien ne se perd. |
+| **Recherche partout** | Ctrl+K retrouve les onglets, la veille, l'archive et l'historique. |
 
 ### Une organisation à la souris
 
-Tout se range par glisser-déposer dans la liste des onglets :
-
-- **Réordonner** : une ligne indique où l'onglet va tomber.
-- **Grouper** : déposer un onglet sur un autre le réunit en groupe ; déposer sur un groupe
-  existant l'y ajoute.
-- **Dégrouper** : sortir un onglet de son groupe, ou déplacer le groupe entier par son en-tête.
-
-Le clic droit donne accès aux mêmes actions au clavier et à la souris.
+Glissez-déposez un onglet pour le réordonner, le grouper ou le sortir d'un groupe. Déplacez
+un groupe entier par son en-tête. Le clic droit donne les mêmes actions.
 
 ### Vos applis dans le rail
 
-- **Gmail** : un widget maison affiche vos mails non lus (expéditeur, objet, extrait, heure),
-  avec la session déjà connectée. Une pastille indique le nombre de non-lus. Un clic ouvre le
-  mail dans Gmail.
-- **Agenda, Drive et vos sites** : un clic les ouvre. Ajoutez n'importe quel site avec `+`,
-  retirez-le par clic droit.
+- **Gmail** : widget maison avec vos mails non lus (expéditeur, objet, extrait), et un compteur sur l'icône. Un clic ouvre le mail.
+- **Agenda, Drive et vos sites** : un clic les ouvre. Ajoutez n'importe quel site avec `+`.
 
-### Favoris en arbre
+### Favoris, mots de passe, téléchargements
 
-- Dossiers et sous-dossiers, glisser-déposer, renommage au double-clic.
-- Étoile dans la barre d'adresse, ou Ctrl+D.
-- Clic droit sur un dossier → ouvrir tous ses liens d'un coup.
-
-### Mots de passe
-
-- Coffre local, chiffré par le coffre Windows (DPAPI).
-- Import depuis Chrome par export CSV.
-- Révélation, copie (le presse-papiers est effacé après 30 s), ouverture et suppression.
+- **Favoris en arbre** : dossiers, sous-dossiers, glisser-déposer. Ctrl+D pour marquer une page.
+- **Coffre de mots de passe** : chiffré par le coffre Windows (DPAPI), jamais en clair sur le disque. Import depuis Chrome par CSV. Le presse-papiers est effacé après 30 secondes.
+- **Téléchargements** : progression, panneau pour ouvrir ou montrer le fichier.
 
 ### Un navigateur complet
 
-- **Recherche dans la page** (Ctrl+F), impression, enregistrement de page (HTML, MHTML).
-- **Téléchargements** avec progression, et un panneau pour ouvrir ou montrer le fichier.
+- **Page d'accueil** avec barre de recherche, sur le bouton Accueil et pour les nouveaux onglets. Elle suit votre moteur de recherche.
+- **Recherche dans la page** (Ctrl+F), impression, enregistrement de page (HTML ou MHTML).
 - **Partage d'écran** pour Meet, Teams ou Zoom web, avec option son de l'ordinateur.
 - **Permissions par site** : caméra, micro, notifications, géolocalisation.
 - **Sessions privées** : les autorisations accordées sont oubliées à la fermeture.
-- **Pages d'erreur et page figée** : une page claire explique le problème et propose de réessayer.
-- **Liens vers d'autres applis** (Teams, Zoom, Slack, `mailto:`…) : NaX demande avant de les
-  ouvrir. Les schémas dangereux restent bloqués.
-- **Navigateur par défaut** : enregistré depuis les Réglages, validé dans les paramètres Windows.
-- **Export en Markdown** : un clic transforme une page en texte propre, prêt à coller.
-- **Recherche intelligente** dans la barre d'adresse : onglets, favoris, historique et suggestions
-  de recherche, avec complétion.
-- **Thème** clair, sombre ou automatique. Moteur de recherche au choix (Google, DuckDuckGo,
-  Bing, Qwant, Ecosia, Brave, Startpage).
-- **Mode développeur** : vos serveurs de développement locaux apparaissent dans le rail dès
-  qu'ils tournent, et disparaissent à l'arrêt.
+- **Liens vers d'autres applis** (Teams, Zoom, Slack, `mailto:`…) : NaX demande avant de les ouvrir.
+- **Export en Markdown** : une page devient un texte propre, prêt à coller.
+- **Recherche intelligente** dans la barre d'adresse : onglets, favoris, historique et suggestions, avec complétion.
+- **Thème** clair, sombre ou automatique. Moteur de recherche au choix : Google, DuckDuckGo, Bing, Qwant, Ecosia, Brave, Startpage.
+- **Navigateur par défaut** : enregistrement depuis les Réglages, puis choix dans les Paramètres Windows.
 
 ---
 
-## Installer NaX
+## Installer
 
-1. Ouvrez la [page des Releases](https://github.com/TymCodeFast/nax/releases/latest) et
-   téléchargez `NaX-Setup-x.y.z.exe`.
-2. Double-cliquez dessus et choisissez le dossier d'installation. Les raccourcis Démarrer et
-   bureau sont créés.
-3. L'application n'est pas encore signée par un éditeur reconnu : Windows SmartScreen peut
-   afficher un avertissement. Cliquez sur « Informations complémentaires », puis sur
-   « Exécuter quand même ».
+1. Ouvrez la [page des Releases](https://github.com/TymCodeFast/nax/releases/latest) et téléchargez `NaX-Setup-x.y.z.exe`.
+2. Lancez-le. NaX s'installe dans votre dossier utilisateur, et les raccourcis Démarrer et bureau sont créés.
+3. Windows SmartScreen peut afficher un avertissement, car l'installeur n'est pas encore signé par un éditeur reconnu. Cliquez sur « Informations complémentaires », puis « Exécuter quand même ».
 
-Vos données (favoris, mots de passe, réglages, onglets) sont stockées dans
-`%APPDATA%/NaX`. Elles survivent aux mises à jour, et la désinstallation ne les efface pas.
+**Vos données** (favoris, mots de passe, réglages, onglets) vivent dans `%APPDATA%/NaX`. Elles survivent aux mises à jour, et la désinstallation ne les efface pas.
 
 ### Mises à jour automatiques
 
-NaX vérifie au démarrage, puis toutes les 6 heures, si une version plus récente est publiée.
-Si oui, une bulle discrète en bas à droite vous le propose. Rien ne se télécharge sans votre
-accord : un clic sur « Télécharger », puis « Redémarrer » pour installer. Vous pouvez aussi
-choisir « Plus tard ».
+NaX vérifie au démarrage, puis toutes les 6 heures. Quand une version plus récente existe, une bulle discrète apparaît en bas à droite. Rien ne se télécharge sans votre accord : « Télécharger », puis « Redémarrer » pour installer, ou « Plus tard ».
 
 ---
 
@@ -172,8 +137,9 @@ choisir « Plus tard ».
 
 ## Feuille de route
 
+- Suggestions personnalisées sur la page d'accueil.
 - Pastilles de notification sur les applis (événement proche, etc.).
-- Vue « récurrents » calculée depuis l'historique.
+- Vue « récurrents », calculée depuis l'historique.
 - Remplissage automatique des formulaires web.
 - Applis en panneau latéral, en plus du plein écran.
 
@@ -181,45 +147,36 @@ choisir « Plus tard ».
 
 ## Pour les développeurs
 
+NaX est une application Electron. Pas de chaîne de build complexe.
+
 ### Lancer en dev
 
-Prérequis : Node.js et `npm install` (une fois).
+Prérequis : Node.js, puis `npm install` (une fois).
 
     npm start
 
-Pour une démo sans vos données (profil séparé, onglets neutres) : `npm run demo`. Le profil
-de démo est `%APPDATA%/NaX-demo` et ne touche jamais le profil réel.
+Pour une démo sans vos données (profil séparé, onglets neutres) : `npm run demo`. Le profil de démo est `%APPDATA%/NaX-demo` et ne touche jamais le profil réel.
+
+NaX n'accepte qu'une seule instance par profil : fermez la version installée avant de lancer `npm start`, sinon le dev se fait renvoyer vers elle.
 
 ### Structure
 
-- `main.js` : processus principal. Une fenêtre, une vue d'interface qui la couvre, et une seule
-  vue de contenu (onglet ou appli) posée par-dessus. Modèle des onglets, groupes, applis,
-  archive, historique et veille.
-- `preload.js` : pont IPC exposé à l'interface (`window.api`).
-- `ui/` : interface (rail, liste d'onglets, barre de navigation, palette, menus, tooltips,
-  overlays de suggestions et de recherche). Les fenêtres overlay ont chacune leur
-  `*-preload.js`.
+- `main.js` : processus principal. Une fenêtre, une vue d'interface qui la couvre, et une seule vue de contenu (onglet ou appli) posée par-dessus. Modèle des onglets, groupes, applis, archive, historique et veille.
+- `preload.js` : pont IPC exposé à l'interface (`window.api`). Les fenêtres overlay ont chacune leur `*-preload.js`.
+- `ui/` : interface (rail, liste d'onglets, barre de navigation, palette, menus, tooltips, page d'accueil, bulle de mise à jour).
 - État persisté dans `%APPDATA%/browser/state.json`.
 
-Pour ajouter un réglage : un `.settings-navitem` dans la nav, une `.settings-pane` dans le
-contenu (`ui/index.html`), et le câblage dans `ui/app.js`.
-
-Les constantes (délai de veille, délai d'archive, page d'accueil, applis par défaut) sont en
-tête de `main.js`.
+Pour ajouter un réglage : un `.settings-navitem` dans la nav, une `.settings-pane` dans le contenu (`ui/index.html`), et le câblage dans `ui/app.js`.
 
 ### Construire l'installeur
 
     npm run dist
 
 Résultat : `dist/NaX Setup x.y.z.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`.
-L'installeur crée aussi les clés de navigateur par défaut (`HKCU`, sans droits admin) et
-les retire à la désinstallation, mais pas lors d'une mise à jour (`build/installer.nsh`).
 
 ### Versions
 
-Un seul numéro, dans `package.json` (`version`). Il est affiché dans l'installeur,
-Réglages → À propos, et utilisé par les mises à jour automatiques. Schéma
-[semver](https://semver.org/lang/fr/) :
+Un seul numéro, dans `package.json` (`version`). Il est affiché dans l'installeur, dans Réglages → À propos, et utilisé par les mises à jour automatiques. Schéma [semver](https://semver.org/lang/fr/) :
 
 | Numéro | Étape |
 |---|---|
@@ -227,32 +184,25 @@ Réglages → À propos, et utilisé par les mises à jour automatiques. Schéma
 | `0.1.x`, `0.2.x`… | **bêta** (actuelle) |
 | `1.0.0` | première version stable |
 
-L'auto-update ne propose **jamais une version inférieure ou égale** à celle installée.
-Ne republiez jamais un numéro déjà publié.
+L'auto-update ne propose jamais une version inférieure ou égale à celle installée. Ne republiez jamais un numéro déjà publié.
 
 ### Publier une version
 
-1. Incrémenter la version : `npm run bump` (patch, `0.1.0` → `0.1.1`) ou `npm run bump:minor`.
-   Aucun tag Git n'est créé ici : c'est la publication qui s'en charge.
-2. Créer un jeton GitHub avec la portée `repo`, puis l'exposer :
+1. Incrémenter la version : `npm run bump` (patch) ou `npm run bump:minor`. Aucun tag Git n'est créé ici.
+2. Créer un jeton GitHub avec la portée `repo`, puis publier :
 
         # PowerShell
         $env:GH_TOKEN = "ghp_xxx"
         npm run publish
 
-   electron-builder construit l'installeur et crée une Release GitHub taguée `v<version>`,
-   avec `NaX-Setup-<version>.exe` et `latest.yml`, le fichier que l'app lit pour détecter les
-   mises à jour.
-
-Le dépôt étant public, les utilisateurs n'ont besoin d'aucun jeton pour recevoir les mises à jour.
+   electron-builder construit l'installeur et crée une Release GitHub taguée `v<version>`, avec `NaX-Setup-<version>.exe` et `latest.yml`, le fichier que l'app lit pour détecter les mises à jour.
 
 ### Contribuer
 
-Les contributions sont bienvenues : ouvrez une issue pour discuter d'une idée, puis une pull
-request. Le projet est une application Electron sans chaîne de build complexe.
+Les contributions sont bienvenues. Ouvrez une issue pour discuter d'une idée, puis une pull request.
 
 ---
 
 ## Licence
 
-MIT. Voir [LICENSE](LICENSE).
+Distribué sous licence MIT. Voir [LICENSE](LICENSE).
