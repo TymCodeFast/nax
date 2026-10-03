@@ -13,6 +13,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "demo": "electron . --demo",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "publish": "electron-builder --publish always",

@@ -8,6 +8,8 @@ partent en veille, et rien ne disparaît jamais.
 
 [**Télécharger NaX**](https://github.com/TymCodeFast/nax/releases/latest) · Windows 10 et 11 · Gratuit · Licence MIT
 
+![NaX : onglets groupés à gauche, favoris en bas, page web au centre](docs/screenshots/apercu.png)
+
 ---
 
 ## Pourquoi NaX ?
@@ -162,6 +164,9 @@ choisir « Plus tard ».
 Prérequis : Node.js et `npm install` (une fois).
 
     npm start
+
+Pour une démo sans vos données (profil séparé, onglets neutres) : `npm run demo`. Le profil
+de démo est `%APPDATA%/NaX-demo` et ne touche jamais le profil réel.
 
 ### Structure
 

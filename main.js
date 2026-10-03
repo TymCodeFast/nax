@@ -13,6 +13,10 @@ const PIP_INJECT = (() => { try { return fs.readFileSync(path.join(__dirname, 'c
 // Nom d'app figé AVANT tout getPath : les données vivent dans %APPDATA%/NaX,
 // identique en dev et une fois installé (donc favoris/mots de passe/réglages suivent).
 app.setName('NaX');
+// Mode démo (npm run demo) : profil séparé, rempli avec des onglets neutres. Ne lit ni n'écrit
+// les données réelles (favoris, session Google, mots de passe). Réservé au dev.
+const DEMO = !app.isPackaged && process.argv.includes('--demo');
+if (DEMO) app.setPath('userData', path.join(app.getPath('appData'), 'NaX-demo'));
 // Identifiant d'application Windows : la barre des tâches (Win11) affiche l'icône du raccourci portant cet ID, pas celle de la fenêtre.
 // Packagé : l'installeur crée ce raccourci. En dev, l'exécutable est electron.exe (icône atome) : on écrit nous-mêmes
 // un raccourci « NaX (dev) » dans le menu Démarrer, avec l'ID et l'icône, pour que la barre des tâches montre NaX.
@@ -26,6 +30,7 @@ if (process.platform === 'win32' && !app.isPackaged) {
 try { app.setAppUserModelId(APP_ID); } catch {}
 // Reprise unique d'anciennes données si le dossier NaX est encore vide (rename depuis « browser »).
 (function migrateUserData() {
+  if (DEMO) return; // profil de démo : ne jamais recopier les données réelles
   try {
     const dir = app.getPath('userData');
     if (fs.existsSync(path.join(dir, 'state.json'))) return;
@@ -40,6 +45,30 @@ try { app.setAppUserModelId(APP_ID); } catch {}
     }
   } catch {}
 })();
+
+// État initial de la démo, écrit une seule fois dans le profil de démo (jamais dans le profil réel).
+const DEMO_STATE = {
+  nextId: 40, currentTabId: 10, theme: 'dark', sidebarOpen: true,
+  groups: [{ id: 1, title: 'Électrons' }, { id: 2, title: 'Voyage au Japon' }, { id: 3, title: null }],
+  tabs: [
+    { id: 10, url: 'https://www.electronjs.org/', title: 'Electron', favicon: null, groupId: 1, lastActive: Date.now(), createdAt: Date.now() },
+    { id: 11, url: 'https://www.electronjs.org/docs/latest', title: 'Electron Docs', favicon: null, groupId: 1, lastActive: Date.now(), createdAt: Date.now() },
+    { id: 12, url: 'https://fr.wikipedia.org/wiki/Kyoto', title: 'Kyoto', favicon: null, groupId: 2, lastActive: Date.now(), createdAt: Date.now() },
+    { id: 13, url: 'https://fr.wikipedia.org/wiki/Tokyo', title: 'Tokyo', favicon: null, groupId: 2, lastActive: Date.now(), createdAt: Date.now() },
+    { id: 14, url: 'https://developer.mozilla.org/fr/docs/Web/JavaScript', title: 'JavaScript — MDN', favicon: null, groupId: 3, lastActive: Date.now(), createdAt: Date.now() },
+  ],
+  favorites: [
+    { id: 30, type: 'folder', title: 'Lectures', children: [
+      { id: 31, type: 'link', title: 'MDN Web Docs', url: 'https://developer.mozilla.org/fr/' },
+      { id: 32, type: 'link', title: 'Hacker News', url: 'https://news.ycombinator.com' },
+    ] },
+    { id: 33, type: 'link', title: 'Wikipédia', url: 'https://fr.wikipedia.org' },
+  ],
+};
+if (DEMO && !fs.existsSync(path.join(app.getPath('userData'), 'state.json'))) {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(path.join(app.getPath('userData'), 'state.json'), JSON.stringify(DEMO_STATE, null, 2));
+}
 
 const RAIL = 60;          // colonne des applis
 let sidebarWidth = 264;   // colonne des onglets (redimensionnable)
@@ -2276,7 +2305,7 @@ function registerIpc() {
     availLangs: (() => { try { return session.defaultSession.availableSpellCheckerLanguages || []; } catch { return []; } })(),
     perm: { ...permDefaults },
     version: app.getVersion(),
-    electron: process.versions.electron, chrome: process.versions.chrome, packaged: app.isPackaged,
+    electron: process.versions.electron, chrome: process.versions.chrome, packaged: app.isPackaged, demo: DEMO,
   }));
   ipcMain.handle('settings-set', (_e, p = {}) => {
     let langsChanged = false, zoomChanged = false;

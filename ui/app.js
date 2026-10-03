@@ -2283,6 +2283,8 @@ api.onRenameFav((id) => {
   else render();
 });
 api.onGmailCount((n) => { gmailUnread = n || 0; if (state) renderApps(); });
+// version de développement (npm start) : logo rouge + pastille DEV
+api.settingsGet().then((s) => { if (s && s.packaged === false && !s.demo) { $('brand').classList.add('dev'); $('dev-pill').classList.remove('hidden'); } }).catch(() => {});
 
 // ---------- téléchargements ----------
 let downloadsList = [];
