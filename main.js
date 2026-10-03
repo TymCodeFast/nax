@@ -141,7 +141,9 @@ let claudeNextId = 1;
 const claudeProcs = new Map(); // id de tâche -> ChildProcess en cours
 
 // ---------- réglages configurables (persistés) ----------
-let homepage = 'https://www.google.com/';
+// page d'accueil de NaX : bouton Home, nouvel onglet (si newTabUrl est vide) et premier lancement
+const HOME_URL = pathToFileURL(path.join(__dirname, 'ui', 'home.html')).href;
+let homepage = HOME_URL;
 let newTabUrl = '';          // '' = page d'accueil ; 'blank' = page vierge ; sinon URL
 let startupMode = 'restore'; // 'restore' | 'home'
 let downloadDir = '';        // '' = dossier Téléchargements du système
@@ -312,7 +314,8 @@ function load() {
     devMode = !!s.devMode;
     if (s.searchEngine && SEARCH_ENGINES.some((e) => e.id === s.searchEngine)) searchEngine = s.searchEngine;
     if (s.perms) for (const [k, v] of Object.entries(s.perms)) permGrants.set(k, v);
-    if (typeof s.homepage === 'string' && s.homepage) homepage = s.homepage;
+    // l'ancien défaut (Google) passe à la page d'accueil de NaX ; un autre choix de l'utilisateur est conservé
+    if (typeof s.homepage === 'string' && s.homepage && s.homepage !== 'https://www.google.com/') homepage = s.homepage;
     if (typeof s.newTabUrl === 'string') newTabUrl = s.newTabUrl;
     if (s.startupMode === 'restore' || s.startupMode === 'home') startupMode = s.startupMode;
     if (typeof s.downloadDir === 'string') downloadDir = s.downloadDir;
@@ -758,6 +761,15 @@ function wakeTab(tab) {
   wc.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
   wc.on('enter-html-full-screen', () => { if (isCurrentTab(tab.id)) enterHtmlFullscreen(); });
   wc.on('leave-html-full-screen', () => leaveHtmlFullscreen());
+  // Recherche de la page d'accueil (ui/home.html) : le formulaire part en nax-home://search?q=…
+  // et la recherche suit le moteur choisi. Aucune API n'est exposée aux pages.
+  wc.on('will-navigate', (e, url) => {
+    const m = /^nax-home:\/\/search\?(.*)$/i.exec(url);
+    if (!m) return;
+    e.preventDefault();
+    const q = new URLSearchParams(m[1]).get('q');
+    if (q && q.trim()) navigateCurrent(q);
+  });
   wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
     // -3 = requête abandonnée (navigation normale), on ignore ; on ignore aussi les échecs de la page d'erreur elle-même
     if (isMainFrame && code !== -3 && !isErrorPage(failedUrl) && failedUrl && failedUrl !== 'about:blank') loadErrorPage(tab, failedUrl, code, desc);
