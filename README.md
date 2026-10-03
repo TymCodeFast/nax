@@ -187,10 +187,10 @@ Prérequis de build : `npm install` (une fois).
 
         npm run dist
 
-   Résultat : `dist/NaX Setup 1.0.0.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`
+   Résultat : `dist/NaX Setup 0.1.0.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`
    (version décompressée, lançable telle quelle).
 
-2. Installer : double-clic sur `NaX Setup 1.0.0.exe`. Choix du dossier, raccourcis menu
+2. Installer : double-clic sur `NaX Setup 0.1.0.exe`. Choix du dossier, raccourcis menu
    Démarrer et bureau créés. L'app n'est pas signée, donc Windows SmartScreen peut avertir :
    « Informations complémentaires » puis « Exécuter quand même ».
 
@@ -218,8 +218,8 @@ Réglages → À propos et les mises à jour automatiques. Schéma [semver](http
 | Numéro | Étape |
 |---|---|
 | `0.0.x` | bêta fermée (historique) : `0.0.1` |
-| `0.1.0`, `0.2.0`… | bêta publique |
-| `1.0.0` | **première version stable** (actuelle) |
+| `0.1.0`, `0.2.0`… | **bêta** (actuelle) |
+| `1.0.0` | première version stable |
 
 L'auto-update ne propose **jamais une version inférieure** à celle installée : une copie
 de NaX installée en `0.1.0` (ancien numéro, avant la bêta fermée) ne verra pas les `0.0.x`.
