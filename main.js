@@ -2733,7 +2733,8 @@ function initAutoUpdate() {
     setUpdateState({ state: 'downloading', version: updateState.version, percent: 0 });
     autoUpdater.downloadUpdate().catch(() => {});
   });
-  ipcMain.on('update-install', () => autoUpdater.quitAndInstall());
+  // silencieux (pas d'assistant d'installation) et relance de NaX à la fin ; l'installeur manuel garde son assistant
+  ipcMain.on('update-install', () => autoUpdater.quitAndInstall(true, true));
   ipcMain.on('update-dismiss', () => hideUpdate());
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
   setTimeout(check, 8000);                     // au démarrage
