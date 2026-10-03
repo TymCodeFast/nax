@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Mise à jour</title>
+<style>
+  /* fond plein et bordure marquée : la bulle doit se détacher de la page, claire comme sombre */
+  :root { --bg: #ffffff; --fg: #1b2230; --muted: #566074; --line: rgba(15,23,42,.28);
+    --accent: #2f6fe4; --accent-fg: #fff; --track: rgba(15,23,42,.14);
+    --shadow: 0 12px 32px rgba(0,0,0,.38), 0 2px 6px rgba(0,0,0,.22); }
+  @media (prefers-color-scheme: dark) { :root { --bg: #232a3a; --fg: #f3f5f9; --muted: #b4bccd;
+    --line: rgba(255,255,255,.3); --track: rgba(255,255,255,.18);
+    --shadow: 0 12px 32px rgba(0,0,0,.6), 0 2px 6px rgba(0,0,0,.4); } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* marge autour de la carte : l'ombre n'est pas rognée par le bord de la fenêtre */
+  body { display: flex; align-items: flex-end; justify-content: flex-end; padding: 16px;
+    font: 400 13px Inter, system-ui, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; color: var(--fg); }
+  .card { width: 348px; padding: 14px 16px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line);
+    box-shadow: var(--shadow); animation: in 220ms ease both; }
+  @keyframes in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+  .head { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .title { flex: 1; font-weight: 600; font-size: 13.5px; }
+  .x { background: none; border: 0; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+  .x:hover { color: var(--fg); }
+  .text { margin: 6px 0 0 18px; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+  .bar { margin: 12px 0 0 18px; height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .actions:empty { display: none; }
+  button.btn { font: 500 12.5px Inter, system-ui, "Segoe UI", sans-serif; padding: 6px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+  button.btn:hover { filter: brightness(1.1); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="dot"></span><span class="title" id="title"></span><button class="x" id="x" title="Fermer">✕</button></div>
+  <div class="text" id="text"></div>
+  <div class="bar hidden" id="bar"><i id="fill"></i></div>
+  <div class="actions" id="actions"></div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const btn = (label, primary, fn) => {
+    const b = document.createElement('button');
+    b.className = 'btn' + (primary ? ' primary' : '');
+    b.textContent = label;
+    b.onclick = fn;
+    return b;
+  };
+  $('x').onclick = () => updateapi.dismiss();
+
+  // s = { state: 'available' | 'downloading' | 'ready' | 'error', version, percent? }
+  function render(s) {
+    const actions = [];
+    $('bar').classList.add('hidden');
+    if (s.state === 'available') {
+      $('title').textContent = 'Mise à jour disponible';
+      $('text').textContent = 'NaX ' + s.version + ' est disponible.';
+      actions.push(btn('Plus tard', false, () => updateapi.dismiss()), btn('Télécharger', true, () => updateapi.download()));
+    } else if (s.state === 'downloading') {
+      $('title').textContent = 'Téléchargement de NaX ' + s.version;
+      $('text').textContent = (s.percent || 0) + ' %';
+      $('bar').classList.remove('hidden');
+      $('fill').style.width = (s.percent || 0) + '%';
+    } else if (s.state === 'ready') {
+      $('title').textContent = 'NaX ' + s.version + ' est prêt';
+      $('text').textContent = 'Redémarrez pour installer la mise à jour.';
+      actions.push(btn('Plus tard', false, () => updateapi.dismiss()), btn('Redémarrer', true, () => updateapi.install()));
+    } else if (s.state === 'error') {
+      $('title').textContent = 'Téléchargement impossible';
+      $('text').textContent = 'Vérifiez votre connexion, puis réessayez.';
+      actions.push(btn('Fermer', false, () => updateapi.dismiss()), btn('Réessayer', true, () => updateapi.download()));
+    }
+    $('actions').replaceChildren(...actions);
+  }
+  updateapi.onState(render);
+</script>
+</body>
+</html>

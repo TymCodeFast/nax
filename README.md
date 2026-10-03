@@ -112,8 +112,9 @@ Vos données (favoris, mots de passe, réglages, onglets) sont stockées dans
 ### Mises à jour automatiques
 
 NaX vérifie au démarrage, puis toutes les 6 heures, si une version plus récente est publiée.
-Si oui, il la télécharge en arrière-plan et vous propose de redémarrer, ou d'attendre la
-prochaine fermeture. Rien à faire de votre côté.
+Si oui, une bulle discrète en bas à droite vous le propose. Rien ne se télécharge sans votre
+accord : un clic sur « Télécharger », puis « Redémarrer » pour installer. Vous pouvez aussi
+choisir « Plus tard ».
 
 ---
 

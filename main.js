@@ -2527,8 +2527,8 @@ function createWindow() {
   chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js') } });
   win.contentView.addChildView(chrome);
   layout();
-  win.on('resize', () => { layout(); hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); });
-  win.on('move', () => { hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); });
+  win.on('resize', () => { layout(); hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); syncUpdateBounds(); });
+  win.on('move', () => { hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); syncUpdateBounds(); });
   win.on('hide', () => { hidePeek(); hideMenu(); hideTip(); hideSuggest(); });
   win.on('blur', () => hideTip());
   win.on('close', () => { quitting = true; });
@@ -2653,23 +2653,59 @@ async function makeDefaultBrowser() {
 }
 
 // Mise à jour automatique via les Releases GitHub (dépôt public défini dans build.publish).
-// Ne fait rien en dev : ne s'active que sur l'app installée.
+// Rien ne se télécharge sans l'accord de l'utilisateur : une bulle en bas à droite propose de
+// télécharger, puis de redémarrer. Ne fait rien en dev : ne s'active que sur l'app installée.
+let updateWin = null, updateState = null;
+const UPDATE_W = 380, UPDATE_H = 170; // carte 348 px + marge de 16 px pour l'ombre
+function ensureUpdateWin() {
+  if (updateWin && !updateWin.isDestroyed()) return updateWin;
+  updateWin = new BrowserWindow({
+    width: UPDATE_W, height: UPDATE_H, show: false, frame: false, transparent: true, resizable: false, movable: false,
+    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
+    backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'update-preload.js') },
+  });
+  lockUiContents(updateWin.webContents);
+  updateWin.loadFile(path.join(__dirname, 'ui', 'update.html'));
+  return updateWin;
+}
+// coin inférieur droit de la fenêtre principale, par-dessus la page
+function syncUpdateBounds() {
+  if (!updateWin || updateWin.isDestroyed() || !win) return;
+  const b = win.getContentBounds();
+  updateWin.setBounds({ x: b.x + b.width - UPDATE_W, y: b.y + b.height - UPDATE_H, width: UPDATE_W, height: UPDATE_H });
+}
+function setUpdateState(s) {
+  updateState = s;
+  const w = ensureUpdateWin(); syncUpdateBounds();
+  const send = () => { try { w.webContents.send('update-state', s); } catch {} if (!w.isVisible()) w.showInactive(); };
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+}
+function hideUpdate() { updateState = null; if (updateWin && !updateWin.isDestroyed()) updateWin.hide(); }
 function initAutoUpdate() {
   if (!app.isPackaged) return;
   let autoUpdater;
   try { ({ autoUpdater } = require('electron-updater')); } catch { return; }
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-downloaded', async (info) => {
-    const res = await dialog.showMessageBox(win, {
-      type: 'info', buttons: ['Redémarrer maintenant', 'Plus tard'], defaultId: 0, cancelId: 1,
-      title: 'Mise à jour de NaX',
-      message: `NaX ${info.version} est prêt.`,
-      detail: 'La mise à jour s’installera au redémarrage.',
-    });
-    if (res.response === 0) autoUpdater.quitAndInstall();
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true; // une mise à jour déjà téléchargée s'installe à la fermeture
+  autoUpdater.on('update-available', (info) => {
+    // une vérification périodique ne doit pas interrompre un téléchargement ou une bulle « prêt »
+    if (updateState && (updateState.state === 'downloading' || updateState.state === 'ready')) return;
+    setUpdateState({ state: 'available', version: info.version });
   });
-  autoUpdater.on('error', () => {}); // silencieux : pas d'internet, dépôt absent, etc.
+  autoUpdater.on('download-progress', (p) => {
+    if (updateState) setUpdateState({ state: 'downloading', version: updateState.version, percent: Math.round(p.percent) });
+  });
+  autoUpdater.on('update-downloaded', (info) => setUpdateState({ state: 'ready', version: info.version }));
+  autoUpdater.on('error', () => { // silencieux sauf si l'utilisateur attendait un téléchargement
+    if (updateState && updateState.state === 'downloading') setUpdateState({ state: 'error', version: updateState.version });
+  });
+  ipcMain.on('update-download', () => {
+    if (!updateState) return;
+    setUpdateState({ state: 'downloading', version: updateState.version, percent: 0 });
+    autoUpdater.downloadUpdate().catch(() => {});
+  });
+  ipcMain.on('update-install', () => autoUpdater.quitAndInstall());
+  ipcMain.on('update-dismiss', () => hideUpdate());
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
   setTimeout(check, 8000);                     // au démarrage
   setInterval(check, 6 * 60 * 60 * 1000);      // puis toutes les 6 h

@@ -1497,7 +1497,7 @@ async function renderAboutPane() {
   $('about-channel').textContent = channel;
   $('about-engine').textContent = 'Electron ' + s.electron + ' · Chromium ' + s.chrome;
   $('about-update-desc').textContent = s.packaged
-    ? 'NaX cherche une version plus récente au démarrage, puis toutes les 6 h, et te propose de redémarrer pour l’installer.'
+    ? 'NaX cherche une version plus récente au démarrage, puis toutes les 6 h, et te propose de la télécharger d’un clic.'
     : 'Désactivées en mode développement (l’appli lancée avec npm start).';
   aboutText = 'NaX v' + s.version + ' (' + channel + ') — Electron ' + s.electron + ', Chromium ' + s.chrome + ' — ' + (navigator.userAgentData && navigator.userAgentData.platform || navigator.platform);
 }
