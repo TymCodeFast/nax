@@ -1,14 +1,31 @@
-# NaX
+<p align="center">
+  <img src="assets/icon.png" width="96" alt="Logo NaX">
+</p>
 
-**Le navigateur qui range vos onglets à votre place.**
+<h1 align="center">NaX</h1>
+
+<p align="center">
+  <b>Le navigateur qui range vos onglets à votre place.</b><br>
+  Open source · basé sur Chromium · Windows 10 et 11
+</p>
+
+<p align="center">
+  <a href="https://github.com/TymCodeFast/nax/releases/latest"><img src="https://img.shields.io/github/v/release/TymCodeFast/nax?label=version&color=2f6fe4" alt="Dernière version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-22c55e" alt="Licence MIT"></a>
+  <img src="https://img.shields.io/badge/gratuit-oui-0ea5e9" alt="Gratuit">
+</p>
+
+<p align="center">
+  <a href="https://github.com/TymCodeFast/nax/releases/latest"><b>⬇ Télécharger NaX</b></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/apercu.png" alt="Aperçu de NaX : onglets groupés à gauche, favoris en bas, page web au centre" width="900">
+</p>
 
 NaX est un navigateur **open source** basé sur Chromium. Il organise vos onglets pendant que
 vous travaillez : les pages ouvertes depuis une autre restent ensemble, les onglets oubliés
 partent en veille, et rien ne disparaît jamais.
-
-[**Télécharger NaX**](https://github.com/TymCodeFast/nax/releases/latest) · Windows 10 et 11 · Gratuit · Licence MIT
-
-![NaX : onglets groupés à gauche, favoris en bas, page web au centre](docs/screenshots/apercu.png)
 
 ---
 
@@ -122,6 +139,9 @@ choisir « Plus tard ».
 
 ## Raccourcis clavier
 
+<details>
+<summary>Voir tous les raccourcis</summary>
+
 | Touche | Action |
 |---|---|
 | Ctrl+T / Ctrl+W | nouvel onglet / fermer |
@@ -145,6 +165,8 @@ choisir « Plus tard ».
 | Ctrl+= / Ctrl+- / Ctrl+0 | zoom |
 | F11 | plein écran |
 | F12 / Ctrl+Shift+I | outils de développement (page / interface) |
+
+</details>
 
 ---
 
