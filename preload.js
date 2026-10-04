@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
   onAuthRequest: on('auth-request'), authReply: (r) => ipcRenderer.send('auth-reply', r),
   onUiCommand: on('ui-command'),
   onDisplayPick: on('display-pick'), displayChoose: (r) => ipcRenderer.send('display-choose', r),
+  changelogGet: () => ipcRenderer.invoke('changelog-get'),
   defaultBrowserStatus: () => ipcRenderer.invoke('default-browser-status'),
   defaultBrowserSet: () => ipcRenderer.invoke('default-browser-set'),
 });

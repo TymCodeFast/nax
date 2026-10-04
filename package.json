@@ -38,6 +38,7 @@
       "content-preload.js",
       "update-preload.js",
       "ui/**/*",
+      "CHANGELOG.md",
       "assets/icon.ico",
       "assets/icon.png"
     ],
