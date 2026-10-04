@@ -451,7 +451,7 @@ function renderNav() {
   $('reload').querySelector('use').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
   $('reload').title = n.loading ? 'Arrêter' : 'Recharger (Ctrl+R)';
   navbar.classList.toggle('loading', !!n.loading);
-  const isHome = n.url === HOME;
+  const isHome = n.url === HOME || /\/ui\/home\.html$/.test(n.url || ''); // page d'accueil NaX : barre vide, comme un nouvel onglet
   omnibox.classList.toggle('secure', !isHome && n.url.startsWith('https://'));
   $('omni-icon').querySelector('use').setAttribute('href', !isHome && n.url.startsWith('https://') ? '#i-lock' : '#i-globe');
   if (!urlFocused) {
