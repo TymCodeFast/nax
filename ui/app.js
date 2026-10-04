@@ -451,7 +451,7 @@ function renderNav() {
   $('reload').querySelector('use').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
   $('reload').title = n.loading ? 'Arrêter' : 'Recharger (Ctrl+R)';
   navbar.classList.toggle('loading', !!n.loading);
-  const isHome = n.url === HOME;
+  const isHome = n.url === HOME || /\/ui\/home\.html$/.test(n.url || ''); // page d'accueil NaX : barre vide, comme un nouvel onglet
   omnibox.classList.toggle('secure', !isHome && n.url.startsWith('https://'));
   $('omni-icon').querySelector('use').setAttribute('href', !isHome && n.url.startsWith('https://') ? '#i-lock' : '#i-globe');
   if (!urlFocused) {
@@ -2283,6 +2283,15 @@ api.onRenameFav((id) => {
   else render();
 });
 api.onGmailCount((n) => { gmailUnread = n || 0; if (state) renderApps(); });
+// Changelog (CHANGELOG.md du dépôt) dans Réglages → À propos, rendu en Markdown et nettoyé comme les autres aperçus
+api.changelogGet().then((md) => {
+  const box = $('changelog');
+  if (!box) return;
+  let html = '';
+  try { html = window.marked && md ? window.marked.parse(md) : ''; } catch {}
+  if (html) box.innerHTML = '<div class="md-render">' + sanitizeHtml(html) + '</div>';
+  else box.textContent = 'Changelog indisponible.';
+}).catch(() => {});
 // version de développement (npm start) : logo rouge + pastille DEV
 api.settingsGet().then((s) => { if (s && s.packaged === false && !s.demo) { $('brand').classList.add('dev'); $('dev-pill').classList.remove('hidden'); } }).catch(() => {});
 

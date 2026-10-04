@@ -1,7 +1,7 @@
 {
   "name": "nax",
   "productName": "NaX",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "NaX — navigateur open source (Chromium via Electron) pensé pour l'organisation",
   "author": "NaX",
   "license": "MIT",
@@ -38,6 +38,7 @@
       "content-preload.js",
       "update-preload.js",
       "ui/**/*",
+      "CHANGELOG.md",
       "assets/icon.ico",
       "assets/icon.png"
     ],
