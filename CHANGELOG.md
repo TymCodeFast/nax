@@ -3,11 +3,12 @@
 Toutes les évolutions notables de NaX sont listées ici, de la plus récente à la plus ancienne.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les numéros suivent [semver](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [0.1.5] - 2026-10-04
 
 ### Ajouté
 - Page d'accueil avec une barre de recherche, cible du bouton Accueil et des nouveaux onglets. La recherche suit le moteur choisi.
 - Mode démo (`npm run demo`) : profil séparé, onglets neutres, pour les captures et les démonstrations.
+- Changelog visible dans l'app (Réglages → À propos) et dans le dépôt.
 
 ### Modifié
 - En développement, le logo est rouge et une pastille DEV le signale. Masqués en démo et dans l'app installée.
