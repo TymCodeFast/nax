@@ -5,6 +5,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les nu
 
 ## [Non publié]
 
+## [0.2.0] - 2026-10-05
+
 ### Ajouté
 - Interface en anglais (par défaut) ou en français : Paramètres → Langues → « Langue du navigateur ». Le changement s'applique tout de suite, sans redémarrer. Ajouter une langue = un fichier dans `ui/locales/` (voir `languages.js`).
 - Paramètres → « Fonctionnalités bêta » : un interrupteur active ou masque toutes les fonctionnalités en bêta (désactivées par défaut).
