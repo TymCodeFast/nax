@@ -5,7 +5,7 @@ const on = (ch) => (cb) => ipcRenderer.on(ch, (_e, ...a) => cb(...a));
 contextBridge.exposeInMainWorld('api', {
   navigate: send('navigate'), back: send('back'), forward: send('forward'), reload: send('reload'), home: send('home'), focusPage: send('focus-page'),
   tabNew: send('tab-new'), tabActivate: send('tab-activate'), tabClose: send('tab-close'), tabContext: send('tab-context'),
-  tabNewPrivate: send('tab-new-private'), tabSetSession: (o) => ipcRenderer.send('tab-set-session', o), newtabMenu: send('newtab-menu'),
+  tabNewPrivate: send('tab-new-private'), tabSetSession: (o) => ipcRenderer.send('tab-set-session', o), newtabMenu: send('newtab-menu'), brandMenu: send('brand-menu'),
   groupRename: send('group-rename'), groupToggle: send('group-toggle'), groupClose: send('group-close'),
   tabMove: send('tab-move'), groupMove: send('group-move'),
   tabClosePair: send('tab-close-pair'), tabMovePair: send('tab-move-pair'),

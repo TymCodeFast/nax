@@ -75,6 +75,11 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
+  // Genre de fenêtre : seule la principale porte le rail d'applis et Claude ; une fenêtre privée prend sa teinte propre.
+  const kind = state.winKind || 'main';
+  document.body.classList.toggle('win-main', kind === 'main');
+  document.body.classList.toggle('win-secondary', kind === 'secondary');
+  document.body.classList.toggle('win-private', kind === 'private');
   renderApps(); renderRailPins(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
   // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
   const showPill = !!state.navPrivate && !(state.split && state.split.active);
@@ -676,6 +681,10 @@ api.onSuggestChoose((idx) => { if (omniItems[idx]) commitOmni(omniItems[idx], fa
 
 $('tab-new').onclick = () => { closeOverlay(); api.tabNew(); };
 $('tab-new-opts').onclick = () => { closeOverlay(); api.newtabMenu(); };
+// Logo NaX = menu de l'application (clic gauche ou droit, Entrée/Espace au clavier)
+$('brand').onclick = () => api.brandMenu();
+$('brand').oncontextmenu = (e) => { e.preventDefault(); api.brandMenu(); };
+$('brand').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); api.brandMenu(); } };
 // Type de session d'un onglet d'après sa partition.
 function sessionKind(t) {
   const p = t && t.partition ? String(t.partition) : '';
@@ -2204,6 +2213,8 @@ api.onUiCommand((cmd) => {
   else if (cmd === 'downloads') { if (openOverlay === 'downloads') closeOverlay(); else $('downloads-btn').click(); }
   else if (cmd === 'downloads-open') { if (openOverlay !== 'downloads') $('downloads-btn').click(); } // clic sur la notification de téléchargement
   else if (cmd === 'privacy') openSettings('privacy');
+  else if (cmd === 'settings') { if (openOverlay === 'settings') closeOverlay(); else openSettings(); }
+  else if (cmd === 'about') openSettings('about');
 });
 
 // Authentification HTTP (intranet, routeur, proxy…) : une demande à la fois, posée par le processus principal.
