@@ -75,6 +75,11 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
+  // Genre de fenêtre : seule la principale porte le rail d'applis et Claude ; une fenêtre privée prend sa teinte propre.
+  const kind = state.winKind || 'main';
+  document.body.classList.toggle('win-main', kind === 'main');
+  document.body.classList.toggle('win-secondary', kind === 'secondary');
+  document.body.classList.toggle('win-private', kind === 'private');
   renderApps(); renderRailPins(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
   // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
   const showPill = !!state.navPrivate && !(state.split && state.split.active);
@@ -676,6 +681,10 @@ api.onSuggestChoose((idx) => { if (omniItems[idx]) commitOmni(omniItems[idx], fa
 
 $('tab-new').onclick = () => { closeOverlay(); api.tabNew(); };
 $('tab-new-opts').onclick = () => { closeOverlay(); api.newtabMenu(); };
+// Logo NaX = menu de l'application (clic gauche ou droit, Entrée/Espace au clavier)
+$('brand').onclick = () => api.brandMenu();
+$('brand').oncontextmenu = (e) => { e.preventDefault(); api.brandMenu(); };
+$('brand').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); api.brandMenu(); } };
 // Type de session d'un onglet d'après sa partition.
 function sessionKind(t) {
   const p = t && t.partition ? String(t.partition) : '';
@@ -2204,7 +2213,10 @@ api.onFocusUrl(() => { closeOverlay(); urlEl.focus(); });
 api.onUiCommand((cmd) => {
   if (cmd === 'history') { if (openOverlay === 'history') closeOverlay(); else $('history-btn').click(); }
   else if (cmd === 'downloads') { if (openOverlay === 'downloads') closeOverlay(); else $('downloads-btn').click(); }
+  else if (cmd === 'downloads-open') { if (openOverlay !== 'downloads') $('downloads-btn').click(); } // clic sur la notification de téléchargement
   else if (cmd === 'privacy') openSettings('privacy');
+  else if (cmd === 'settings') { if (openOverlay === 'settings') closeOverlay(); else openSettings(); }
+  else if (cmd === 'about') openSettings('about');
 });
 
 // Authentification HTTP (intranet, routeur, proxy…) : une demande à la fois, posée par le processus principal.
@@ -2375,16 +2387,27 @@ function renderDownloads() {
     box.appendChild(row);
   }
 }
+let dlBadgeActive = 0;
 function updateDlBadge() {
-  const active = downloadsList.filter((d) => d.state === 'progressing' || d.state === 'paused').length;
-  setText($('dl-badge'), active ? String(active) : '');
-  $('downloads-btn').classList.toggle('active-dl', active > 0);
+  const act = downloadsList.filter((d) => d.state === 'progressing' || d.state === 'paused');
+  const active = act.length;
+  const badge = $('dl-badge'), btn = $('downloads-btn');
+  setText(badge, active ? String(active) : '');
+  btn.classList.toggle('active-dl', active > 0);
+  // anneau de progression : agrégé sur les téléchargements actifs ; indéterminé dès qu'une taille est inconnue
+  const known = active > 0 && act.every((d) => d.total > 0);
+  const total = act.reduce((n, d) => n + d.total, 0), received = act.reduce((n, d) => n + d.received, 0);
+  btn.classList.toggle('indet', active > 0 && !known);
+  btn.style.setProperty('--dl-p', (known && total ? Math.round(100 * received / total) : 0) + '%');
+  if (active > dlBadgeActive) { badge.classList.remove('bump'); void badge.offsetWidth; badge.classList.add('bump'); } // nouveau téléchargement : la pastille « pop »
+  dlBadgeActive = active;
 }
 $('downloads-btn').onclick = async () => { downloadsList = await api.dlList(); renderDownloads(); showOverlay('downloads'); };
 $('downloads-close').onclick = closeOverlay;
 $('dl-clear').onclick = () => api.dlClear();
+// la notification flottante de progression vit dans ui/tip.html (overlay toujours au-dessus de la page web active,
+// alors que ce document de chrome est couvert par la WebContentsView de l'onglet) ; cf. main.js sendDownloads().
 api.onDownloads((list) => { downloadsList = list || []; updateDlBadge(); if (openOverlay === 'downloads') renderDownloads(); });
-api.onDownloadStarted(() => { toast('Téléchargement démarré'); });
 
 // ---------- tooltips personnalisés (remplacent les infobulles natives) ----------
 let tipTimer = null, tipEl = null;
