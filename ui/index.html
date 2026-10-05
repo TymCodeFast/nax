@@ -128,8 +128,8 @@
   <main id="main">
     <div id="navbar">
       <div class="nav-group">
-        <button id="back" class="nav-btn" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
-        <button id="forward" class="nav-btn" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
+        <button id="back" class="nav-btn" data-kb="back" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
+        <button id="forward" class="nav-btn" data-kb="forward" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
         <button id="reload" class="nav-btn" title="Recharger (Ctrl+R)"><svg><use href="#i-reload"/></svg></button>
       </div>
       <div id="omnibox">
@@ -142,7 +142,7 @@
       <span id="private-pill" class="hidden"><svg><use href="#i-incognito"/></svg><span>Privé</span></span>
       <button id="claude-btn" class="nav-btn" title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
       <button id="split-btn" class="nav-btn" title="Diviser la vue"><svg><use href="#i-split"/></svg></button>
-      <button id="home" class="nav-btn" title="Accueil (Google)"><svg><use href="#i-home"/></svg></button>
+      <button id="home" class="nav-btn" data-kb="home" title="Accueil (Alt+Début)"><svg><use href="#i-home"/></svg></button>
       <div id="progress"></div>
     </div>
     <div id="split-tb-right" class="split-tb hidden">
