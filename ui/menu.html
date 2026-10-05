@@ -32,6 +32,9 @@
   .item.sel { box-shadow: inset 0 0 0 1px var(--line); }
   .item.danger { color: var(--danger); }
   .item.disabled { color: var(--dim); pointer-events: none; }
+  .item .lbl { flex: 1; }
+  /* raccourci clavier, à droite : discret, pour que le menu serve aussi d'aide-mémoire */
+  .item .hint { margin-left: 18px; font-size: 11.5px; font-weight: 450; color: var(--muted); letter-spacing: .01em; }
   .sep { height: 1px; margin: 5px 8px; background: var(--line); }
 </style>
 </head>
@@ -55,7 +58,8 @@
       if (it.sep) { const s = document.createElement('div'); s.className = 'sep'; menuEl.appendChild(s); return; }
       const row = document.createElement('div');
       row.className = 'item' + (it.danger ? ' danger' : '') + (it.enabled ? '' : ' disabled');
-      row.textContent = it.label;
+      const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = it.label; row.appendChild(lbl);
+      if (it.hint) { const h = document.createElement('span'); h.className = 'hint'; h.textContent = it.hint; row.appendChild(h); }
       row.dataset.idx = it.idx;
       if (it.enabled) {
         row.onmouseenter = () => setSel([...menuEl.querySelectorAll('.item')].indexOf(row));
