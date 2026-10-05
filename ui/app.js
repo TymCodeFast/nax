@@ -1000,6 +1000,7 @@ function showOverlay(id, opts) {
   const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
   if (openOverlay === 'auth' && id !== 'auth') settleAuth(null); // un autre panneau remplace la demande : annulée
   if (openOverlay === 'display-pick' && id !== 'display-pick') settleDisplay(null);
+  if (openOverlay === 'perm-prompt' && id !== 'perm-prompt') settlePerm(null);
   if (openOverlay) { clearTimeout(overlayCloseTimer); $(openOverlay).classList.remove('closing'); $(openOverlay).classList.add('hidden'); }
   overlayParent = over ? openOverlay : null;
   openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
@@ -1011,6 +1012,7 @@ function closeOverlay() {
   if (node.classList.contains('closing')) return; // fermeture déjà en cours
   if (id === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
   if (id === 'display-pick') settleDisplay(null);
+  if (id === 'perm-prompt') settlePerm(null);
   node.classList.add('closing');
   clearTimeout(overlayCloseTimer);
   overlayCloseTimer = setTimeout(() => {
@@ -2239,6 +2241,51 @@ $('auth-form').onsubmit = (e) => {
   closeOverlay();
 };
 $('auth-cancel').onclick = () => closeOverlay();
+
+// Demandes d'un site (caméra, micro, position, notifications… ou ouvrir une autre appli) : une à la fois,
+// posées par le processus principal. Échap / clic à côté = demande écartée (refus non mémorisé).
+const PERM_UI = {
+  media: { ico: 'i-camera', title: 'Caméra et micro' },
+  geolocation: { ico: 'i-pin', title: 'Position' },
+  notifications: { ico: 'i-bell', title: 'Notifications' },
+  'midi-sysex': { ico: 'i-settings', title: 'Périphériques MIDI' },
+  'clipboard-read': { ico: 'i-copy', title: 'Presse-papiers' },
+};
+let permReq = null;
+function settlePerm(choice) {
+  if (!permReq) return;
+  const id = permReq.id; permReq = null;
+  api.permReply(choice ? { id, choice, remember: $('pp-remember').checked } : { id });
+}
+api.onPermPrompt((req) => {
+  if (permReq) settlePerm(null);
+  permReq = req;
+  const external = req.kind === 'external';
+  const ui = external ? { ico: 'i-link', title: 'Ouvrir une application' } : (PERM_UI[req.permission] || { ico: 'i-shield', title: 'Autorisation' });
+  $('pp-ico').setAttribute('href', '#' + ui.ico);
+  $('pp-title').textContent = ui.title;
+  $('pp-msg').textContent = req.message;
+  $('pp-detail').textContent = req.detail || '';
+  $('pp-detail').classList.toggle('hidden', !req.detail);
+  $('pp-remember').checked = false;
+  $('pp-remember-label').textContent = req.remember || '';
+  $('pp-remember-row').classList.toggle('hidden', !req.remember);
+  const buttons = external
+    ? [['cancel', 'Annuler'], ['open', 'Ouvrir', true]]
+    : [['block', 'Bloquer'], ['once', 'Autoriser cette fois'], ['always', 'Toujours autoriser', true]];
+  const bar = $('pp-actions'); bar.textContent = '';
+  for (const [choice, label, primary] of buttons) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    if (primary) b.className = 'primary';
+    b.dataset.choice = choice;
+    b.onclick = () => { settlePerm(choice === 'cancel' ? null : choice); closeOverlay(); };
+    bar.appendChild(b);
+  }
+  showOverlay('perm-prompt', { over: true });
+  // Entrée = « cette fois » (jamais une autorisation permanente par réflexe)
+  setTimeout(() => { const b = bar.querySelector(external ? '[data-choice="open"]' : '[data-choice="once"]'); if (b) b.focus(); }, 0);
+});
 
 // Partage d'écran : la page (Meet, Teams…) a appelé getDisplayMedia ; on choisit un écran ou une fenêtre.
 let dpReq = null, dpSel = null;

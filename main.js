@@ -726,6 +726,31 @@ function answerAuth({ id, username, password, cancel } = {}) {
 }
 
 // ---------- permissions (caméra, micro, notifications, géoloc…) ----------
+// Les demandes sont posées une par une dans une modale de l'interface (même DA que le reste de l'appli).
+// Elle s'affiche dans la fenêtre de l'onglet demandeur (wc), à défaut dans la fenêtre active.
+// Réponse : { choice, remember } ; null si aucune fenêtre n'est disponible ou si la demande est écartée.
+const promptQueue = [];
+let promptSeq = 1;
+function askUi(req, wc) {
+  return new Promise((resolve) => {
+    promptQueue.push({ req: { ...req, id: promptSeq++ }, wc, resolve });
+    if (promptQueue.length === 1) showNextPrompt();
+  });
+}
+function showNextPrompt() {
+  const p = promptQueue[0];
+  if (!p) return;
+  const w = (p.wc && !p.wc.isDestroyed() && windowOfPage(p.wc)) || focusedWin();
+  if (!w || w.isDestroyed()) { promptQueue.shift().resolve(null); return showNextPrompt(); }
+  w.sendChrome('perm-prompt', p.req);
+}
+function answerPrompt({ id, choice, remember } = {}) {
+  const i = promptQueue.findIndex((p) => p.req.id === id);
+  if (i < 0) return;
+  const [p] = promptQueue.splice(i, 1);
+  p.resolve(choice ? { choice: String(choice), remember: !!remember } : null);
+  if (i === 0) showNextPrompt();
+}
 const PERM_LABELS = { media: 'utiliser votre caméra et/ou votre micro', 'clipboard-read': 'lire le presse-papiers', geolocation: 'accéder à votre position', notifications: 'afficher des notifications', 'midi-sysex': 'accéder à vos périphériques MIDI', pointerLock: 'verrouiller le pointeur' };
 const PERM_ASK = new Set(['media', 'geolocation', 'notifications', 'midi-sysex', 'clipboard-read']);
 const PERM_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'idle-detection', 'background-sync']);
@@ -738,21 +763,20 @@ const isWebScheme = (u) => /^(https?|about|view-source|data|blob|file):/i.test(u
 const isExternalScheme = (u) => /^[a-z][a-z0-9+.-]*:/i.test(u || '') && !isWebScheme(u);
 // Demande avant d'ouvrir une autre appli depuis une page (comme Chrome), avec « toujours autoriser » par site.
 // grants : décisions mémorisées de la session (persistées pour les sessions conservées, en mémoire pour le privé).
-async function confirmExternal(origin, url, grants) {
+async function confirmExternal(origin, url, grants, wc) {
   let scheme; try { scheme = new URL(url).protocol.toLowerCase(); } catch { return false; }
   if (BLOCKED_SCHEMES.has(scheme)) return false;
   const key = origin + '|openExternal:' + scheme;
   if (grants.get(key) === true) return true;
   let host = ''; try { host = new URL(origin).hostname; } catch {}
   const what = EXTERNAL_APPS[scheme] || `l’application associée aux liens « ${scheme} »`;
-  const res = await dialog.showMessageBox(dialogParent(), {
-    type: 'none', title: 'Ouvrir une application', icon: path.join(__dirname, 'assets', 'icon.png'),
-    message: `${host || 'Cette page'} veut ouvrir ${what}.`, detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
-    buttons: ['Ouvrir', 'Annuler'], defaultId: 0, cancelId: 1, noLink: true,
-    ...(host ? { checkboxLabel: `Toujours autoriser ${host} à ouvrir ce type de lien`, checkboxChecked: false } : {}),
-  }).catch(() => ({ response: 1 }));
-  if (res.response !== 0) return false;
-  if (res.checkboxChecked && host) { grants.set(key, true); if (grants === permGrants) persist(); }
+  const res = await askUi({
+    kind: 'external', host: host || 'Cette page', message: `${host || 'Cette page'} veut ouvrir ${what}.`,
+    detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
+    remember: host ? `Toujours autoriser ${host} à ouvrir ce type de lien` : '',
+  }, wc);
+  if (!res || res.choice !== 'open') return false;
+  if (res.remember && host) { grants.set(key, true); if (grants === permGrants) persist(); }
   return true;
 }
 const sessionGrants = new WeakMap(); // session non conservée (privée) → décisions en mémoire, oubliées à la fermeture
@@ -764,15 +788,16 @@ function grantsOf(ses) {
 // Lien externe ouvert en nouvel onglet (target=_blank) : pas d'onglet vide, on passe directement à l'appli.
 async function openExternalFrom(wc, url) {
   const origin = wc && !wc.isDestroyed() ? originOf(wc.getURL()) : '';
-  if (await confirmExternal(origin, url, grantsOf(wc && !wc.isDestroyed() ? wc.session : null))) shell.openExternal(url).catch(() => {});
+  if (await confirmExternal(origin, url, grantsOf(wc && !wc.isDestroyed() ? wc.session : null), wc)) shell.openExternal(url).catch(() => {});
 }
 function initPermissions(ses) {
   const grants = grantsOf(ses);
+  const onceGrants = new Set(); // « autoriser cette fois » : en mémoire seulement
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (PERM_ALLOW.has(permission)) return callback(true);
     if (permission === 'openExternal') {
       const origin = originOf((details && details.requestingUrl) || (wc && wc.getURL()));
-      return callback(await confirmExternal(origin, (details && details.externalURL) || '', grants));
+      return callback(await confirmExternal(origin, (details && details.externalURL) || '', grants, wc));
     }
     // getDisplayMedia passe d'abord par une demande « media » SANS périphérique (mediaTypes vide) :
     // le vrai consentement est le sélecteur d'écran (initDisplayMedia), pas une question « caméra/micro ».
@@ -785,12 +810,13 @@ function initPermissions(ses) {
     const key = origin + '|' + permission;
     if (grants.has(key)) return callback(grants.get(key));
     const host = (() => { try { return new URL(origin).hostname; } catch { return origin; } })();
-    const res = await dialog.showMessageBox(dialogParent(), {
-      type: 'none', title: 'Autorisation', icon: path.join(__dirname, 'assets', 'icon.png'),
-      message: `${host} souhaite ${PERM_LABELS[permission] || permission}.`,
-      buttons: ['Autoriser', 'Bloquer'], defaultId: 0, cancelId: 1, noLink: true,
-    });
-    const ok = res.response === 0;
+    if (onceGrants.has(key)) return callback(true);
+    const res = await askUi({ kind: 'permission', permission, host, message: `${host} souhaite ${PERM_LABELS[permission] || permission}.` }, wc);
+    // demande écartée (Échap, clic à côté) : refus sans mémoriser, le site pourra redemander
+    if (!res) return callback(false);
+    // « cette fois » : valable jusqu'à la fermeture du navigateur, jamais persisté
+    if (res.choice === 'once') { onceGrants.add(key); return callback(true); }
+    const ok = res.choice === 'always';
     grants.set(key, ok);
     if (grants === permGrants) persist(); // mémorise la décision entre les sessions (plus de prompt répété)
     callback(ok);
@@ -800,6 +826,11 @@ function initPermissions(ses) {
     const dkey = permission === 'media' ? 'media' : permission === 'geolocation' ? 'geolocation' : permission === 'notifications' ? 'notifications' : null;
     if (dkey && permDefaults[dkey] === 'block') return false;
     const key = originOf(requestingOrigin) + '|' + permission;
+    if (onceGrants.has(key)) return true;
+    // Caméra/micro pas encore décidés : Electron n'a pas d'état « prompt », un refus ici fait répondre
+    // « denied » à permissions.query() et des sites comme Google Meet n'appellent alors jamais
+    // getUserMedia (donc jamais notre demande). On laisse passer : getUserMedia repasse par la demande.
+    if (permission === 'media' && !grants.has(key)) return true;
     return grants.get(key) === true;
   });
 }
@@ -2352,6 +2383,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('archive-restore', (_e, index) => { const a = archive[index]; if (!a) return; archive.splice(index, 1); newTab({ url: a.url }); });
     on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
     on('auth-reply', (_e, r) => answerAuth(r));
+    on('perm-reply', (_e, r) => answerPrompt(r));
     on('display-choose', (_e, r) => { if (displayPick && r && r.id === displayPick.id) settleDisplayPick(r.cancel ? null : r); });
     // Changelog affiché dans Réglages → À propos : même fichier que celui du dépôt (CHANGELOG.md)
     handle('changelog-get', () => { try { return fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8'); } catch { return ''; } });

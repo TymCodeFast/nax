@@ -10,10 +10,15 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les nu
 - Plusieurs fenêtres : « Nouvelle fenêtre » (Ctrl+N) et « Nouvelle fenêtre privée » (Ctrl+Maj+N), depuis le menu du logo, le clic droit sur un lien, le clic droit sur un onglet (« Déplacer vers une nouvelle fenêtre ») et la liste de raccourcis de l'icône dans la barre des tâches Windows.
 - Fenêtre privée : tous ses onglets partagent une session en mémoire, rien n'est écrit sur le disque ni dans l'historique. Teinte violette sur toute l'interface, titre suffixé « (privé) », sans rail d'applis ni panneau Claude.
 - Les fenêtres normales sont restaurées au démarrage avec leur position et leur taille. Fermer une fenêtre parmi d'autres envoie ses onglets dans l'archive.
+- Les demandes d'autorisation (caméra, micro, position, notifications…) proposent « Autoriser cette fois », valable jusqu'à la fermeture du navigateur, en plus de « Toujours autoriser » et « Bloquer ».
 
 ### Modifié
 - « Nouvel onglet privé » passe de Ctrl+Maj+N à Ctrl+Maj+P ; Ctrl+Maj+N ouvre désormais une fenêtre privée, comme dans Chrome. Ctrl+Maj+W ferme la fenêtre.
 - Seule la fenêtre principale porte le rail d'applis (session connectée), les serveurs de dev et le panneau Claude. Si elle se ferme, la plus ancienne fenêtre normale restante prend le relais.
+- Les demandes d'autorisation et d'ouverture d'une autre application s'affichent dans une fenêtre de l'app au lieu d'une popup Windows. Échap ou un clic à côté refuse sans mémoriser le choix.
+
+### Corrigé
+- Google Meet (et les sites qui vérifient l'autorisation avant de la demander) ne proposait jamais d'autoriser la caméra et le micro.
 
 ## [0.1.5] - 2026-10-04
 
