@@ -72,7 +72,7 @@ if (DEMO && !fs.existsSync(path.join(app.getPath('userData'), 'state.json'))) {
 
 const RAIL = 60;          // colonne des applis
 let sidebarWidth = 264;   // colonne des onglets (redimensionnable)
-const SIDEBAR_MIN = 180, SIDEBAR_MAX = 520;
+const SIDEBAR_MIN = 150, SIDEBAR_MAX = 520;
 const NAV = 56;           // barre de navigation
 const DORMANT_AFTER = 2 * 60 * 60 * 1000;      // 2 h sans usage → veille
 const ARCHIVE_AFTER = 3 * 24 * 60 * 60 * 1000; // 3 j en veille → archive

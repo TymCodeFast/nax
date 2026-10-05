@@ -143,7 +143,7 @@ body.beta-off [data-beta] { display: none !important; } /* fonctionnalités bêt
 .rail-btn svg { width: 19px; height: 19px; }
 
 /* ============ Liste des onglets ============ */
-#sidebar { background: var(--side); display: flex; flex-direction: column; min-height: 0; position: relative; }
+#sidebar { background: var(--side); display: flex; flex-direction: column; min-height: 0; position: relative; container: side / inline-size; }
 #sidebar::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 1px; background: var(--line); }
 #resizer { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
 #resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: var(--grad); opacity: 0; transition: opacity var(--t); }
@@ -157,7 +157,7 @@ body.resizing * { pointer-events: none; }
 .icon-btn:hover { background: var(--hover); color: var(--fg); }
 .icon-btn:active { transform: scale(.92); }
 .icon-btn svg { width: 16px; height: 16px; }
-#tabs { flex: 1; overflow-y: auto; padding: 4px 8px 6px; position: relative; }
+#tabs { flex: 1; overflow-y: auto; padding: 4px 6px 6px; position: relative; }
 
 /* ---- glisser-déposer ---- */
 body.dragging, body.dragging * { user-select: none; cursor: grabbing !important; }
@@ -208,11 +208,13 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .fav .title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .fav.folder .title { font-weight: 550; }
 .fav .title input { width: 100%; background: var(--field); border: 1px solid var(--line-strong); border-radius: 5px; color: var(--fg); padding: 1px 6px; outline: none; box-shadow: var(--glow); }
-.fav .fav-count { color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.fav .fav-count { flex: none; min-width: 24px; text-align: center; color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 /* bouton « ouvrir le dossier en grand » (remplace la croix de suppression) */
-.fav .fav-open { opacity: 0; width: 24px; height: 24px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; flex: none; transition: opacity var(--t), background var(--t), color var(--t); }
+.fav .fav-open { display: none; width: 24px; height: 24px; border-radius: 6px; color: var(--muted); place-items: center; flex: none; transition: background var(--t), color var(--t); }
 .fav .fav-open svg { width: 14px; height: 14px; }
-.fav:hover .fav-open { opacity: 1; }
+/* au repos le bouton ne réserve pas de place (le nom du dossier garde toute la largeur) ; au survol il prend la place du compteur */
+.fav:hover .fav-open { display: grid; }
+.fav:hover:has(.fav-open) .fav-count { display: none; }
 .fav .fav-open:hover { background: var(--active); color: var(--c1); }
 .fav.drag-src { opacity: .3; }
 .fav.fav-into { box-shadow: inset 0 0 0 1.5px var(--gold); background: rgba(251, 191, 36, .12); }
@@ -222,29 +224,27 @@ body.dragging, body.dragging * { user-select: none; cursor: grabbing !important;
 .section-title .count { font-size: 10px; color: var(--dim); background: var(--field); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; line-height: 15px; letter-spacing: 0; }
 
 .group { margin-bottom: 4px; border-radius: var(--r); position: relative; }
-.group.multi { background: var(--field); padding: 4px 4px 4px; border: 1px solid var(--line); margin-bottom: 8px; }
+.group.multi { background: var(--field); padding: 2px; border: 1px solid var(--line); margin-bottom: 6px; }
 .group.multi::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: var(--grad); opacity: .55; }
-.group-title { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 6px; color: var(--fg-2); font-size: 13px; font-weight: 600; letter-spacing: .005em; min-height: 28px; }
-.group-title .g-chev { width: 20px; height: 22px; flex: none; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; }
+/* en-tête de groupe : le NOM prend toute la place ; seuls le chevron et le compteur restent au repos, la croix remplace le compteur au survol */
+.group-title { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 2px; color: var(--fg-2); font-size: 13px; font-weight: 600; letter-spacing: .005em; min-height: 28px; }
+.group-title .g-chev { width: 18px; height: 22px; flex: none; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; }
 .group-title .g-chev:hover { background: var(--hover); color: var(--fg); }
 .group-title .g-chev svg { width: 11px; height: 11px; transition: transform 200ms var(--ease); }
 .group:not(.collapsed) .group-title .g-chev svg { transform: rotate(90deg); }
-.group-title .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
-.group-title .g-stack { display: none; align-items: center; }
-.group.collapsed .group-title .g-stack { display: flex; }
-.group-title .g-stack img { width: 15px; height: 15px; border-radius: 4px; margin-left: -5px; box-shadow: 0 0 0 2px var(--side); }
-.group-title .g-stack img:first-child { margin-left: 0; }
+.group-title .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .group.collapsed .group-tabs { display: none; }
 .group.collapsed { margin-bottom: 6px; }
 .group.collapsed.hasactive { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .group.collapsed.hasactive::before { opacity: 1; }
 .group-title .name.custom { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.group-title .n { color: var(--dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+.group-title .n { flex: none; min-width: 22px; text-align: center; color: var(--dim); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .group-title input { flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--fg); padding: 2px 8px; font-size: 13px; box-shadow: var(--glow); }
-.group-title .icon-btn { width: 22px; height: 22px; opacity: 0; }
-.group:hover .group-title .icon-btn { opacity: 1; }
+.group-title .icon-btn { width: 22px; height: 22px; flex: none; display: none; }
+.group-title:hover .icon-btn { display: grid; }
+.group-title:hover .n { display: none; }
 
-.tab { display: flex; align-items: center; gap: 10px; padding: 0 8px 0 10px; height: 34px; border-radius: 9px; cursor: default; position: relative;
+.tab { display: flex; align-items: center; gap: 9px; padding: 0 6px 0 9px; height: 34px; border-radius: 9px; cursor: default; position: relative;
   color: var(--fg-2); transition: background var(--t), color var(--t), transform var(--t); }
 .tab:hover { background: var(--hover); color: var(--fg); }
 .tab.active { background: var(--active); color: var(--fg); }
@@ -321,6 +321,27 @@ body.private-tab #omni-icon { color: var(--c2); }
 .pair-close svg { width: 13px; height: 13px; }
 .pair-row:hover .pair-close { opacity: 1; }
 .pair-close:hover { background: rgba(242,109,125,.16); color: var(--c3); }
+
+/* liste étroite : on garde les titres (onglets, groupes) et on retire le superflu */
+@container side (max-width: 200px) {
+  .side-head { padding: 12px 8px 4px 12px; }
+  .side-title { display: none; }
+  .side-head-actions { margin-left: auto; }
+  .tab { gap: 7px; padding: 0 4px 0 7px; }
+  .tab .sub { display: none; }
+  .group-title .g-claude { width: 16px; }
+  /* paire divisée : deux favicons côte à côte (titre en infobulle), le lien reste lisible */
+  .pair-link { width: 12px; }
+  .pair-tile { justify-content: center; padding: 0; }
+  .pair-tile .title { display: none; }
+  .pair-close { width: 20px; }
+  .fav { gap: 7px; padding: 0 4px 0 7px; }
+  .fav-header .section-title { min-width: 0; gap: 5px; padding: 9px 4px 7px 6px; overflow: hidden; }
+  .fav-header .section-title .count, #dormant-wrap .section-title .count { display: none; }
+  .fav-header .icon-btn { width: 22px; margin-right: 0; flex: none; }
+  .fav-header { padding-right: 4px; }
+  .section-title .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 
 /* entrées / sorties */
 .enter { animation: enter 260ms var(--ease) both; }

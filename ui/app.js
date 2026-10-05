@@ -381,7 +381,7 @@ function renderTabs() {
       }
       const head = gEl.querySelector('.group-title');
       head.style.display = multi ? '' : 'none';
-      if (multi) renderGroupHead(head, g, collapsed);
+      if (multi) renderGroupHead(head, g);
       // une paire divisée (primaire + secondaire) se rend en UNE ligne à deux tuiles côte à côte
       sync(gEl.querySelector('.group-tabs'), tabUnits(g.members), (u) => u.key, createUnit, updateUnit);
     });
@@ -391,7 +391,7 @@ function renderTabs() {
   if (wrap) { wrap.classList.add('empty'); const db = $('dormant'); if (db && db.children.length) db.innerHTML = ''; }
 }
 
-function renderGroupHead(head, g, collapsed) {
+function renderGroupHead(head, g) {
   const renaming = renamingGroup === g.id;
   if (head.dataset.mode !== (renaming ? 'edit' : 'view')) {
     head.innerHTML = ''; head.dataset.mode = renaming ? 'edit' : 'view';
@@ -427,7 +427,6 @@ function renderGroupHead(head, g, collapsed) {
     name.ondblclick = (e) => { e.stopPropagation(); renamingGroup = g.id; render(); };
     name.onclick = () => { if (!suppressClick) api.groupToggle(g.id); };
     head.appendChild(name);
-    head.appendChild(el('div', 'g-stack'));
     head.appendChild(el('span', 'n'));
     const x = el('button', 'icon-btn'); x.title = 'Fermer le groupe'; x.appendChild(icon('i-close'));
     x.onclick = (e) => { e.stopPropagation(); api.groupClose(g.id); }; head.appendChild(x);
@@ -438,14 +437,6 @@ function renderGroupHead(head, g, collapsed) {
     const name = head.querySelector('.name');
     setText(name, g.title || 'Groupe'); name.classList.toggle('custom', !!g.custom);
     setText(head.querySelector('.n'), String(g.members.length));
-    const stack = head.querySelector('.g-stack');
-    stack.innerHTML = '';
-    if (collapsed) {
-      g.members.slice(0, 4).forEach((t) => {
-        const src = favicon(t); if (!src) return;
-        const im = el('img'); im.src = src; im.alt = ''; im.onerror = () => im.remove(); stack.appendChild(im);
-      });
-    }
   }
 }
 
@@ -919,7 +910,7 @@ function paintFavPlan(plan) {
 
 // ---------- redimensionnement de la liste ----------
 let resizing = false;
-const RAIL_W = 60, SIDE_MIN = 180, SIDE_MAX = 520;
+const RAIL_W = 60, SIDE_MIN = 150, SIDE_MAX = 520;
 $('resizer').addEventListener('mousedown', (e) => {
   e.preventDefault();
   resizing = true; document.body.classList.add('resizing');
