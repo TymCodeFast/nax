@@ -281,6 +281,9 @@ function load() {
     saved = Array.isArray(s.windows) && s.windows.length
       ? s.windows
       : [{ tabs: s.tabs || [], groups: s.groups || [], currentTabId: s.currentTabId || null, sidebarOpen: s.sidebarOpen !== false }];
+    // un transfert en cours à la fermeture ne peut pas reprendre : il est marqué interrompu
+    downloads = (Array.isArray(s.downloads) ? s.downloads : []).map((d) => (d.state === 'progressing' || d.state === 'paused') ? { ...d, state: 'interrupted', paused: false } : d);
+    dlNextId = Math.max(s.dlNextId || 1, ...downloads.map((d) => (d.id || 0) + 1));
     loadClaudeTasks(s);
   } catch {
     apps = DEFAULT_APPS;
@@ -321,6 +324,7 @@ function snapshot() {
     tabs: flat.tabs, // onglets privés non persistés (rien sur le disque)
     currentTabId: flat.currentTabId,
     windows: normals.map((w) => w.snapshotWindow()),
+    downloads, dlNextId,
   };
 }
 let saveTimer = null;
@@ -374,7 +378,7 @@ async function clearBrowsingData(opts = {}) {
   if (opts.history) { history = {}; }
   if (opts.archive) { archive = []; }
   if (opts.perms) { permGrants.clear(); }
-  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); }
+  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); }
   try {
     if (opts.cookies) await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'websql', 'filesystem'] });
     if (opts.cache) { await ses.clearCache(); await ses.clearStorageData({ storages: ['cachestorage', 'shadercache'] }); }
@@ -620,7 +624,13 @@ function setDevMode(on) {
 }
 
 // ---------- téléchargements ----------
-function sendDownloads() { broadcast('downloads', downloads.map((d) => ({ ...d }))); }
+function sendDownloads() {
+  const list = downloads.map((d) => ({ ...d }));
+  broadcast('downloads', list);
+  // notification flottante au-dessus de la page web, dans la fenêtre active seulement (son tipWin couvre tout le contenu)
+  const w = focusedWin();
+  if (w) w.sendTip('dl-toasts', { list, dark: nativeTheme.shouldUseDarkColors });
+}
 function uniquePath(p) {
   if (!fs.existsSync(p)) return p;
   const dir = path.dirname(p), ext = path.extname(p), base = path.basename(p, ext);
@@ -644,11 +654,10 @@ function initDownloads(ses) {
     downloads.unshift(rec);
     if (downloads.length > 100) downloads.length = 100;
     dlItems.set(rec.id, item);
-    sendDownloads();
-    broadcast('download-started');
+    sendDownloads(); persist();
     const syncPath = () => { const p = item.getSavePath(); if (p && p !== rec.savePath) { rec.savePath = p; rec.filename = path.basename(p); } };
     item.on('updated', (_e, state) => { syncPath(); rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes(); rec.paused = item.isPaused(); rec.state = state === 'interrupted' ? 'interrupted' : (rec.paused ? 'paused' : 'progressing'); sendDownloads(); });
-    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); });
+    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); persist(); });
   });
 }
 
@@ -2165,8 +2174,16 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('dl-open', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d && d.state === 'completed') shell.openPath(d.savePath).catch(() => {}); });
     on('dl-folder', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d) shell.showItemInFolder(d.savePath); });
     on('dl-cancel', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); });
-    on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); });
-    on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); });
+    on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); persist(); });
+    on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); });
+    // notification de téléchargement (tip.html) : cliquable seulement au survol, sinon l'overlay laisse passer la souris
+    on('tip-mouse', (_e, mode) => {
+      if (!tipWin || tipWin.isDestroyed()) return;
+      if (mode === 'on') tipWin.setIgnoreMouseEvents(false);
+      else if (mode === 'forward') tipWin.setIgnoreMouseEvents(true, { forward: true }); // click-through, mais reçoit les mouvements pour détecter le survol
+      else tipWin.setIgnoreMouseEvents(true);
+    });
+    on('dl-toast-click', () => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('ui-command', 'downloads-open'); });
     on('menu-select', (_e, idx) => { hideMenu(); const fn = menuFns[idx]; menuFns = []; if (typeof fn === 'function') fn(); });
     on('menu-close', () => hideMenu());
     on('set-dev-mode', (_e, on) => setDevMode(on));
@@ -2518,6 +2535,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     ownsPage: (wc) => !!wc && (tabs.some((t) => wcOf(t.view) === wc) || [...appViews.values()].some((v) => wcOf(v) === wc)),
     pageWebContents: () => { const l = []; for (const t of tabs) { const w = wcOf(t.view); if (w) l.push(w); } for (const v of appViews.values()) { const w = wcOf(v); if (w) l.push(w); } return l; },
     sendChrome: (ch, ...a) => { try { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send(ch, ...a); } catch {} },
+    sendTip: (ch, ...a) => { try { if (tipWin && !tipWin.isDestroyed()) tipWin.webContents.send(ch, ...a); } catch {} },
     scheduleState, snapshotWindow, layout, housekeeping, applyTheme: applyWindowTheme,
     promote: () => { if (privateWin || isMain) return; isMain = true; layout(); sendState(); sendClaudeTasks(); if (updateState) setUpdateState(updateState); },
     focus: () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } },
