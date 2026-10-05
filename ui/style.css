@@ -1210,6 +1210,6 @@ body.win-private { --bg: #110e1c; --rail: #0c0914; --side: #15111f; --panel: rgb
 @media (prefers-color-scheme: light) {
   body.win-private { --bg: #f1edfb; --rail: #e6e0f6; --side: #ece7f9; --panel: rgba(250, 248, 255, .97); --line: rgba(80, 50, 140, .09); --line-strong: rgba(80, 50, 140, .16); }
 }
-body.win-private .side-title::after { content: ' · privé'; color: var(--c2); font-weight: 600; }
+body.win-private .side-title::after { content: ' · ' attr(data-private-label); color: var(--c2); font-weight: 600; }
 body.win-private #private-pill { display: none !important; } /* la fenêtre entière dit déjà « privé » */
 body.win-private .tab .tab-ses { display: none !important; }  /* idem pour chaque onglet */

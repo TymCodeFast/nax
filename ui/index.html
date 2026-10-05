@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>NaX</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="style.css">
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <!-- Sprite d'icônes (traits 1.75px, style Lucide) -->
@@ -296,6 +298,10 @@
             <section class="settings-pane hidden" data-pane="languages">
               <h2>Langues</h2>
               <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Langue du navigateur</div><div class="setting-desc muted">Langue des menus et des réglages de NaX.</div></div>
+                <div id="uilang-dd" class="dropdown"></div>
+              </div>
+              <div class="setting-row">
                 <div class="setting-label"><div class="setting-name">Correcteur orthographique</div><div class="setting-desc muted">Souligne les fautes dans les champs de texte.</div></div>
                 <label class="switch"><input id="spell-toggle" type="checkbox"><span class="track"></span></label>
               </div>
@@ -303,7 +309,6 @@
                 <div class="setting-label"><div class="setting-name">Langues préférées</div><div class="setting-desc muted">Utilisées par le correcteur et pour l'affichage des pages.</div></div>
                 <div id="lang-list" class="lang-list"></div>
               </div>
-              <div class="setting-desc muted" style="margin-top:14px">L'interface de NaX est en français.</div>
             </section>
 
             <section class="settings-pane hidden" data-pane="permissions">
@@ -465,9 +470,9 @@
           <h2><svg class="h-ico"><use href="#i-shield"/></svg> Exporter depuis Chrome</h2>
           <p class="muted">Chrome ne laisse aucun logiciel lire ses mots de passe directement (sécurité anti-vol). L'export, autorisé par toi, est la voie propre.</p>
           <ol class="steps">
-            <li>Ouvre <code>chrome://password-manager/passwords</code> dans Chrome.</li>
+            <li>Ouvre <code data-no-i18n>chrome://password-manager/passwords</code> dans Chrome.</li>
             <li>Icône Paramètres, puis <b>Exporter les mots de passe</b>.</li>
-            <li>Chrome demande ton code Windows, puis enregistre un fichier <code>.csv</code>.</li>
+            <li>Chrome demande ton code Windows, puis enregistre un fichier .csv.</li>
             <li>Reviens ici et choisis ce fichier.</li>
           </ol>
           <p class="warn"><svg><use href="#i-shield"/></svg> Ce CSV est en clair. Supprime-le une fois l'import fait.</p>

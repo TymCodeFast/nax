@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Rechercher</title>
@@ -23,6 +23,8 @@
   .b svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
 </style>
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <div id="bar">
@@ -46,7 +48,7 @@
   window.addEventListener('focus', focusInput);
   finder.onResult((r) => {
     if (r.total > 0) { count.textContent = r.active + ' / ' + r.total; count.style.color = ''; }
-    else { count.textContent = q.value ? 'Aucun résultat' : ''; }
+    else { count.textContent = q.value ? tr('Aucun résultat') : ''; }
     prev.disabled = next.disabled = !(r.total > 0);
   });
   function run(findNext, forward) { const t = q.value; hasText = !!t; if (!t) { count.textContent = ''; prev.disabled = next.disabled = true; finder.query('', true, false); return; } finder.query(t, forward !== false, findNext); }

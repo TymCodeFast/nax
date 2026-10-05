@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Mise à jour</title>
@@ -35,6 +35,8 @@
   button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
   .hidden { display: none !important; }
 </style>
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <div class="card">
@@ -59,22 +61,22 @@
     const actions = [];
     $('bar').classList.add('hidden');
     if (s.state === 'available') {
-      $('title').textContent = 'Mise à jour disponible';
-      $('text').textContent = 'NaX ' + s.version + ' est disponible.';
-      actions.push(btn('Plus tard', false, () => updateapi.dismiss()), btn('Télécharger', true, () => updateapi.download()));
+      $('title').textContent = tr('Mise à jour disponible');
+      $('text').textContent = tr('NaX {version} est disponible.', { version: s.version });
+      actions.push(btn(tr('Plus tard'), false, () => updateapi.dismiss()), btn(tr('Télécharger'), true, () => updateapi.download()));
     } else if (s.state === 'downloading') {
-      $('title').textContent = 'Téléchargement de NaX ' + s.version;
-      $('text').textContent = (s.percent || 0) + ' %';
+      $('title').textContent = tr('Téléchargement de NaX {version}', { version: s.version });
+      $('text').textContent = tr('{n} %', { n: s.percent || 0 });
       $('bar').classList.remove('hidden');
       $('fill').style.width = (s.percent || 0) + '%';
     } else if (s.state === 'ready') {
-      $('title').textContent = 'NaX ' + s.version + ' est prêt';
-      $('text').textContent = 'Redémarrez pour installer la mise à jour.';
-      actions.push(btn('Plus tard', false, () => updateapi.dismiss()), btn('Redémarrer', true, () => updateapi.install()));
+      $('title').textContent = tr('NaX {version} est prêt', { version: s.version });
+      $('text').textContent = tr('Redémarrez pour installer la mise à jour.');
+      actions.push(btn(tr('Plus tard'), false, () => updateapi.dismiss()), btn(tr('Redémarrer'), true, () => updateapi.install()));
     } else if (s.state === 'error') {
-      $('title').textContent = 'Téléchargement impossible';
-      $('text').textContent = 'Vérifiez votre connexion, puis réessayez.';
-      actions.push(btn('Fermer', false, () => updateapi.dismiss()), btn('Réessayer', true, () => updateapi.download()));
+      $('title').textContent = tr('Téléchargement impossible');
+      $('text').textContent = tr('Vérifiez votre connexion, puis réessayez.');
+      actions.push(btn(tr('Fermer'), false, () => updateapi.dismiss()), btn(tr('Réessayer'), true, () => updateapi.download()));
     }
     $('actions').replaceChildren(...actions);
   }
