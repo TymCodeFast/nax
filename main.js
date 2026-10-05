@@ -122,6 +122,7 @@ let favorites = []; // {id, url, title, favicon}
 let sidebarOpenDefault = true; // état de la liste d'onglets pour les nouvelles fenêtres (dernier choix de l'utilisateur)
 let theme = 'light'; // 'system' | 'light' | 'dark'
 let devMode = false;      // mode développeur : détecte les serveurs de dev locaux
+let betaFeatures = false; // fonctionnalités bêta (panneau Claude…) : masquées tant que ce réglage est coupé
 let devProjects = [];     // [{port, url, title}]
 let devTimer = null;
 let downloads = [];       // {id, filename, url, savePath, received, total, state, paused, ts}
@@ -265,6 +266,7 @@ function load() {
     if (s.sidebarWidth) sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, s.sidebarWidth));
     if (['system', 'light', 'dark'].includes(s.theme)) theme = s.theme;
     devMode = !!s.devMode;
+    betaFeatures = !!s.betaFeatures;
     if (s.searchEngine && SEARCH_ENGINES.some((e) => e.id === s.searchEngine)) searchEngine = s.searchEngine;
     if (s.perms) for (const [k, v] of Object.entries(s.perms)) permGrants.set(k, v);
     // l'ancien défaut (Google) passe à la page d'accueil de NaX ; un autre choix de l'utilisateur est conservé
@@ -318,7 +320,7 @@ function snapshot() {
   const main = normals.find((w) => w.isMain) || normals[0] || null;
   const flat = main ? main.snapshotWindow() : { tabs: [], groups: [], currentTabId: null, sidebarOpen: sidebarOpenDefault };
   return {
-    nextId, groups: flat.groups, apps, railPins, archive, history, favorites, sidebarOpen: flat.sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
+    nextId, groups: flat.groups, apps, railPins, archive, history, favorites, sidebarOpen: flat.sidebarOpen, sidebarWidth, theme, devMode, betaFeatures, searchEngine,
     homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
     perms: Object.fromEntries(permGrants),
     tabs: flat.tabs, // onglets privés non persistés (rien sur le disque)
@@ -620,6 +622,17 @@ function setDevMode(on) {
   if (devTimer) { clearInterval(devTimer); devTimer = null; }
   if (devMode) { scanDevProjects(); devTimer = setInterval(scanDevProjects, 4000); }
   else devProjects = [];
+  sendStateAll();
+}
+// Bêta coupée : le panneau Claude se replie (les tâches en cours continuent, l'historique est conservé)
+function setBetaFeatures(on) {
+  betaFeatures = !!on;
+  if (!betaFeatures && claudeOpen) {
+    claudeOpen = false;
+    persistClaudeTasks();
+    const mw = mainWin(); if (mw) mw.layout();
+  }
+  persist();
   sendStateAll();
 }
 
@@ -1169,7 +1182,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   function mainBounds() {
     const { width, height } = win.getContentBounds();
     const x = RAIL + (sidebarOpen ? sidebarWidth : 0);
-    const right = isMain && claudeOpen ? CLAUDE_W : 0; // place du panneau Claude (fenêtre principale seulement)
+    const right = isMain && claudeOpen && betaFeatures ? CLAUDE_W : 0; // place du panneau Claude (fenêtre principale seulement)
     return { x, y: NAV, width: Math.max(0, width - x - right), height: Math.max(0, height - NAV) };
   }
   function layout() {
@@ -1240,9 +1253,9 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
             : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
         }).filter(Boolean),
         winKind: privateWin ? 'private' : isMain ? 'main' : 'secondary', windowCount: windows.length,
-        claudeOpen: isMain && claudeOpen, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
+        claudeOpen: isMain && claudeOpen && betaFeatures, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
         favorites, favActive: !!(ct && favByUrl(ct.url)),
-        devMode, devProjects,
+        devMode, devProjects, betaFeatures,
         searchEngine, searchEngines: SEARCH_ENGINES.map((e) => ({ id: e.id, name: e.name })),
         archiveCount: archive.length,
         nav: live ? {
@@ -2218,6 +2231,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('menu-select', (_e, idx) => { hideMenu(); const fn = menuFns[idx]; menuFns = []; if (typeof fn === 'function') fn(); });
     on('menu-close', () => hideMenu());
     on('set-dev-mode', (_e, on) => setDevMode(on));
+    on('set-beta-features', (_e, on) => setBetaFeatures(on));
     handle('browsing-data-stats', () => browsingDataStats());
     handle('clear-browsing-data', (_e, opts) => clearBrowsingData(opts || {}));
     // Détail par catégorie (voir / supprimer élément par élément)
@@ -2402,7 +2416,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('pw-clear', () => { passwords = []; persistPasswords(); });
 
     // ---------- Claude (tâches IA) ----------
-    on('claude-toggle', () => { claudeOpen = !claudeOpen; layout(); sendState(); persistClaudeTasks(); if (claudeOpen) sendClaudeTasks(); });
+    on('claude-toggle', () => { if (!betaFeatures) return; claudeOpen = !claudeOpen; layout(); sendState(); persistClaudeTasks(); if (claudeOpen) sendClaudeTasks(); });
     handle('claude-tasks', () => claudePublicTasks());
     handle('claude-run', (_e, prompt) => startClaudeTask(prompt));
     on('claude-cancel', (_e, id) => cancelClaudeTask(id));
@@ -2443,6 +2457,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     });
     // depuis l'îlot (badge ✦) → ouvre le panneau sur la tâche correspondante
     on('claude-reveal-task', (_e, taskId) => {
+      if (!betaFeatures) return;
       if (!claudeOpen) { claudeOpen = true; layout(); }
       sendState(); sendClaudeTasks();
       if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-reveal', taskId);
