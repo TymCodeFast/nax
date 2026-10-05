@@ -79,7 +79,7 @@ contextBridge.exposeInMainWorld('api', {
   onClaudeTasks: on('claude-tasks'), onClaudeReveal: on('claude-reveal'),
   dlList: () => ipcRenderer.invoke('dl-list'),
   dlOpen: send('dl-open'), dlFolder: send('dl-folder'), dlCancel: send('dl-cancel'), dlRemove: send('dl-remove'), dlClear: send('dl-clear'),
-  onDownloads: on('downloads'), onDownloadStarted: on('download-started'),
+  onDownloads: on('downloads'),
   onAuthRequest: on('auth-request'), authReply: (r) => ipcRenderer.send('auth-reply', r),
   onUiCommand: on('ui-command'),
   onDisplayPick: on('display-pick'), displayChoose: (r) => ipcRenderer.send('display-choose', r),
