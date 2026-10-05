@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('api', {
   dlOpen: send('dl-open'), dlFolder: send('dl-folder'), dlCancel: send('dl-cancel'), dlRemove: send('dl-remove'), dlClear: send('dl-clear'),
   onDownloads: on('downloads'), onDownloadStarted: on('download-started'),
   onAuthRequest: on('auth-request'), authReply: (r) => ipcRenderer.send('auth-reply', r),
+  onPermPrompt: on('perm-prompt'), permReply: (r) => ipcRenderer.send('perm-reply', r),
   onUiCommand: on('ui-command'),
   onDisplayPick: on('display-pick'), displayChoose: (r) => ipcRenderer.send('display-choose', r),
   changelogGet: () => ipcRenderer.invoke('changelog-get'),

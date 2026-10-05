@@ -3,6 +3,17 @@
 Toutes les évolutions notables de NaX sont listées ici, de la plus récente à la plus ancienne.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les numéros suivent [semver](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+### Ajouté
+- Les demandes d'autorisation (caméra, micro, position, notifications…) proposent « Autoriser cette fois », valable jusqu'à la fermeture du navigateur, en plus de « Toujours autoriser » et « Bloquer ».
+
+### Modifié
+- Les demandes d'autorisation et d'ouverture d'une autre application s'affichent dans une fenêtre de l'app au lieu d'une popup Windows. Échap ou un clic à côté refuse sans mémoriser le choix.
+
+### Corrigé
+- Google Meet (et les sites qui vérifient l'autorisation avant de la demander) ne proposait jamais d'autoriser la caméra et le micro.
+
 ## [0.1.5] - 2026-10-04
 
 ### Ajouté
