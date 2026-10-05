@@ -325,6 +325,9 @@ function load() {
     spellcheckOn = !!s.spellcheckOn;
     if (Array.isArray(s.spellLangs) && s.spellLangs.length) spellLangs = s.spellLangs;
     if (s.permDefaults && typeof s.permDefaults === 'object') permDefaults = { ...permDefaults, ...s.permDefaults };
+    // un transfert en cours à la fermeture ne peut pas reprendre : il est marqué interrompu
+    downloads = (Array.isArray(s.downloads) ? s.downloads : []).map((d) => (d.state === 'progressing' || d.state === 'paused') ? { ...d, state: 'interrupted', paused: false } : d);
+    dlNextId = Math.max(s.dlNextId || 1, ...downloads.map((d) => (d.id || 0) + 1));
     loadClaudeTasks(s);
     return s.currentTabId || null;
   } catch {
@@ -362,6 +365,7 @@ function snapshot() {
     perms: Object.fromEntries(permGrants),
     tabs: tabs.filter((t) => !isPrivate(t)).map(({ view, ...t }) => t), // onglets privés non persistés (rien sur le disque)
     currentTabId: current && current.kind === 'tab' ? current.id : null,
+    downloads, dlNextId,
   };
 }
 let saveTimer = null;
@@ -415,7 +419,7 @@ async function clearBrowsingData(opts = {}) {
   if (opts.history) { history = {}; }
   if (opts.archive) { archive = []; }
   if (opts.perms) { permGrants.clear(); }
-  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); }
+  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); }
   try {
     if (opts.cookies) await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'websql', 'filesystem'] });
     if (opts.cache) { await ses.clearCache(); await ses.clearStorageData({ storages: ['cachestorage', 'shadercache'] }); }
@@ -1047,7 +1051,12 @@ function setDevMode(on) {
 }
 
 // ---------- téléchargements ----------
-function sendDownloads() { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('downloads', downloads.map((d) => ({ ...d }))); }
+function sendDownloads() {
+  const list = downloads.map((d) => ({ ...d }));
+  if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('downloads', list);
+  // notification flottante au-dessus de la page web active (tipWin couvre tout le contenu, cf. ensureTipWin)
+  if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('dl-toasts', { list, dark: nativeTheme.shouldUseDarkColors }); } catch {} }
+}
 function uniquePath(p) {
   if (!fs.existsSync(p)) return p;
   const dir = path.dirname(p), ext = path.extname(p), base = path.basename(p, ext);
@@ -1071,11 +1080,10 @@ function initDownloads(ses) {
     downloads.unshift(rec);
     if (downloads.length > 100) downloads.length = 100;
     dlItems.set(rec.id, item);
-    sendDownloads();
-    if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('download-started');
+    sendDownloads(); persist();
     const syncPath = () => { const p = item.getSavePath(); if (p && p !== rec.savePath) { rec.savePath = p; rec.filename = path.basename(p); } };
     item.on('updated', (_e, state) => { syncPath(); rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes(); rec.paused = item.isPaused(); rec.state = state === 'interrupted' ? 'interrupted' : (rec.paused ? 'paused' : 'progressing'); sendDownloads(); });
-    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); });
+    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); persist(); });
   });
 }
 
@@ -2293,8 +2301,16 @@ function registerIpc() {
   ipcMain.on('dl-open', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d && d.state === 'completed') shell.openPath(d.savePath).catch(() => {}); });
   ipcMain.on('dl-folder', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d) shell.showItemInFolder(d.savePath); });
   ipcMain.on('dl-cancel', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); });
-  ipcMain.on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); });
-  ipcMain.on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); });
+  ipcMain.on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); persist(); });
+  ipcMain.on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); });
+  // notification de téléchargement (tip.html) : cliquable seulement au survol, sinon l'overlay laisse passer la souris
+  ipcMain.on('tip-mouse', (_e, mode) => {
+    if (!tipWin || tipWin.isDestroyed()) return;
+    if (mode === 'on') tipWin.setIgnoreMouseEvents(false);
+    else if (mode === 'forward') tipWin.setIgnoreMouseEvents(true, { forward: true }); // click-through, mais reçoit les mouvements pour détecter le survol
+    else tipWin.setIgnoreMouseEvents(true);
+  });
+  ipcMain.on('dl-toast-click', () => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('ui-command', 'downloads-open'); });
   ipcMain.on('menu-select', (_e, idx) => { hideMenu(); const fn = menuFns[idx]; menuFns = []; if (typeof fn === 'function') fn(); });
   ipcMain.on('menu-close', () => hideMenu());
   ipcMain.on('set-dev-mode', (_e, on) => setDevMode(on));
