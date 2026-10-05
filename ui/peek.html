@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Aperçu</title>
@@ -94,6 +94,8 @@
   #foot:hover { background: var(--hover); color: var(--fg); }
   #foot svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 </style>
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <div id="wrap">
@@ -123,9 +125,9 @@
   function relTime(iso) {
     const t = Date.parse(iso); if (isNaN(t)) return '';
     const m = Math.round((Date.now()-t)/60000);
-    if (m < 1) return "à l'instant"; if (m < 60) return m+' min';
-    const h = Math.round(m/60); if (h < 24) return h+' h';
-    const d = Math.round(h/24); return d===1?'hier':d+' j';
+    if (m < 1) return tr("à l'instant"); if (m < 60) return tr('{n} min', { n: m });
+    const h = Math.round(m/60); if (h < 24) return tr('{n} h', { n: h });
+    const d = Math.round(h/24); return d===1?tr('hier'):tr('{n} j', { n: d });
   }
   const esc = (s) => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const secHead = (title, count, openLabel, openFn) =>
@@ -157,17 +159,17 @@
     secMail.innerHTML = '<div class="state" style="height:200px"><div class="loader"></div></div>';
     let r; try { r = await peek.gmailFeed(); } catch { r = { error: true }; }
     refreshBtn.classList.remove('spin');
-    if (!r || r.error) { secMail.innerHTML = state('cloud-off', 'Impossible de récupérer les mails', 'Réessaie dans un moment.'); countEl.classList.add('hidden'); return; }
+    if (!r || r.error) { secMail.innerHTML = state('cloud-off', tr('Impossible de récupérer les mails'), tr('Réessaie dans un moment.')); countEl.classList.add('hidden'); return; }
     if (!r.authed) {
-      secMail.innerHTML = state('lock', 'Connecte-toi à Gmail', 'Ouvre Gmail une fois pour activer l’aperçu.', 'Ouvrir Gmail');
+      secMail.innerHTML = state('lock', tr('Connecte-toi à Gmail'), tr('Ouvre Gmail une fois pour activer l’aperçu.'), tr('Ouvrir Gmail'));
       secChat.innerHTML = ''; // pas connecté : inutile d'afficher la section Chat
       countEl.classList.add('hidden');
       const b = secMail.querySelector('button'); if (b) b.onclick = () => peek.openFull();
       return;
     }
-    if (r.count) { countEl.textContent = r.count + ' non lu' + (r.count > 1 ? 's' : ''); countEl.classList.remove('hidden'); } else countEl.classList.add('hidden');
-    let html = secHead('Mails', r.count ? String(r.count) : '');
-    if (!r.messages.length) html += '<div class="sec-empty">Boîte de réception à jour.</div>';
+    if (r.count) { countEl.textContent = trn(r.count, '{n} non lu', '{n} non lus'); countEl.classList.remove('hidden'); } else countEl.classList.add('hidden');
+    let html = secHead(tr('Mails'), r.count ? String(r.count) : '');
+    if (!r.messages.length) html += '<div class="sec-empty">' + tr('Boîte de réception à jour.') + '</div>';
     else html += r.messages.map((m) => {
       const c = avatarColor(m.from);
       const snip = m.summary ? ' — <span class="snip">' + esc(m.summary) + '</span>' : '';
@@ -186,15 +188,15 @@
 
   // ---- Chat : sous les mails, seulement si Chat est actif sur le compte ----
   async function loadChat(force) {
-    secChat.innerHTML = secHead('Chat') + '<div class="sec-load"><div class="mini-loader"></div>Connexion à Google Chat…</div>';
+    secChat.innerHTML = secHead(tr('Chat')) + '<div class="sec-load"><div class="mini-loader"></div>' + tr('Connexion à Google Chat…') + '</div>';
     let r; try { r = await peek.chatFeed(force); } catch { r = { error: true }; }
     if (!r || r.error || !r.authed || !r.available) { secChat.innerHTML = ''; return; } // Chat inactif / indisponible : la section disparaît
     const unread = (r.items || []).filter((c) => c.unread);
     const list = unread.length ? unread : (r.items || []).slice(0, 6);
-    let html = secHead('Chat', unread.length ? unread.length + ' non lu' + (unread.length > 1 ? 's' : '') : '', 'ouvrir');
-    if (!list.length) html += '<div class="sec-empty">Aucune conversation.</div>';
+    let html = secHead(tr('Chat'), unread.length ? trn(unread.length, '{n} non lu', '{n} non lus') : '', tr('ouvrir'));
+    if (!list.length) html += '<div class="sec-empty">' + tr('Aucune conversation.') + '</div>';
     else {
-      if (!unread.length) html += '<div class="sec-empty">Rien de non lu — récentes :</div>';
+      if (!unread.length) html += '<div class="sec-empty">' + tr('Rien de non lu — récentes :') + '</div>';
       html += list.map((c) => {
         const col = avatarColor(c.name);
         return `

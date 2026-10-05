@@ -7,8 +7,32 @@ const fs = require('fs');
 const http = require('http');
 const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
+// Traduction de l'interface : tr('texte français') renvoie le texte dans la langue choisie (voir ui/i18n.js)
+const I18N = require('./ui/i18n.js');
+const { tr, trn } = I18N; // pas « t » : sert de variable d'onglet partout
 // Script d'overlay Picture-in-Picture, injecté dans le monde principal de chaque page (voir wakeTab).
 const PIP_INJECT = (() => { try { return fs.readFileSync(path.join(__dirname, 'content-preload.js'), 'utf8'); } catch { return ''; } })();
+// Le script est écrit en français : ses deux libellés sont remplacés à l'injection par leur traduction (mis en cache par langue).
+let pipCache = null;
+function pipScript() {
+  if (!PIP_INJECT) return '';
+  if (pipCache && pipCache.lang === uiLang) return pipCache.code;
+  const html = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const jsq = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n\u2028\u2029]+/g, ' '); // texte sûr dans une chaîne JS entre apostrophes
+  const code = PIP_INJECT
+    .replace("'Détacher la vidéo'", () => JSON.stringify(tr('Détacher la vidéo')))
+    .replace('>Détacher</span>', () => '>' + jsq(html(tr('Détacher'))) + '</span>');
+  pipCache = { lang: uiLang, code };
+  return code;
+}
+// Page d'accueil (ui/home.html, sans script de traduction) : titre et champ de recherche traduits à chaque chargement.
+function homeI18nScript() {
+  const s = { lang: uiLang, title: tr('Accueil'), ph: tr('Rechercher ou saisir une adresse') };
+  return `(() => { const s = ${JSON.stringify(s)}; document.documentElement.lang = s.lang; document.title = s.title;
+    const i = document.querySelector('input[name=q]'); if (i) { i.placeholder = s.ph; i.setAttribute('aria-label', s.ph); } })()`;
+}
+function isHomeUrl(u) { return typeof u === 'string' && u.split(/[?#]/)[0].toLowerCase() === HOME_URL.toLowerCase(); }
+function translateHome(wc) { try { if (wc && !wc.isDestroyed() && isHomeUrl(wc.getURL())) wc.executeJavaScript(homeI18nScript()).catch(() => {}); } catch {} }
 
 // Nom d'app figé AVANT tout getPath : les données vivent dans %APPDATA%/NaX,
 // identique en dev et une fois installé (donc favoris/mots de passe/réglages suivent).
@@ -176,6 +200,7 @@ let zoomHosts = {};          // hôte -> facteur de zoom mémorisé
 let spellcheckOn = false;
 let spellLangs = ['fr'];     // langues du correcteur + langues préférées des pages
 let acceptLanguage = 'fr';
+let uiLang = I18N.defaultLang; // langue de l'interface (Paramètres › Langues)
 let permDefaults = { notifications: 'ask', geolocation: 'ask', media: 'ask', popups: 'allow' };
 function newTabTarget() { return newTabUrl === 'blank' ? 'about:blank' : (newTabUrl || homepage); }
 function defaultDownloadDir() { return downloadDir || app.getPath('downloads'); }
@@ -187,6 +212,21 @@ function applyLanguages() {
   const ordered = [];
   for (const l of base) { if (!ordered.includes(l)) ordered.push(l); const p = l.split('-')[0]; if (!ordered.includes(p)) ordered.push(p); }
   acceptLanguage = ordered.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
+}
+// Langue de l'interface changée : menus natifs reconstruits, fenêtres flottantes rechargées dans la nouvelle langue
+// (la fenêtre principale se retraduit à chaud à réception de l'état).
+function setUiLang(code) {
+  uiLang = code; I18N.setLang(code);
+  buildMenu();
+  setupJumpList();
+  for (const wc of webContents.getAllWebContents()) translateHome(wc); // onglets déjà ouverts sur la page d'accueil
+  for (const wc of webContents.getAllWebContents()) {
+    let u; try { u = new URL(wc.getURL()); } catch { continue; }
+    if (u.protocol !== 'file:' || !/\/ui\/(?!index\.html|home\.html)[a-z]+\.html$/.test(u.pathname)) continue;
+    u.searchParams.set('lang', code);
+    try { wc.loadURL(u.href); } catch {}
+  }
+  sendStateAll();
 }
 function applySpellcheck(ses) {
   try { ses.setSpellCheckerEnabled(!!spellcheckOn); } catch {}
@@ -279,6 +319,8 @@ function load() {
     if (s.zoomHosts && typeof s.zoomHosts === 'object') zoomHosts = s.zoomHosts;
     spellcheckOn = !!s.spellcheckOn;
     if (Array.isArray(s.spellLangs) && s.spellLangs.length) spellLangs = s.spellLangs;
+    if (I18N.isKnown(s.uiLang)) uiLang = s.uiLang;
+    I18N.setLang(uiLang); // avant loadClaudeTasks : ses messages sont traduits
     if (s.permDefaults && typeof s.permDefaults === 'object') permDefaults = { ...permDefaults, ...s.permDefaults };
     if (s.shortcuts && typeof s.shortcuts === 'object') for (const [k, v] of Object.entries(s.shortcuts)) if (typeof v === 'string') shortcutKeys[k] = v;
     saved = Array.isArray(s.windows) && s.windows.length
@@ -290,8 +332,10 @@ function load() {
     loadClaudeTasks(s);
   } catch {
     apps = DEFAULT_APPS;
+    I18N.setLang(uiLang);
     loadClaudeTasks(null);
   }
+  I18N.setLang(uiLang);
   return saved; // fenêtres à restaurer : [{tabs, groups, currentTabId, sidebarOpen, bounds?, maximized?}]
 }
 // Charge les tâches Claude depuis leur fichier dédié (migration depuis state.json au premier passage).
@@ -303,7 +347,7 @@ function loadClaudeTasks(stateFallback) {
   }
   if (!c) return;
   // celles encore « running » à la fermeture sont marquées interrompues
-  claudeTasks = (c.tasks || []).map((t) => (t.status === 'running' ? { ...t, status: 'error', error: 'Interrompue à la fermeture de NaX', finishedAt: t.finishedAt || Date.now() } : t));
+  claudeTasks = (c.tasks || []).map((t) => (t.status === 'running' ? { ...t, status: 'error', error: tr('Interrompue à la fermeture de NaX'), finishedAt: t.finishedAt || Date.now() } : t));
   claudeNextId = c.nextId || claudeTasks.reduce((m, t) => Math.max(m, t.id || 0), 0) + 1;
   claudeOpen = !!c.claudeOpen;
   persistClaudeTasks(); // écrit le fichier dédié dès le chargement (migration comprise)
@@ -322,7 +366,7 @@ function snapshot() {
   const flat = main ? main.snapshotWindow() : { tabs: [], groups: [], currentTabId: null, sidebarOpen: sidebarOpenDefault };
   return {
     nextId, groups: flat.groups, apps, railPins, archive, history, favorites, sidebarOpen: flat.sidebarOpen, sidebarWidth, theme, devMode, betaFeatures, searchEngine,
-    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults, shortcuts: shortcutKeys,
+    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, uiLang, permDefaults, shortcuts: shortcutKeys,
     perms: Object.fromEntries(permGrants),
     tabs: flat.tabs, // onglets privés non persistés (rien sur le disque)
     currentTabId: flat.currentTabId,
@@ -425,20 +469,20 @@ function parseCsv(text) {
   return rows;
 }
 async function importPasswordsCsv() {
-  if (!safeStorage.isEncryptionAvailable()) return { error: 'Le chiffrement sécurisé est indisponible sur ce système.' };
+  if (!safeStorage.isEncryptionAvailable()) return { error: tr('Le chiffrement sécurisé est indisponible sur ce système.') };
   const res = await dialog.showOpenDialog(dialogParent(), {
-    title: 'Importer le CSV exporté depuis Chrome',
+    title: tr('Importer le CSV exporté depuis Chrome'),
     filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'],
   });
   if (res.canceled || !res.filePaths[0]) return { canceled: true };
   const file = res.filePaths[0];
   let rows;
-  try { rows = parseCsv(fs.readFileSync(file, 'utf8')); } catch { return { error: 'Lecture du fichier impossible.' }; }
+  try { rows = parseCsv(fs.readFileSync(file, 'utf8')); } catch { return { error: tr('Lecture du fichier impossible.') }; }
   if (rows.length < 2) return { imported: 0, updated: 0, total: passwords.length, file };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
   const ci = { name: col('name', 'title'), url: col('url', 'origin_url', 'origin'), user: col('username', 'username_value', 'login'), pass: col('password', 'password_value') };
-  if (ci.pass < 0) return { error: 'Colonne « password » introuvable. Est-ce bien un export Chrome ?' };
+  if (ci.pass < 0) return { error: tr('Colonne « password » introuvable. Est-ce bien un export Chrome ?') };
   let imported = 0, updated = 0;
   for (const r of rows.slice(1)) {
     if (!r.length || r.every((c) => !c)) continue;
@@ -538,7 +582,7 @@ function addFavorite({ url, title, favicon, parentId = null }) {
   const list = parentId ? (favFind(parentId) || {}).node?.children : favorites;
   (list || favorites).push(node); sendStateAll();
 }
-function createFolder({ title = 'Nouveau dossier', parentId = null } = {}) {
+function createFolder({ title = tr('Nouveau dossier'), parentId = null } = {}) {
   const node = { id: 'fav' + nextId++, type: 'folder', title, children: [], collapsed: false };
   const list = parentId ? (favFind(parentId) || {}).node?.children : favorites;
   (list || favorites).push(node); sendStateAll(); return node.id;
@@ -765,14 +809,29 @@ function answerPrompt({ id, choice, remember } = {}) {
   p.resolve(choice ? { choice: String(choice), remember: !!remember } : null);
   if (i === 0) showNextPrompt();
 }
-const PERM_LABELS = { media: 'utiliser votre caméra et/ou votre micro', 'clipboard-read': 'lire le presse-papiers', geolocation: 'accéder à votre position', notifications: 'afficher des notifications', 'midi-sysex': 'accéder à vos périphériques MIDI', pointerLock: 'verrouiller le pointeur' };
+// libellés évalués à chaque demande : ils suivent la langue de l'interface
+function permLabel(p) {
+  switch (p) {
+    case 'media': return tr('utiliser votre caméra et/ou votre micro');
+    case 'clipboard-read': return tr('lire le presse-papiers');
+    case 'geolocation': return tr('accéder à votre position');
+    case 'notifications': return tr('afficher des notifications');
+    case 'midi-sysex': return tr('accéder à vos périphériques MIDI');
+    case 'pointerLock': return tr('verrouiller le pointeur');
+    default: return p;
+  }
+}
 const PERM_ASK = new Set(['media', 'geolocation', 'notifications', 'midi-sysex', 'clipboard-read']);
 const PERM_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'idle-detection', 'background-sync']);
 function originOf(u) { try { return new URL(u).origin; } catch { return u || ''; } }
 // Liens vers d'autres applis (mailto:, tel:, msteams:, zoommtg:…). Schémas capables de lancer du code ou
 // d'ouvrir des fichiers locaux : jamais, même sur confirmation.
 const BLOCKED_SCHEMES = new Set(['file:', 'javascript:', 'vbscript:', 'data:', 'blob:', 'ms-msdt:', 'search-ms:', 'search:', 'ms-cxh:', 'ms-cxh-full:', 'hcp:', 'shell:', 'ms-officecmd:']);
-const EXTERNAL_APPS = { 'mailto:': 'ta messagerie', 'tel:': 'ton application d’appel', 'callto:': 'ton application d’appel', 'sms:': 'ton application de SMS', 'msteams:': 'Microsoft Teams', 'zoommtg:': 'Zoom', 'zoomus:': 'Zoom', 'slack:': 'Slack', 'spotify:': 'Spotify', 'vscode:': 'Visual Studio Code', 'skype:': 'Skype', 'sip:': 'ton application d’appel' };
+function externalAppName(scheme) {
+  const call = tr('ton application d’appel');
+  const names = { 'mailto:': tr('ta messagerie'), 'tel:': call, 'callto:': call, 'sms:': tr('ton application de SMS'), 'msteams:': 'Microsoft Teams', 'zoommtg:': 'Zoom', 'zoomus:': 'Zoom', 'slack:': 'Slack', 'spotify:': 'Spotify', 'vscode:': 'Visual Studio Code', 'skype:': 'Skype', 'sip:': call };
+  return names[scheme] || null;
+}
 const isWebScheme = (u) => /^(https?|about|view-source|data|blob|file):/i.test(u || '');
 const isExternalScheme = (u) => /^[a-z][a-z0-9+.-]*:/i.test(u || '') && !isWebScheme(u);
 // Demande avant d'ouvrir une autre appli depuis une page (comme Chrome), avec « toujours autoriser » par site.
@@ -783,11 +842,11 @@ async function confirmExternal(origin, url, grants, wc) {
   const key = origin + '|openExternal:' + scheme;
   if (grants.get(key) === true) return true;
   let host = ''; try { host = new URL(origin).hostname; } catch {}
-  const what = EXTERNAL_APPS[scheme] || `l’application associée aux liens « ${scheme} »`;
+  const what = externalAppName(scheme) || tr('l’application associée aux liens « {scheme} »', { scheme });
   const res = await askUi({
-    kind: 'external', host: host || 'Cette page', message: `${host || 'Cette page'} veut ouvrir ${what}.`,
+    kind: 'external', host: host || tr('Cette page'), message: tr('{host} veut ouvrir {what}.', { host: host || tr('Cette page'), what }),
     detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
-    remember: host ? `Toujours autoriser ${host} à ouvrir ce type de lien` : '',
+    remember: host ? tr('Toujours autoriser {host} à ouvrir ce type de lien', { host }) : '',
   }, wc);
   if (!res || res.choice !== 'open') return false;
   if (res.remember && host) { grants.set(key, true); if (grants === permGrants) persist(); }
@@ -825,7 +884,7 @@ function initPermissions(ses) {
     if (grants.has(key)) return callback(grants.get(key));
     const host = (() => { try { return new URL(origin).hostname; } catch { return origin; } })();
     if (onceGrants.has(key)) return callback(true);
-    const res = await askUi({ kind: 'permission', permission, host, message: `${host} souhaite ${PERM_LABELS[permission] || permission}.` }, wc);
+    const res = await askUi({ kind: 'permission', permission, host, message: tr('{host} souhaite {what}.', { host, what: permLabel(permission) }) }, wc);
     // demande écartée (Échap, clic à côté) : refus sans mémoriser, le site pourra redemander
     if (!res) return callback(false);
     // « cette fois » : valable jusqu'à la fermeture du navigateur, jamais persisté
@@ -859,7 +918,7 @@ function loadErrorPage(tab, failedUrl, code, desc) {
   showErrorPage(w, failedUrl, code, desc);
 }
 function showErrorPage(w, failedUrl, code, desc) {
-  w.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } }).catch(() => {});
+  w.loadFile(ERROR_FILE, { query: { lang: uiLang, url: failedUrl, code: String(code), desc: desc || '' } }).catch(() => {});
 }
 
 // ---------- autocomplétion de la barre d'adresse ----------
@@ -932,7 +991,7 @@ function parseGmailAtom(xml) {
     const email = g(/<author>[\s\S]*?<email>([\s\S]*?)<\/email>/i);
     const link = g(/<link[^>]*href="([^"]+)"/i);
     messages.push({
-      subject: decodeXml(g(/<title>([\s\S]*?)<\/title>/i)) || '(sans objet)',
+      subject: decodeXml(g(/<title>([\s\S]*?)<\/title>/i)) || tr('(sans objet)'),
       summary: decodeXml(g(/<summary>([\s\S]*?)<\/summary>/i)),
       from: decodeXml(name) || decodeXml(email) || '?',
       date: g(/<(?:issued|modified|updated)>([\s\S]*?)<\/(?:issued|modified|updated)>/i) || '',
@@ -1046,7 +1105,7 @@ function favTreeItems(children, depth, budget) {
   for (const c of (children || [])) {
     if (budget.n <= 0) break;
     budget.n--;
-    if (c.type === 'folder') out.push({ id: c.id, type: 'folder', name: c.title || 'Dossier', color: c.color || null, count: (c.children || []).length, children: depth < 4 ? favTreeItems(c.children, depth + 1, budget) : [] });
+    if (c.type === 'folder') out.push({ id: c.id, type: 'folder', name: c.title || tr('Dossier'), color: c.color || null, count: (c.children || []).length, children: depth < 4 ? favTreeItems(c.children, depth + 1, budget) : [] });
     else out.push({ id: c.id, type: 'link', name: c.title || hostOf(c.url), url: c.url, favicon: c.favicon || null });
   }
   return out;
@@ -1083,7 +1142,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   const on = (ch, fn) => { const h = (e, ...a) => { if (mine.has(e.sender.id)) fn(e, ...a); }; ipcMain.on(ch, h); ipcOffs.push(() => ipcMain.removeListener(ch, h)); };
   const handle = (ch, fn) => handleFor(ch, chrome.webContents.id, fn);
   const openInTab = (url) => newTab({ url });
-  const setTitle = (t) => { if (win && !win.isDestroyed()) win.setTitle((t || 'NaX') + (privateWin ? ' (privé)' : '')); };
+  const setTitle = (t) => { if (win && !win.isDestroyed()) win.setTitle(privateWin ? tr('{title} (privé)', { title: t || 'NaX' }) : (t || 'NaX')); };
   // Ctrl+Tab et Ctrl+1…9 (menu d'application)
   const cycle = (dir) => {
     if (!tabs.length) return;
@@ -1250,13 +1309,13 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
           const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît
           const n = r.node;
           return n.type === 'folder'
-            ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || 'Dossier', icon: n.icon || null, color: n.color || null, count: (n.children || []).length }
+            ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || tr('Dossier'), icon: n.icon || null, color: n.color || null, count: (n.children || []).length }
             : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
         }).filter(Boolean),
         winKind: privateWin ? 'private' : isMain ? 'main' : 'secondary', windowCount: windows.length,
         claudeOpen: isMain && claudeOpen && betaFeatures, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
         favorites, favActive: !!(ct && favByUrl(ct.url)),
-        devMode, devProjects, betaFeatures,
+        devMode, devProjects, betaFeatures, uiLang,
         searchEngine, searchEngines: SEARCH_ENGINES.map((e) => ({ id: e.id, name: e.name })),
         archiveCount: archive.length,
         nav: live ? {
@@ -1303,9 +1362,9 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     // dès que la page a des modifications non enregistrées (beforeunload) — taper une adresse ne faisait rien.
     wc.on('will-prevent-unload', (e) => {
       const choice = dialog.showMessageBoxSync(win, {
-        type: 'question', buttons: ['Quitter la page', 'Rester'], defaultId: 1, cancelId: 1, noLink: true,
-        title: 'Quitter la page ?', message: 'Quitter cette page ?',
-        detail: 'Les modifications que tu as apportées ne seront peut-être pas enregistrées.',
+        type: 'question', buttons: [tr('Quitter la page'), tr('Rester')], defaultId: 1, cancelId: 1, noLink: true,
+        title: tr('Quitter la page ?'), message: tr('Quitter cette page ?'),
+        detail: tr('Les modifications que tu as apportées ne seront peut-être pas enregistrées.'),
       });
       if (choice === 0) e.preventDefault(); // preventDefault = ignorer le beforeunload et laisser partir
     });
@@ -1317,9 +1376,9 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       if (hangAsked || !isOnScreen(wc)) return;
       hangAsked = true;
       const { response } = await dialog.showMessageBox(win, {
-        type: 'warning', buttons: ['Attendre', 'Arrêter la page'], defaultId: 0, cancelId: 0, noLink: true,
-        title: 'Page figée', message: 'Cette page ne répond pas',
-        detail: `${hostOf(wc.getURL()) || 'La page'} ne répond plus. Tu peux attendre qu’elle reprenne, ou l’arrêter (elle pourra être rechargée).`,
+        type: 'warning', buttons: [tr('Attendre'), tr('Arrêter la page')], defaultId: 0, cancelId: 0, noLink: true,
+        title: tr('Page figée'), message: tr('Cette page ne répond pas'),
+        detail: tr('{host} ne répond plus. Tu peux attendre qu’elle reprenne, ou l’arrêter (elle pourra être rechargée).', { host: hostOf(wc.getURL()) || tr('La page') }),
       }).catch(() => ({ response: 0 }));
       hangAsked = false;
       if (response === 1 && !wc.isDestroyed()) wc.forcefullyCrashRenderer(); // → render-process-gone → page « Oups »
@@ -1340,7 +1399,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   function hideLinkStatus() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('link-status', null); } catch {} } }
 
   function authPopupOptions() {
-    return { action: 'allow', overrideBrowserWindowOptions: { parent: win, width: 520, height: 720, title: 'Connexion', autoHideMenuBar: true, minimizable: false, webPreferences: { sandbox: true } } };
+    return { action: 'allow', overrideBrowserWindowOptions: { parent: win, width: 520, height: 720, title: tr('Connexion'), autoHideMenuBar: true, minimizable: false, webPreferences: { sandbox: true } } };
   }
   function wakeTab(tab) {
     if (tab.view) return;
@@ -1404,10 +1463,10 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     // La page a planté (mémoire, bug, arrêt forcé) : sinon l'onglet resterait blanc, sans rien pour le relancer.
     wc.on('render-process-gone', (_e, d) => {
       if (tab.view !== view || d.reason === 'clean-exit') return; // fermeture voulue (veille, fermeture)
-      loadErrorPage(tab, tab.errorURL || tab.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
+      loadErrorPage(tab, tab.errorURL || tab.url, d.reason === 'oom' ? 'oom' : 'crash', tr('Processus de la page arrêté ({reason})', { reason: d.reason }));
     });
     // Injecte l'overlay « Détacher la vidéo » (PiP) + applique le zoom (par site ou par défaut) à chaque chargement.
-    wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(PIP_INJECT).catch(() => {}); applyZoom(wc); });
+    wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(pipScript()).catch(() => {}); translateHome(wc); applyZoom(wc); });
     wc.loadURL(tab.url);
   }
 
@@ -1584,7 +1643,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       v.webContents.on('render-process-gone', (_e, d) => {
         if (appViews.get(a.id) !== appView || d.reason === 'clean-exit') return;
         const u = v.webContents.getURL();
-        showErrorPage(v.webContents, u && !isErrorPage(u) ? u : a.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
+        showErrorPage(v.webContents, u && !isErrorPage(u) ? u : a.url, d.reason === 'oom' ? 'oom' : 'crash', tr('Processus de la page arrêté ({reason})', { reason: d.reason }));
       });
       v.webContents.loadURL(a.url);
       appViews.set(a.id, v);
@@ -1643,7 +1702,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
     });
     lockUiContents(peekWin.webContents, openInTab); own(peekWin);
-    peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'));
+    peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'), { query: { lang: uiLang } });
     peekWin.on('blur', () => hidePeek());
     return peekWin;
   }
@@ -1688,7 +1747,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
     });
     lockUiContents(flyWin.webContents, openInTab); own(flyWin);
-    flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'));
+    flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'), { query: { lang: uiLang } });
     flyWin.on('blur', () => hideFly());
     return flyWin;
   }
@@ -1735,7 +1794,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     } else if (kind === 'pin') {
       const p = railPins.find((x) => x.id === id); if (!p) return;
       const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
-      showFly({ kind: 'folder', id, favId: p.favId, title: r.node.title || 'Favoris', items: favTreeItems(r.node.children, 1, { n: 200 }) }, clientY);
+      showFly({ kind: 'folder', id, favId: p.favId, title: r.node.title || tr('Favoris'), items: favTreeItems(r.node.children, 1, { n: 200 }) }, clientY);
     }
   }
 
@@ -1768,7 +1827,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'menu-preload.js') },
     });
     lockUiContents(menuWin.webContents, openInTab); own(menuWin);
-    menuWin.loadFile(path.join(__dirname, 'ui', 'menu.html'));
+    menuWin.loadFile(path.join(__dirname, 'ui', 'menu.html'), { query: { lang: uiLang } });
     menuWin.on('blur', () => hideMenu());
     return menuWin;
   }
@@ -1785,7 +1844,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     });
     tipWin.setIgnoreMouseEvents(true); // laisse tout passer : ne bloque jamais l'app
     lockUiContents(tipWin.webContents, openInTab); own(tipWin);
-    tipWin.loadFile(path.join(__dirname, 'ui', 'tip.html'));
+    tipWin.loadFile(path.join(__dirname, 'ui', 'tip.html'), { query: { lang: uiLang } });
     tipWin.webContents.once('did-finish-load', () => { syncTipBounds(); tipWin.showInactive(); });
     return tipWin;
   }
@@ -1805,7 +1864,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       webPreferences: { preload: path.join(__dirname, 'find-preload.js') },
     });
     lockUiContents(findWin.webContents, openInTab); own(findWin);
-    findWin.loadFile(path.join(__dirname, 'ui', 'find.html'));
+    findWin.loadFile(path.join(__dirname, 'ui', 'find.html'), { query: { lang: uiLang } });
     return findWin;
   }
   function findBounds() { const b = win.getContentBounds(); const w = 380, h = 46; return { x: Math.round(b.x + b.width - w - 14), y: Math.round(b.y + NAV + 10), width: w, height: h }; }
@@ -1830,7 +1889,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'suggest-preload.js') },
     });
     lockUiContents(suggestWin.webContents, openInTab); own(suggestWin);
-    suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'));
+    suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'), { query: { lang: uiLang } });
     return suggestWin;
   }
   function hideSuggest() {
@@ -1868,23 +1927,23 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     const grp = groupById(tab.groupId);
     const named = !!(grp && grp.title); // un onglet seul mais dans un groupe nommé : le groupe existe quand même
     const items = [
-      { label: favByUrl(tab.url) ? 'Retirer des favoris' : 'Ajouter aux favoris', click: () => toggleFavoriteUrl(tab.url, tab.title, tab.favicon) },
-      { label: 'Mettre en veille', enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
-      { label: 'Dupliquer', click: () => newTab({ url: tab.url, openerId: tab.id }) },
-      { label: "Copier l'adresse", click: () => clipboard.writeText(tab.url) },
+      { label: favByUrl(tab.url) ? tr('Retirer des favoris') : tr('Ajouter aux favoris'), click: () => toggleFavoriteUrl(tab.url, tab.title, tab.favicon) },
+      { label: tr('Mettre en veille'), enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
+      { label: tr('Dupliquer'), click: () => newTab({ url: tab.url, openerId: tab.id }) },
+      { label: tr("Copier l'adresse"), click: () => clipboard.writeText(tab.url) },
       { type: 'separator' },
-      ...(privateWin ? [] : [{ label: tab.partition ? 'Revenir à la session normale' : 'Passer en navigation privée', click: () => setTabSession(tab.id, !tab.partition) }]),
+      ...(privateWin ? [] : [{ label: tab.partition ? tr('Revenir à la session normale') : tr('Passer en navigation privée'), click: () => setTabSession(tab.id, !tab.partition) }]),
       // la page repart dans une fenêtre à part (rechargée : la vue ne change pas de fenêtre) ; un onglet privé reste privé
-      { label: 'Déplacer vers une nouvelle fenêtre', click: () => { newWindow({ url: tab.url, isPrivate: privateWin || isPrivate(tab) }); closeTab(id, { toArchive: false }); } },
+      { label: tr('Déplacer vers une nouvelle fenêtre'), click: () => { newWindow({ url: tab.url, isPrivate: privateWin || isPrivate(tab) }); closeTab(id, { toArchive: false }); } },
     ];
     items.push({ type: 'separator' });
     // nommer un onglet seul = créer un groupe d'un onglet (utile pour garder un nom, replier, etc.)
-    items.push({ label: inGroup || named ? 'Renommer le groupe…' : 'Créer un groupe…', click: () => { uiFocus('rename-group', tab.groupId); setTimeout(() => { try { chrome.webContents.focus(); } catch {} }, 80); } }); // focus explicite : le menu est une fenêtre à part, sinon le clavier reste sur la page
-    if (inGroup) items.push({ label: 'Sortir du groupe', click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
-    else if (named) items.push({ label: 'Dissoudre le groupe', click: () => { grp.title = null; grp.collapsed = false; sendState(); } });
+    items.push({ label: inGroup || named ? tr('Renommer le groupe…') : tr('Créer un groupe…'), click: () => { uiFocus('rename-group', tab.groupId); setTimeout(() => { try { chrome.webContents.focus(); } catch {} }, 80); } }); // focus explicite : le menu est une fenêtre à part, sinon le clavier reste sur la page
+    if (inGroup) items.push({ label: tr('Sortir du groupe'), click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
+    else if (named) items.push({ label: tr('Dissoudre le groupe'), click: () => { grp.title = null; grp.collapsed = false; sendState(); } });
     items.push({ type: 'separator' });
-    items.push({ label: 'Fermer', danger: true, click: () => closeTab(id) });
-    if (inGroup) items.push({ label: 'Fermer le groupe', danger: true, click: () => siblings.forEach((t) => closeTab(t.id)) });
+    items.push({ label: tr('Fermer'), danger: true, click: () => closeTab(id) });
+    if (inGroup) items.push({ label: tr('Fermer le groupe'), danger: true, click: () => siblings.forEach((t) => closeTab(t.id)) });
     popupMenu(items);
   }
   // Menu de l'application (clic sur le logo NaX, en haut du rail) : pas de barre de menu ni de bouton « hamburger »,
@@ -1892,57 +1951,57 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   function brandMenu() {
     const cmd = (c) => () => uiFocus('ui-command', c);
     popupMenu([
-      { label: 'Nouvel onglet', hint: shortcutHint('new-tab'), click: () => { newTab(); uiFocus('focus-url'); } },
-      ...(privateWin ? [] : [{ label: 'Nouvel onglet privé', hint: shortcutHint('new-private-tab'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } }]),
-      { label: 'Nouvelle fenêtre', hint: shortcutHint('new-window'), click: () => newWindow() },
-      { label: 'Nouvelle fenêtre privée', hint: shortcutHint('new-private-window'), click: () => newWindow({ isPrivate: true }) },
+      { label: tr('Nouvel onglet'), hint: shortcutHint('new-tab'), click: () => { newTab(); uiFocus('focus-url'); } },
+      ...(privateWin ? [] : [{ label: tr('Nouvel onglet privé'), hint: shortcutHint('new-private-tab'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } }]),
+      { label: tr('Nouvelle fenêtre'), hint: shortcutHint('new-window'), click: () => newWindow() },
+      { label: tr('Nouvelle fenêtre privée'), hint: shortcutHint('new-private-window'), click: () => newWindow({ isPrivate: true }) },
       { type: 'separator' },
-      { label: 'Rechercher', hint: shortcutHint('palette'), click: () => uiFocus('open-palette') },
-      { label: 'Historique', hint: shortcutHint('history'), click: cmd('history') },
-      { label: 'Téléchargements', hint: shortcutHint('downloads'), click: cmd('downloads') },
-      { label: 'Paramètres', click: cmd('settings') },
+      { label: tr('Rechercher'), hint: shortcutHint('palette'), click: () => uiFocus('open-palette') },
+      { label: tr('Historique'), hint: shortcutHint('history'), click: cmd('history') },
+      { label: tr('Téléchargements'), hint: shortcutHint('downloads'), click: cmd('downloads') },
+      { label: tr('Paramètres'), click: cmd('settings') },
       { type: 'separator' },
-      { label: `À propos de NaX  v${app.getVersion()}`, click: cmd('about') },
-      { label: 'Fermer la fenêtre', hint: shortcutHint('close-window'), click: () => { if (win && !win.isDestroyed()) win.close(); } },
-      { label: 'Quitter', click: () => app.quit() },
+      { label: tr('À propos de NaX  v{version}', { version: app.getVersion() }), click: cmd('about') },
+      { label: tr('Fermer la fenêtre'), hint: shortcutHint('close-window'), click: () => { if (win && !win.isDestroyed()) win.close(); } },
+      { label: tr('Quitter'), click: () => app.quit() },
     ]);
   }
   function appContextMenu(id) {
     popupMenu([
-      { label: 'Recharger', click: () => { const w = wcOf(appViews.get(id)); if (w) w.reload(); } },
-      { label: 'Raccourcis au survol…', click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
+      { label: tr('Recharger'), click: () => { const w = wcOf(appViews.get(id)); if (w) w.reload(); } },
+      { label: tr('Raccourcis au survol…'), click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
       { type: 'separator' },
-      { label: 'Retirer du rail', danger: true, click: () => removeApp(id) },
+      { label: tr('Retirer du rail'), danger: true, click: () => removeApp(id) },
     ]);
   }
   function pinContextMenu(id) {
     const p = railPins.find((x) => x.id === id); if (!p) return;
     const r = favFind(p.favId);
     const items = [];
-    if (r && r.node.type === 'folder') items.push({ label: 'Ouvrir tous les liens', enabled: !!(r.node.children || []).length, click: () => openAllInFolder(p.favId) });
-    if (r && r.node.type === 'link') items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: r.node.url }) });
+    if (r && r.node.type === 'folder') items.push({ label: tr('Ouvrir tous les liens'), enabled: !!(r.node.children || []).length, click: () => openAllInFolder(p.favId) });
+    if (r && r.node.type === 'link') items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: r.node.url }) });
     items.push({ type: 'separator' });
-    items.push({ label: 'Retirer du rail', danger: true, click: () => { railPins = railPins.filter((x) => x.id !== id); sendState(); } });
+    items.push({ label: tr('Retirer du rail'), danger: true, click: () => { railPins = railPins.filter((x) => x.id !== id); sendState(); } });
     popupMenu(items);
   }
   function favContextMenu(id) {
     const r = favFind(id); if (!r) return;
     const n = r.node; const items = [];
     if (n.type === 'link') {
-      items.push({ label: 'Ouvrir', click: () => navigateCurrent(n.url) });
-      items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: n.url }) });
+      items.push({ label: tr('Ouvrir'), click: () => navigateCurrent(n.url) });
+      items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: n.url }) });
     } else {
-      items.push({ label: 'Ouvrir tous les liens', enabled: !!(n.children && n.children.length), click: () => openAllInFolder(id) });
-      items.push({ label: 'Nouveau sous-dossier', click: () => { const nid = createFolder({ parentId: id }); if (n.collapsed) toggleFolder(id); chrome.webContents.send('rename-fav', nid); } });
+      items.push({ label: tr('Ouvrir tous les liens'), enabled: !!(n.children && n.children.length), click: () => openAllInFolder(id) });
+      items.push({ label: tr('Nouveau sous-dossier'), click: () => { const nid = createFolder({ parentId: id }); if (n.collapsed) toggleFolder(id); chrome.webContents.send('rename-fav', nid); } });
     }
     items.push({ type: 'separator' });
     const pinned = railPins.find((x) => x.favId === id);
     items.push(pinned
-      ? { label: 'Retirer du rail', click: () => { railPins = railPins.filter((x) => x.favId !== id); sendState(); } }
-      : { label: 'Épingler au rail', click: () => { railPins.push({ id: 'pin' + nextId++, kind: n.type === 'folder' ? 'favfolder' : 'fav', favId: id }); sendState(); } });
-    items.push({ label: 'Renommer', click: () => chrome.webContents.send('rename-fav', id) });
-    if (n.type === 'folder') items.push({ label: 'Personnaliser (icône, couleur)…', click: () => chrome.webContents.send('customize-fav', id) });
-    items.push({ label: 'Supprimer', danger: true, click: () => removeFavorite(id) });
+      ? { label: tr('Retirer du rail'), click: () => { railPins = railPins.filter((x) => x.favId !== id); sendState(); } }
+      : { label: tr('Épingler au rail'), click: () => { railPins.push({ id: 'pin' + nextId++, kind: n.type === 'folder' ? 'favfolder' : 'fav', favId: id }); sendState(); } });
+    items.push({ label: tr('Renommer'), click: () => chrome.webContents.send('rename-fav', id) });
+    if (n.type === 'folder') items.push({ label: tr('Personnaliser (icône, couleur)…'), click: () => chrome.webContents.send('customize-fav', id) });
+    items.push({ label: tr('Supprimer'), danger: true, click: () => removeFavorite(id) });
     popupMenu(items);
   }
   // Extrait le contenu lisible de la page (URLs absolues) et l'envoie à l'interface pour conversion Markdown.
@@ -1966,14 +2025,14 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     if (!wc || wc.isDestroyed() || isErrorPage(wc.getURL())) return;
     const base = (wc.getTitle() || hostOf(wc.getURL()) || 'page').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'page';
     const res = await dialog.showSaveDialog(win, {
-      title: 'Enregistrer la page sous', defaultPath: path.join(defaultDownloadDir(), base + '.html'),
-      filters: [{ name: 'Page web complète', extensions: ['html'] }, { name: 'Page web, un seul fichier', extensions: ['mhtml'] }, { name: 'Page web, HTML uniquement', extensions: ['htm'] }],
+      title: tr('Enregistrer la page sous'), defaultPath: path.join(defaultDownloadDir(), base + '.html'),
+      filters: [{ name: tr('Page web complète'), extensions: ['html'] }, { name: tr('Page web, un seul fichier'), extensions: ['mhtml'] }, { name: tr('Page web, HTML uniquement'), extensions: ['htm'] }],
     });
     if (res.canceled || !res.filePath) return;
     const ext = path.extname(res.filePath).toLowerCase();
     const type = ext === '.mhtml' || ext === '.mht' ? 'MHTML' : ext === '.htm' ? 'HTMLOnly' : 'HTMLComplete';
     try { await wc.savePage(res.filePath, type); }
-    catch (err) { dialog.showMessageBox(win, { type: 'error', title: 'Enregistrement impossible', message: 'La page n’a pas pu être enregistrée.', detail: String((err && err.message) || err) }).catch(() => {}); }
+    catch (err) { dialog.showMessageBox(win, { type: 'error', title: tr('Enregistrement impossible'), message: tr('La page n’a pas pu être enregistrée.'), detail: String((err && err.message) || err) }).catch(() => {}); }
   }
   // Ctrl+U : le code source s'ouvre dans un onglet voisin (moteur Chromium, schéma view-source:).
   function viewSource(wc, openerId = null) {
@@ -1989,53 +2048,53 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     if (p.misspelledWord) {
       const sugg = (p.dictionarySuggestions || []).slice(0, 5);
       for (const w of sugg) items.push({ label: w, click: () => wc.replaceMisspelling(w) });
-      if (!sugg.length) items.push({ label: 'Aucune suggestion', enabled: false });
-      items.push({ label: 'Ajouter au dictionnaire', click: () => wc.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
+      if (!sugg.length) items.push({ label: tr('Aucune suggestion'), enabled: false });
+      items.push({ label: tr('Ajouter au dictionnaire'), click: () => wc.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
       items.push({ type: 'separator' });
     }
     if (p.linkURL) {
-      items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: p.linkURL, openerId, activate: false }) });
-      items.push({ label: 'Ouvrir dans un onglet privé', click: () => newTab({ url: p.linkURL, partition: splitPartition('private') }) });
-      items.push({ label: 'Ouvrir dans une nouvelle fenêtre', click: () => newWindow({ url: p.linkURL }) });
-      items.push({ label: 'Ouvrir dans une fenêtre privée', click: () => newWindow({ url: p.linkURL, isPrivate: true }) });
-      items.push({ label: 'Copier le lien', click: () => clipboard.writeText(p.linkURL) });
-      items.push({ label: 'Enregistrer le lien sous…', click: () => downloadAs(wc, p.linkURL) });
+      items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: p.linkURL, openerId, activate: false }) });
+      items.push({ label: tr('Ouvrir dans un onglet privé'), click: () => newTab({ url: p.linkURL, partition: splitPartition('private') }) });
+      items.push({ label: tr('Ouvrir dans une nouvelle fenêtre'), click: () => newWindow({ url: p.linkURL }) });
+      items.push({ label: tr('Ouvrir dans une fenêtre privée'), click: () => newWindow({ url: p.linkURL, isPrivate: true }) });
+      items.push({ label: tr('Copier le lien'), click: () => clipboard.writeText(p.linkURL) });
+      items.push({ label: tr('Enregistrer le lien sous…'), click: () => downloadAs(wc, p.linkURL) });
       items.push({ type: 'separator' });
     }
     if (p.mediaType === 'image' && p.srcURL) {
-      items.push({ label: 'Ouvrir l’image dans un nouvel onglet', click: () => newTab({ url: p.srcURL, openerId, activate: false }) });
-      items.push({ label: 'Enregistrer l’image sous…', click: () => downloadAs(wc, p.srcURL) });
-      items.push({ label: 'Copier l’image', click: () => wc.copyImageAt(p.x, p.y) });
-      items.push({ label: 'Copier l’adresse de l’image', click: () => clipboard.writeText(p.srcURL) });
+      items.push({ label: tr('Ouvrir l’image dans un nouvel onglet'), click: () => newTab({ url: p.srcURL, openerId, activate: false }) });
+      items.push({ label: tr('Enregistrer l’image sous…'), click: () => downloadAs(wc, p.srcURL) });
+      items.push({ label: tr('Copier l’image'), click: () => wc.copyImageAt(p.x, p.y) });
+      items.push({ label: tr('Copier l’adresse de l’image'), click: () => clipboard.writeText(p.srcURL) });
       items.push({ type: 'separator' });
     } else if ((p.mediaType === 'video' || p.mediaType === 'audio') && /^https?:/i.test(p.srcURL || '')) {
-      items.push({ label: p.mediaType === 'video' ? 'Enregistrer la vidéo sous…' : 'Enregistrer l’audio sous…', click: () => downloadAs(wc, p.srcURL) });
-      items.push({ label: 'Copier l’adresse du média', click: () => clipboard.writeText(p.srcURL) });
+      items.push({ label: p.mediaType === 'video' ? tr('Enregistrer la vidéo sous…') : tr('Enregistrer l’audio sous…'), click: () => downloadAs(wc, p.srcURL) });
+      items.push({ label: tr('Copier l’adresse du média'), click: () => clipboard.writeText(p.srcURL) });
       items.push({ type: 'separator' });
     }
     if (p.selectionText) {
-      items.push({ label: 'Copier', click: () => wc.copy() });
-      items.push({ label: `Rechercher « ${p.selectionText.slice(0, 30)} »`, click: () => newTab({ url: toUrl(p.selectionText), openerId }) });
+      items.push({ label: tr('Copier'), click: () => wc.copy() });
+      items.push({ label: tr('Rechercher « {text} »', { text: p.selectionText.slice(0, 30) }), click: () => newTab({ url: toUrl(p.selectionText), openerId }) });
       items.push({ type: 'separator' });
     }
     if (p.isEditable) {
-      items.push({ label: 'Couper', enabled: !!p.selectionText, click: () => wc.cut() });
-      items.push({ label: 'Copier', enabled: !!p.selectionText, click: () => wc.copy() });
-      items.push({ label: 'Coller', click: () => wc.paste() });
-      items.push({ label: 'Tout sélectionner', click: () => wc.selectAll() });
+      items.push({ label: tr('Couper'), enabled: !!p.selectionText, click: () => wc.cut() });
+      items.push({ label: tr('Copier'), enabled: !!p.selectionText, click: () => wc.copy() });
+      items.push({ label: tr('Coller'), click: () => wc.paste() });
+      items.push({ label: tr('Tout sélectionner'), click: () => wc.selectAll() });
       items.push({ type: 'separator' });
     }
-    items.push({ label: 'Précédent', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() });
-    items.push({ label: 'Suivant', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
-    items.push({ label: 'Recharger', click: () => wc.reload() });
+    items.push({ label: tr('Précédent'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() });
+    items.push({ label: tr('Suivant'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
+    items.push({ label: tr('Recharger'), click: () => wc.reload() });
     items.push({ type: 'separator' });
-    items.push({ label: 'Enregistrer la page sous…', click: () => savePageAs(wc) });
-    items.push({ label: 'Imprimer…', click: () => wc.print() });
-    items.push({ label: 'Exporter en Markdown', click: () => exportMarkdown(wc) });
-    items.push({ label: 'Copier l’adresse de la page', click: () => clipboard.writeText(wc.getURL()) });
+    items.push({ label: tr('Enregistrer la page sous…'), click: () => savePageAs(wc) });
+    items.push({ label: tr('Imprimer…'), click: () => wc.print() });
+    items.push({ label: tr('Exporter en Markdown'), click: () => exportMarkdown(wc) });
+    items.push({ label: tr('Copier l’adresse de la page'), click: () => clipboard.writeText(wc.getURL()) });
     items.push({ type: 'separator' });
-    items.push({ label: 'Afficher le code source', click: () => viewSource(wc, openerId) });
-    items.push({ label: 'Inspecter', click: () => wc.inspectElement(p.x, p.y) });
+    items.push({ label: tr('Afficher le code source'), click: () => viewSource(wc, openerId) });
+    items.push({ label: tr('Inspecter'), click: () => wc.inspectElement(p.x, p.y) });
     popupMenu(items);
   }
 
@@ -2095,10 +2154,10 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('brand-menu', () => brandMenu());
     on('newtab-menu', () => popupMenu([
       privateWin
-        ? { label: 'Navigation privée (cette fenêtre)', click: () => { newTab(); uiFocus('focus-url'); } }
-        : { label: 'Session par défaut', click: () => { newTab(); uiFocus('focus-url'); } },
-      privateWin ? null : { label: 'Navigation privée', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
-      { label: 'Autre session (conservée)', click: () => { newTab({ partition: 'persist:nax-profile-b' }); uiFocus('focus-url'); } },
+        ? { label: tr('Navigation privée (cette fenêtre)'), click: () => { newTab(); uiFocus('focus-url'); } }
+        : { label: tr('Session par défaut'), click: () => { newTab(); uiFocus('focus-url'); } },
+      privateWin ? null : { label: tr('Navigation privée'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
+      { label: tr('Autre session (conservée)'), click: () => { newTab({ partition: 'persist:nax-profile-b' }); uiFocus('focus-url'); } },
     ]));
     on('tab-activate', (_e, id) => activateTab(id));
     on('tab-close', (_e, id) => closeTab(id));
@@ -2201,7 +2260,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('md-copy', (_e, text) => clipboard.writeText(text || ''));
     handle('md-download', async (_e, { filename, content } = {}) => {
       const safe = (filename || 'page').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'page';
-      const res = await dialog.showSaveDialog(win, { title: 'Enregistrer en Markdown', defaultPath: path.join(app.getPath('downloads'), safe + '.md'), filters: [{ name: 'Markdown', extensions: ['md'] }] });
+      const res = await dialog.showSaveDialog(win, { title: tr('Enregistrer en Markdown'), defaultPath: path.join(app.getPath('downloads'), safe + '.md'), filters: [{ name: 'Markdown', extensions: ['md'] }] });
       if (res.canceled || !res.filePath) return { canceled: true };
       try { fs.writeFileSync(res.filePath, content || '', 'utf8'); return { ok: true, path: res.filePath }; } catch (e) { return { error: e.message }; }
     });
@@ -2248,7 +2307,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     handle('settings-get', () => ({
       homepage, newTabUrl, startupMode,
       downloadDir, downloadDirDefault: app.getPath('downloads'), askDownloadPath,
-      defaultZoom, spellcheckOn, spellLangs: [...spellLangs],
+      defaultZoom, spellcheckOn, spellLangs: [...spellLangs], uiLang,
       availLangs: (() => { try { return session.defaultSession.availableSpellCheckerLanguages || []; } catch { return []; } })(),
       perm: { ...permDefaults },
       version: app.getVersion(),
@@ -2264,6 +2323,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       if (typeof p.defaultZoom === 'number' && p.defaultZoom > 0) { defaultZoom = p.defaultZoom; zoomChanged = true; }
       if (typeof p.spellcheckOn === 'boolean') { spellcheckOn = p.spellcheckOn; langsChanged = true; }
       if (Array.isArray(p.spellLangs)) { spellLangs = p.spellLangs.length ? p.spellLangs : ['fr']; langsChanged = true; }
+      if (I18N.isKnown(p.uiLang) && p.uiLang !== uiLang) setUiLang(p.uiLang);
       if (p.perm && typeof p.perm === 'object') permDefaults = { ...permDefaults, ...p.perm };
       if (langsChanged) applyLanguages();
       if (zoomChanged) applyZoomToAll();
@@ -2271,7 +2331,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
       return true;
     });
     handle('pick-download-dir', async () => {
-      const res = await dialog.showOpenDialog(win, { title: 'Choisir le dossier de téléchargement', defaultPath: defaultDownloadDir(), properties: ['openDirectory', 'createDirectory'] });
+      const res = await dialog.showOpenDialog(win, { title: tr('Choisir le dossier de téléchargement'), defaultPath: defaultDownloadDir(), properties: ['openDirectory', 'createDirectory'] });
       if (!res.canceled && res.filePaths[0]) { downloadDir = res.filePaths[0]; persist(); }
       return { dir: downloadDir, default: app.getPath('downloads') };
     });
@@ -2370,8 +2430,8 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     on('split-close', () => closeSplit());
     // menu de choix de session (via l'overlay natif, au-dessus des pages web)
     on('split-menu', () => popupMenu([
-      { label: 'Cookies partagés', click: () => openSplit('shared') },
-      { label: 'Navigation privée', click: () => openSplit('private') },
+      { label: tr('Cookies partagés'), click: () => openSplit('shared') },
+      { label: tr('Navigation privée'), click: () => openSplit('private') },
     ]));
     const withSplit = (fn) => () => { if (splitView && !splitView.webContents.isDestroyed()) fn(splitView.webContents); };
     on('split-back', withSplit((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
@@ -2508,7 +2568,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     const b = cascadeFrom.win.getBounds(); Object.assign(size, { x: b.x + 32, y: b.y + 32, width: b.width, height: b.height });
   }
   win = new BaseWindow({
-    ...(bounds || size), minWidth: 700, minHeight: 400, title: privateWin ? 'NaX (privé)' : 'NaX',
+    ...(bounds || size), minWidth: 700, minHeight: 400, title: privateWin ? tr('{title} (privé)', { title: 'NaX' }) : 'NaX',
     icon: path.join(__dirname, 'assets', 'icon.ico'),
     backgroundColor: chromeBg(privateWin),
     titleBarStyle: 'hidden',                     // pas de barre de titre système : le haut de l'UI fait office de header
@@ -2566,7 +2626,7 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   });
   lockUiContents(chrome.webContents, openInTab); own(chrome);
   const chromeId = chrome.webContents.id;
-  chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'), { query: { lang: uiLang } });
   let readyResolve;
   const ready = new Promise((r) => { readyResolve = r; });
   chrome.webContents.once('did-finish-load', () => {
@@ -2618,43 +2678,43 @@ function shortcutDefs() {
   const uiCommand = (cmd) => onWin((w) => w.uiFocus('ui-command', cmd));
   const hardReload = withWC((wc) => wc.reloadIgnoringCache());
   const focusUrl = onWin((w) => w.uiFocus('focus-url'));
-  const TABS = 'Onglets et fenêtres', NAV = 'Navigation', PAGE = 'Page', VIEW = 'Affichage', TOOLS = 'Outils';
+  const TABS = tr('Onglets et fenêtres'), NAV = tr('Navigation'), PAGE = tr('Page'), VIEW = tr('Affichage'), TOOLS = tr('Outils');
   return [
-    { id: 'new-tab', group: TABS, label: 'Nouvel onglet', key: 'CmdOrCtrl+T', run: onWin((w) => { w.newTab(); w.uiFocus('focus-url'); }) },
-    { id: 'new-private-tab', group: TABS, label: 'Nouvel onglet privé', key: 'CmdOrCtrl+Shift+P', run: onWin((w) => { w.newTab({ partition: splitPartition('private') }); w.uiFocus('focus-url'); }) },
-    { id: 'new-window', group: TABS, label: 'Nouvelle fenêtre', key: 'CmdOrCtrl+N', run: () => newWindow() },
-    { id: 'new-private-window', group: TABS, label: 'Nouvelle fenêtre privée', key: 'CmdOrCtrl+Shift+N', run: () => newWindow({ isPrivate: true }) },
-    { id: 'close-tab', group: TABS, label: "Fermer l'onglet", key: 'CmdOrCtrl+W', run: onWin((w) => w.closeCurrentTab()) },
-    { id: 'close-window', group: TABS, label: 'Fermer la fenêtre', key: 'CmdOrCtrl+Shift+W', run: onWin((w) => w.close()) },
-    { id: 'reopen-tab', group: TABS, label: 'Rouvrir le dernier onglet fermé', key: 'CmdOrCtrl+Shift+T', run: onWin((w) => { const a = archive.shift(); if (a) w.newTab({ url: a.url }); }) },
-    { id: 'last-used-tab', group: TABS, label: 'Dernier onglet utilisé', key: 'Ctrl+Tab', run: onWin((w) => { const id = w.lastUsedTab(); if (id) w.activateTab(id); }) },
-    { id: 'prev-tab', group: TABS, label: 'Onglet précédent', key: 'Ctrl+Shift+Tab', run: onWin((w) => w.cycle(-1)) },
-    { id: 'next-tab-list', group: TABS, label: 'Onglet suivant (liste)', key: 'Ctrl+PageDown', run: onWin((w) => w.cycle(1)) },
-    { id: 'prev-tab-list', group: TABS, label: 'Onglet précédent (liste)', key: 'Ctrl+PageUp', run: onWin((w) => w.cycle(-1)) },
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ id: `tab-${n}`, group: TABS, label: n === 9 ? 'Dernier onglet' : `Onglet ${n}`, key: `CmdOrCtrl+${n}`, hidden: true, run: onWin((w) => w.tabAt(n)) })),
-    { id: 'focus-url', group: NAV, label: 'Barre d’adresse', key: 'CmdOrCtrl+L', alt: ['Alt+D', 'F6'], run: focusUrl },
-    { id: 'palette', group: NAV, label: 'Rechercher', key: 'CmdOrCtrl+K', run: onWin((w) => w.uiFocus('open-palette')) },
-    { id: 'back', group: NAV, label: 'Précédent', key: 'Alt+Left', run: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
-    { id: 'forward', group: NAV, label: 'Suivant', key: 'Alt+Right', run: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
-    { id: 'reload', group: NAV, label: 'Recharger', key: 'CmdOrCtrl+R', alt: ['F5'], run: withWC((wc) => wc.reload()) },
-    { id: 'hard-reload', group: NAV, label: 'Recharger sans le cache', key: 'CmdOrCtrl+Shift+R', alt: ['CmdOrCtrl+F5', 'Shift+F5'], run: hardReload },
-    { id: 'home', group: NAV, label: 'Page d’accueil', key: 'Alt+Home', run: onWin((w) => w.navigateCurrent(homepage)) },
-    { id: 'favorite', group: PAGE, label: 'Ajouter/retirer des favoris', key: 'CmdOrCtrl+D', run: onWin((w) => w.toggleFavoriteCurrent()) },
-    { id: 'find', group: PAGE, label: 'Rechercher dans la page', key: 'CmdOrCtrl+F', run: onWin((w) => w.showFind()) },
-    { id: 'print', group: PAGE, label: 'Imprimer…', key: 'CmdOrCtrl+P', run: withWC((wc) => wc.print()) },
-    { id: 'save-page', group: PAGE, label: 'Enregistrer la page sous…', key: 'CmdOrCtrl+S', run: withWC((wc, w) => w.savePageAs(wc)) },
-    { id: 'view-source', group: PAGE, label: 'Afficher le code source', key: 'CmdOrCtrl+U', run: withWC((wc, w) => w.viewSource(wc, w.current && w.current.kind === 'tab' ? w.current.id : null)) },
-    { id: 'sidebar', group: VIEW, label: 'Afficher/masquer la liste', key: 'CmdOrCtrl+B', run: onWin((w) => w.toggleSidebar()) },
-    { id: 'fullscreen', group: VIEW, label: 'Plein écran', key: 'F11', run: onWin((w) => w.toggleFullScreen()) },
-    { id: 'leave-fullscreen', group: VIEW, label: 'Quitter le plein écran d’une vidéo', key: 'Escape', hidden: true, run: onWin((w) => { if (w.htmlFullscreen) w.leaveHtmlFullscreen(); }) },
-    { id: 'zoom-in', group: VIEW, label: 'Zoom +', key: 'CmdOrCtrl+=', run: withWC((wc) => zoomStep(wc, 1)) },
-    { id: 'zoom-out', group: VIEW, label: 'Zoom -', key: 'CmdOrCtrl+-', run: withWC((wc) => zoomStep(wc, -1)) },
-    { id: 'zoom-reset', group: VIEW, label: 'Zoom par défaut', key: 'CmdOrCtrl+0', run: withWC((wc) => zoomReset(wc)) },
-    { id: 'history', group: TOOLS, label: 'Historique', key: 'CmdOrCtrl+H', run: uiCommand('history') },
-    { id: 'downloads', group: TOOLS, label: 'Téléchargements', key: 'CmdOrCtrl+J', run: uiCommand('downloads') },
-    { id: 'clear-data', group: TOOLS, label: 'Effacer les données de navigation', key: 'CmdOrCtrl+Shift+Delete', run: uiCommand('privacy') },
-    { id: 'devtools-page', group: TOOLS, label: 'Outils de dev (page)', key: 'F12', run: withWC((wc) => wc.toggleDevTools()) },
-    { id: 'devtools-ui', group: TOOLS, label: 'Outils de dev (interface)', key: 'CmdOrCtrl+Shift+I', run: onWin((w) => w.chrome.webContents.toggleDevTools()) },
+    { id: 'new-tab', group: TABS, label: tr('Nouvel onglet'), key: 'CmdOrCtrl+T', run: onWin((w) => { w.newTab(); w.uiFocus('focus-url'); }) },
+    { id: 'new-private-tab', group: TABS, label: tr('Nouvel onglet privé'), key: 'CmdOrCtrl+Shift+P', run: onWin((w) => { w.newTab({ partition: splitPartition('private') }); w.uiFocus('focus-url'); }) },
+    { id: 'new-window', group: TABS, label: tr('Nouvelle fenêtre'), key: 'CmdOrCtrl+N', run: () => newWindow() },
+    { id: 'new-private-window', group: TABS, label: tr('Nouvelle fenêtre privée'), key: 'CmdOrCtrl+Shift+N', run: () => newWindow({ isPrivate: true }) },
+    { id: 'close-tab', group: TABS, label: tr("Fermer l'onglet"), key: 'CmdOrCtrl+W', run: onWin((w) => w.closeCurrentTab()) },
+    { id: 'close-window', group: TABS, label: tr('Fermer la fenêtre'), key: 'CmdOrCtrl+Shift+W', run: onWin((w) => w.close()) },
+    { id: 'reopen-tab', group: TABS, label: tr('Rouvrir le dernier onglet fermé'), key: 'CmdOrCtrl+Shift+T', run: onWin((w) => { const a = archive.shift(); if (a) w.newTab({ url: a.url }); }) },
+    { id: 'last-used-tab', group: TABS, label: tr('Dernier onglet utilisé'), key: 'Ctrl+Tab', run: onWin((w) => { const id = w.lastUsedTab(); if (id) w.activateTab(id); }) },
+    { id: 'prev-tab', group: TABS, label: tr('Onglet précédent'), key: 'Ctrl+Shift+Tab', run: onWin((w) => w.cycle(-1)) },
+    { id: 'next-tab-list', group: TABS, label: tr('Onglet suivant (liste)'), key: 'Ctrl+PageDown', run: onWin((w) => w.cycle(1)) },
+    { id: 'prev-tab-list', group: TABS, label: tr('Onglet précédent (liste)'), key: 'Ctrl+PageUp', run: onWin((w) => w.cycle(-1)) },
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ id: `tab-${n}`, group: TABS, label: n === 9 ? tr('Dernier onglet') : tr('Onglet {n}', { n }), key: `CmdOrCtrl+${n}`, hidden: true, run: onWin((w) => w.tabAt(n)) })),
+    { id: 'focus-url', group: NAV, label: tr('Barre d’adresse'), key: 'CmdOrCtrl+L', alt: ['Alt+D', 'F6'], run: focusUrl },
+    { id: 'palette', group: NAV, label: tr('Rechercher'), key: 'CmdOrCtrl+K', run: onWin((w) => w.uiFocus('open-palette')) },
+    { id: 'back', group: NAV, label: tr('Précédent'), key: 'Alt+Left', run: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
+    { id: 'forward', group: NAV, label: tr('Suivant'), key: 'Alt+Right', run: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
+    { id: 'reload', group: NAV, label: tr('Recharger'), key: 'CmdOrCtrl+R', alt: ['F5'], run: withWC((wc) => wc.reload()) },
+    { id: 'hard-reload', group: NAV, label: tr('Recharger sans le cache'), key: 'CmdOrCtrl+Shift+R', alt: ['CmdOrCtrl+F5', 'Shift+F5'], run: hardReload },
+    { id: 'home', group: NAV, label: tr('Page d’accueil'), key: 'Alt+Home', run: onWin((w) => w.navigateCurrent(homepage)) },
+    { id: 'favorite', group: PAGE, label: tr('Ajouter/retirer des favoris'), key: 'CmdOrCtrl+D', run: onWin((w) => w.toggleFavoriteCurrent()) },
+    { id: 'find', group: PAGE, label: tr('Rechercher dans la page'), key: 'CmdOrCtrl+F', run: onWin((w) => w.showFind()) },
+    { id: 'print', group: PAGE, label: tr('Imprimer…'), key: 'CmdOrCtrl+P', run: withWC((wc) => wc.print()) },
+    { id: 'save-page', group: PAGE, label: tr('Enregistrer la page sous…'), key: 'CmdOrCtrl+S', run: withWC((wc, w) => w.savePageAs(wc)) },
+    { id: 'view-source', group: PAGE, label: tr('Afficher le code source'), key: 'CmdOrCtrl+U', run: withWC((wc, w) => w.viewSource(wc, w.current && w.current.kind === 'tab' ? w.current.id : null)) },
+    { id: 'sidebar', group: VIEW, label: tr('Afficher/masquer la liste'), key: 'CmdOrCtrl+B', run: onWin((w) => w.toggleSidebar()) },
+    { id: 'fullscreen', group: VIEW, label: tr('Plein écran'), key: 'F11', run: onWin((w) => w.toggleFullScreen()) },
+    { id: 'leave-fullscreen', group: VIEW, label: tr('Quitter le plein écran d’une vidéo'), key: 'Escape', hidden: true, run: onWin((w) => { if (w.htmlFullscreen) w.leaveHtmlFullscreen(); }) },
+    { id: 'zoom-in', group: VIEW, label: tr('Zoom +'), key: 'CmdOrCtrl+=', run: withWC((wc) => zoomStep(wc, 1)) },
+    { id: 'zoom-out', group: VIEW, label: tr('Zoom -'), key: 'CmdOrCtrl+-', run: withWC((wc) => zoomStep(wc, -1)) },
+    { id: 'zoom-reset', group: VIEW, label: tr('Zoom par défaut', { _ctx: 'raccourci' }), key: 'CmdOrCtrl+0', run: withWC((wc) => zoomReset(wc)) },
+    { id: 'history', group: TOOLS, label: tr('Historique'), key: 'CmdOrCtrl+H', run: uiCommand('history') },
+    { id: 'downloads', group: TOOLS, label: tr('Téléchargements'), key: 'CmdOrCtrl+J', run: uiCommand('downloads') },
+    { id: 'clear-data', group: TOOLS, label: tr('Effacer les données de navigation'), key: 'CmdOrCtrl+Shift+Delete', run: uiCommand('privacy') },
+    { id: 'devtools-page', group: TOOLS, label: tr('Outils de dev (page)'), key: 'F12', run: withWC((wc) => wc.toggleDevTools()) },
+    { id: 'devtools-ui', group: TOOLS, label: tr('Outils de dev (interface)'), key: 'CmdOrCtrl+Shift+I', run: onWin((w) => w.chrome.webContents.toggleDevTools()) },
   ];
 }
 // forme canonique d'un accélérateur, pour comparer (« CmdOrCtrl+Shift+t » == « Ctrl+Shift+T » sous Windows)
@@ -2676,10 +2736,14 @@ function shortcutTable() {
   return rows;
 }
 // touche d'un raccourci telle qu'affichée dans les menus (« Ctrl+Maj+P »), '' si désactivé
-const HINT_NAMES = { cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', control: 'Ctrl', shift: 'Maj', super: 'Win', left: '←', right: '→', up: '↑', down: '↓', pageup: 'Pg préc', pagedown: 'Pg suiv', delete: 'Suppr', escape: 'Échap', home: 'Début', end: 'Fin', insert: 'Inser', backspace: 'Retour', space: 'Espace', enter: 'Entrée' };
+// noms évalués à chaque appel : ils suivent la langue de l'interface
+function hintNames() {
+  return { cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', control: 'Ctrl', shift: tr('Maj'), super: 'Win', left: '←', right: '→', up: '↑', down: '↓', pageup: tr('Pg préc'), pagedown: tr('Pg suiv'), delete: tr('Suppr'), escape: tr('Échap'), home: tr('Début'), end: tr('Fin'), insert: tr('Inser'), backspace: tr('Retour'), space: tr('Espace'), enter: tr('Entrée') };
+}
 function shortcutHint(id) {
   const r = shortcutTable().find((x) => x.id === id);
-  return r && r.key ? r.key.split('+').map((p) => HINT_NAMES[p.toLowerCase()] || (p.length === 1 ? p.toUpperCase() : p)).join('+') : '';
+  const names = hintNames();
+  return r && r.key ? r.key.split('+').map((p) => names[p.toLowerCase()] || (p.length === 1 ? p.toUpperCase() : p)).join('+') : '';
 }
 function shortcutsPublic() {
   return shortcutTable().map(({ id, group, label, key, alt, defaultKey, defaultAlt, custom }) => ({ id, group, label, key, alt, defaultKey, defaultAlt, custom }));
@@ -2718,7 +2782,7 @@ function buildMenu() {
     items.push({ label: r.label, accelerator: (!shortcutsSuspended && r.key) || undefined, visible: !r.hidden, click: r.run });
     if (!shortcutsSuspended) for (const a of r.alt) items.push({ label: `${r.label} (${a})`, accelerator: a, visible: false, click: r.run });
   }
-  items.push({ role: 'quit', label: 'Quitter' });
+  items.push({ role: 'quit', label: tr('Quitter') });
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'NaX', submenu: items }]));
 }
 
@@ -2750,15 +2814,15 @@ function handleClaudeEvent(task, line) {
   let ev; try { ev = JSON.parse(line); } catch { return; }
   if (ev.type === 'system' && ev.subtype === 'init') {
     task.sessionId = ev.session_id || null;
-    claudeActivity(task, 'Claude démarre…');
+    claudeActivity(task, tr('Claude démarre…'));
   } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
     for (const b of ev.message.content) {
       if (b.type === 'text' && b.text) {
         task.output += (task.output ? '\n\n' : '') + b.text;
       } else if (b.type === 'tool_use') {
         const i = b.input || {};
-        const label = b.name === 'WebSearch' ? 'Recherche web — ' + (i.query || '')
-          : b.name === 'WebFetch' ? 'Lecture — ' + (i.url || 'une page')
+        const label = b.name === 'WebSearch' ? tr('Recherche web — {query}', { query: i.query || '' })
+          : b.name === 'WebFetch' ? tr('Lecture — {url}', { url: i.url || tr('une page') })
           : b.name + (i.query || i.url ? ' — ' + (i.query || i.url) : '');
         claudeActivity(task, label);
       }
@@ -2766,7 +2830,7 @@ function handleClaudeEvent(task, line) {
   } else if (ev.type === 'result') {
     task.status = ev.is_error ? 'error' : 'done';
     if (typeof ev.result === 'string' && ev.result) task.output = ev.result; // le résultat final remplace le flux (évite les doublons)
-    if (ev.is_error) task.error = (typeof ev.result === 'string' && ev.result) || ev.subtype || 'Erreur';
+    if (ev.is_error) task.error = (typeof ev.result === 'string' && ev.result) || ev.subtype || tr('Erreur');
     task.durationMs = ev.duration_ms || null;
     task.numTurns = ev.num_turns || null;
     task.finishedAt = Date.now();
@@ -2774,7 +2838,7 @@ function handleClaudeEvent(task, line) {
       // finalité de la tâche : ouvrir UNIQUEMENT les pages-résultat listées par Claude (bloc nax-tabs).
       // Pas de repli automatique sur les liens du rapport : ils incluent les sources, que l'utilisateur ne veut pas voir s'ouvrir.
       task.tabs = claudeParseTabs(task);
-      claudeActivity(task, task.tabs.length ? 'Îlot ouvert — ' + task.tabs.length + ' onglet' + (task.tabs.length > 1 ? 's' : '') : 'Aucune page à ouvrir');
+      claudeActivity(task, task.tabs.length ? trn(task.tabs.length, 'Îlot ouvert — {n} onglet', 'Îlot ouvert — {n} onglets') : tr('Aucune page à ouvrir'));
       { const mw = mainWin(); if (mw) mw.openClaudeIslandTabs(task, true); }
     }
   }
@@ -2793,7 +2857,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
   try {
     proc = spawn('claude', args, { cwd: claudeWorkDir(), env: process.env, windowsHide: true, shell: false });
   } catch (e) {
-    task.status = 'error'; task.error = 'Lancement impossible : ' + e.message; task.finishedAt = Date.now();
+    task.status = 'error'; task.error = tr('Lancement impossible : {error}', { error: e.message }); task.finishedAt = Date.now();
     sendClaudeTasks(); return;
   }
   claudeProcs.set(task.id, proc);
@@ -2812,7 +2876,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
     if (task.status !== 'running') return;
     task.status = 'error';
     task.error = e.code === 'ENOENT'
-      ? 'CLI « claude » introuvable. Installe Claude Code (claude.com/claude-code) et connecte ton abonnement.'
+      ? tr('CLI « claude » introuvable. Installe Claude Code (claude.com/claude-code) et connecte ton abonnement.')
       : e.message;
     task.finishedAt = Date.now();
     sendClaudeTasks();
@@ -2821,7 +2885,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
     claudeProcs.delete(task.id);
     if (task.status === 'running') { // sorti sans événement « result »
       task.status = code === 0 ? 'done' : 'error';
-      if (code !== 0 && !task.error) task.error = (errBuf || 'claude a quitté avec le code ' + code).trim();
+      if (code !== 0 && !task.error) task.error = (errBuf || tr('claude a quitté avec le code {code}', { code })).trim();
       task.finishedAt = Date.now();
     }
     sendClaudeTasks();
@@ -2862,7 +2926,7 @@ function cancelClaudeTask(id) {
   if (proc) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
   if (t && t.status === 'running') {
     t.status = 'canceled'; t.finishedAt = Date.now();
-    claudeActivity(t, 'Annulée');
+    claudeActivity(t, tr('Annulée'));
   }
   sendClaudeTasks();
 }
@@ -2946,8 +3010,8 @@ function setupJumpList() {
   const base = app.isPackaged ? '' : `"${app.getAppPath()}" `; // en dev, l'exécutable est electron.exe : il lui faut le chemin de l'app
   try {
     app.setUserTasks([
-      { program: process.execPath, arguments: base + '--new-window', iconPath: process.execPath, iconIndex: 0, title: 'Nouvelle fenêtre', description: 'Ouvrir une nouvelle fenêtre NaX' },
-      { program: process.execPath, arguments: base + '--private-window', iconPath: process.execPath, iconIndex: 0, title: 'Nouvelle fenêtre privée', description: 'Ouvrir une fenêtre de navigation privée' },
+      { program: process.execPath, arguments: base + '--new-window', iconPath: process.execPath, iconIndex: 0, title: tr('Nouvelle fenêtre'), description: tr('Ouvrir une nouvelle fenêtre NaX') },
+      { program: process.execPath, arguments: base + '--private-window', iconPath: process.execPath, iconIndex: 0, title: tr('Nouvelle fenêtre privée'), description: tr('Ouvrir une fenêtre de navigation privée') },
     ]);
   } catch {}
 }
@@ -3024,12 +3088,12 @@ async function registerAsBrowser({ force = false } = {}) {
   ];
   const lines = [
     'Windows Registry Editor Version 5.00', '',
-    ...progId(REG_URL_PROGID, 'Lien NaX', true),
-    ...progId(REG_FILE_PROGID, 'Document NaX'),
+    ...progId(REG_URL_PROGID, tr('Lien NaX'), true),
+    ...progId(REG_FILE_PROGID, tr('Document NaX')),
     `[${cap}]`, `@=${q(REG_APP)}`, '',
     `[${cap}\\DefaultIcon]`, `@=${q(icon)}`, '',
     `[${cap}\\shell\\open\\command]`, `@=${q(`"${exe}"`)}`, '',
-    `[${cap}\\Capabilities]`, `"ApplicationName"=${q(REG_APP)}`, `"ApplicationDescription"=${q('Navigateur NaX, pensé pour l’organisation')}`, `"ApplicationIcon"=${q(icon)}`, '',
+    `[${cap}\\Capabilities]`, `"ApplicationName"=${q(REG_APP)}`, `"ApplicationDescription"=${q(tr('Navigateur NaX, pensé pour l’organisation'))}`, `"ApplicationIcon"=${q(icon)}`, '',
     `[${cap}\\Capabilities\\StartMenu]`, `"StartMenuInternet"=${q(REG_APP)}`, '',
     `[${cap}\\Capabilities\\URLAssociations]`, `"http"=${q(REG_URL_PROGID)}`, `"https"=${q(REG_URL_PROGID)}`, '',
     `[${cap}\\Capabilities\\FileAssociations]`, ...REG_FILE_TYPES.map((x) => `"${x}"=${q(REG_FILE_PROGID)}`), '',
@@ -3069,7 +3133,7 @@ function ensureUpdateWin() {
     backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'update-preload.js') },
   });
   lockUiContents(updateWin.webContents);
-  updateWin.loadFile(path.join(__dirname, 'ui', 'update.html'));
+  updateWin.loadFile(path.join(__dirname, 'ui', 'update.html'), { query: { lang: uiLang } });
   return updateWin;
 }
 // coin inférieur droit de la fenêtre principale, par-dessus la page

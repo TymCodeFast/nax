@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Page indisponible</title>
@@ -50,6 +50,8 @@
   .code span { color: var(--dim); font: 500 10.5px "JetBrains Mono", ui-monospace, monospace; letter-spacing: .04em;
     background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; user-select: text; }
 </style>
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <div class="mesh"></div>
@@ -88,16 +90,16 @@
     generic: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16.5v.5"/>',
   };
   const KINDS = {
-    '-106': { icon: 'offline', title: 'Pas de connexion Internet', msg: 'Ton appareil semble hors ligne. Vérifie le Wi-Fi ou le câble réseau.' },
-    '-105': { icon: 'dns', title: 'Adresse introuvable', msg: 'Ce nom de domaine n’existe pas ou ne répond pas.', hint: 'Une faute de frappe dans l’adresse ?' , search: true },
-    '-102': { icon: 'refused', title: 'Connexion refusée', msg: 'Le serveur a répondu, mais il refuse la connexion sur ce port.' },
-    '-118': { icon: 'slow', title: 'Le site met trop de temps', msg: 'Pas de réponse dans les délais. Le site est peut-être surchargé.' },
-    '-7':   { icon: 'slow', title: 'Le site met trop de temps', msg: 'Pas de réponse dans les délais. Le site est peut-être surchargé.' },
-    crash:  { icon: 'crash', title: 'Oups, la page a planté', msg: 'Un problème a arrêté l’affichage de cette page. Le reste de NaX n’est pas touché.', hint: 'Si ça se reproduit, la page est peut-être en cause.', retry: 'Recharger' },
-    oom:    { icon: 'crash', title: 'Mémoire insuffisante', msg: 'La page a utilisé trop de mémoire et a été arrêtée.', hint: 'Fermer quelques onglets peut aider avant de recharger.', retry: 'Recharger' },
-    '-201': { icon: 'cert', title: 'Connexion non sûre', msg: 'Le certificat de sécurité du site pose problème. NaX a bloqué la page.' },
+    '-106': { icon: 'offline', title: tr('Pas de connexion Internet'), msg: tr('Ton appareil semble hors ligne. Vérifie le Wi-Fi ou le câble réseau.') },
+    '-105': { icon: 'dns', title: tr('Adresse introuvable'), msg: tr('Ce nom de domaine n’existe pas ou ne répond pas.'), hint: tr('Une faute de frappe dans l’adresse ?') , search: true },
+    '-102': { icon: 'refused', title: tr('Connexion refusée'), msg: tr('Le serveur a répondu, mais il refuse la connexion sur ce port.') },
+    '-118': { icon: 'slow', title: tr('Le site met trop de temps'), msg: tr('Pas de réponse dans les délais. Le site est peut-être surchargé.') },
+    '-7':   { icon: 'slow', title: tr('Le site met trop de temps'), msg: tr('Pas de réponse dans les délais. Le site est peut-être surchargé.') },
+    crash:  { icon: 'crash', title: tr('Oups, la page a planté'), msg: tr('Un problème a arrêté l’affichage de cette page. Le reste de NaX n’est pas touché.'), hint: tr('Si ça se reproduit, la page est peut-être en cause.'), retry: tr('Recharger') },
+    oom:    { icon: 'crash', title: tr('Mémoire insuffisante'), msg: tr('La page a utilisé trop de mémoire et a été arrêtée.'), hint: tr('Fermer quelques onglets peut aider avant de recharger.'), retry: tr('Recharger') },
+    '-201': { icon: 'cert', title: tr('Connexion non sûre'), msg: tr('Le certificat de sécurité du site pose problème. NaX a bloqué la page.') },
   };
-  const k = KINDS[code] || { icon: 'generic', title: 'Cette page est inaccessible', msg: 'Impossible de charger le site.' };
+  const k = KINDS[code] || { icon: 'generic', title: tr('Cette page est inaccessible'), msg: tr('Impossible de charger le site.') };
 
   $('halo').innerHTML = '<svg viewBox="0 0 24 24">' + ICONS[k.icon] + '</svg>';
   $('title').textContent = k.title;
@@ -110,7 +112,7 @@
   // serveur local qui ne répond pas : cas typique du dev — on le dit, et on guette son retour
   const localDown = isLocal && url && (code === '-102' || code === '-118' || code === '-7');
   if (localDown) {
-    $('hint').textContent = 'Serveur local : il n’est sans doute pas lancé. La page reviendra toute seule dès qu’il répondra.';
+    $('hint').textContent = tr('Serveur local : il n’est sans doute pas lancé. La page reviendra toute seule dès qu’il répondra.');
   } else if (k.hint) {
     $('hint').textContent = k.hint;
   }
