@@ -1,208 +1,223 @@
 <p align="center">
-  <img src="assets/icon.png" width="96" alt="Logo NaX">
+  <img src="assets/icon.png" width="96" alt="NaX logo">
 </p>
 
 <h1 align="center">NaX</h1>
 
 <p align="center">
-  <b>Le navigateur qui range vos onglets à votre place.</b><br>
-  Open source · basé sur Chromium · Windows 10 et 11
+  <b>The browser that tidies up your tabs for you.</b><br>
+  Open source · Chromium-based · Windows 10 and 11
 </p>
 
 <p align="center">
-  <a href="https://github.com/TymCodeFast/nax/releases/latest"><img src="https://img.shields.io/github/v/release/TymCodeFast/nax?label=version&color=2f6fe4" alt="Dernière version"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-22c55e" alt="Licence MIT"></a>
-  <img src="https://img.shields.io/badge/gratuit-oui-0ea5e9" alt="Gratuit">
-  <img src="https://img.shields.io/badge/open%20source-oui-7385ff" alt="Open source">
+  <a href="https://github.com/TymCodeFast/nax/releases/latest"><img src="https://img.shields.io/github/v/release/TymCodeFast/nax?label=version&color=2f6fe4" alt="Latest version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/free-yes-0ea5e9" alt="Free">
+  <img src="https://img.shields.io/badge/open%20source-yes-7385ff" alt="Open source">
 </p>
 
 <p align="center">
-  <a href="https://github.com/TymCodeFast/nax/releases/latest"><b>⬇ Télécharger NaX</b></a>
+  <a href="https://github.com/TymCodeFast/nax/releases/latest"><b>⬇ Download NaX</b></a>
   &nbsp;·&nbsp;
-  <a href="#fonctionnalités"><b>Fonctionnalités</b></a>
+  <a href="#features"><b>Features</b></a>
   &nbsp;·&nbsp;
-  <a href="#installer"><b>Installer</b></a>
+  <a href="#install"><b>Install</b></a>
   &nbsp;·&nbsp;
-  <a href="#pour-les-développeurs"><b>Développer</b></a>
+  <a href="#for-developers"><b>Develop</b></a>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/apercu.png" alt="Aperçu de NaX : onglets groupés à gauche, favoris en bas, page web au centre" width="900">
+  <img src="docs/screenshots/apercu.png" alt="NaX preview: grouped tabs on the left, bookmarks at the bottom, web page in the middle" width="900">
 </p>
 
 ---
 
-## Pourquoi NaX ?
+## Why NaX?
 
-Un navigateur classique finit toujours avec quarante onglets et aucun moyen de les retrouver.
-Tout le monde a promis de les ranger plus tard. NaX prend le problème dans l'autre sens :
-**on organise après, ou jamais.**
+A regular browser always ends up with forty tabs and no way to find anything.
+Everyone promises to clean them up later. NaX tackles the problem the other way around:
+**organize later, or never.**
 
-NaX regroupe automatiquement ce que vous ouvrez ensemble, met en veille ce que vous ne
-touchez plus, et garde tout ce qui a été ouvert à portée de recherche. Vous gardez la main,
-sans effort de rangement.
+NaX automatically groups what you open together, puts to sleep what you no longer
+touch, and keeps everything you've ever opened one search away. You stay in control,
+without the chore of tidying up.
 
 ---
 
-## Fonctionnalités
+## Features
 
-### Des onglets qui s'organisent seuls
+### Tabs that organize themselves
 
 | | |
 |---|---|
-| **Îlots automatiques** | Une page ouverte depuis une autre reste groupée avec celle qui l'a ouverte. Le groupe se nomme tout seul, et se renomme d'un double-clic. |
-| **Groupes repliables** | Un clic réduit un groupe à une barre (nom, favicons, compteur). NaX mémorise l'état. |
-| **Pas de doublons** | Taper l'adresse d'une page déjà ouverte vous y ramène. Ctrl+Entrée force un nouvel onglet. |
-| **Veille** | Un onglet inactif depuis 2 h s'endort, grisé, sans perdre sa place. Un clic le réveille. |
-| **Archive** | Un onglet fermé, ou en veille depuis 3 jours, part dans l'archive. Rien ne se perd. |
-| **Recherche partout** | Ctrl+K retrouve les onglets, la veille, l'archive et l'historique. |
+| **Automatic groups** | A page opened from another one stays grouped with the page that opened it. The group names itself, and a double-click renames it. |
+| **Collapsible groups** | One click shrinks a group to a single bar (name, favicons, count). NaX remembers the state. |
+| **No duplicates** | Typing the address of a page that's already open takes you back to it. Ctrl+Enter forces a new tab. |
+| **Sleep** | A tab left idle for 2 hours goes to sleep, greyed out, without losing its place. One click wakes it up. |
+| **Archive** | A closed tab, or one asleep for 3 days, moves to the archive. Nothing gets lost. |
+| **Search everywhere** | Ctrl+K finds open tabs, sleeping tabs, the archive and your history. |
 
-### Une organisation à la souris
+### Organize with the mouse
 
-Glissez-déposez un onglet pour le réordonner, le grouper ou le sortir d'un groupe. Déplacez
-un groupe entier par son en-tête. Le clic droit donne les mêmes actions.
+Drag and drop a tab to reorder it, group it or pull it out of a group. Move a whole
+group by its header. Right-click gives you the same actions.
 
-### Vos applis dans le rail
+### Your apps in the rail
 
-- **Gmail** : widget maison avec vos mails non lus (expéditeur, objet, extrait), et un compteur sur l'icône. Un clic ouvre le mail.
-- **Agenda, Drive et vos sites** : un clic les ouvre. Ajoutez n'importe quel site avec `+`.
+- **Gmail**: a built-in widget with your unread emails (sender, subject, preview) and a badge on the icon. One click opens the email.
+- **Calendar, Drive and your own sites**: one click opens them. Add any site with `+`.
 
-### Favoris, mots de passe, téléchargements
+### Bookmarks, passwords, downloads
 
-- **Favoris en arbre** : dossiers, sous-dossiers, glisser-déposer. Ctrl+D pour marquer une page.
-- **Coffre de mots de passe** : chiffré par le coffre Windows (DPAPI), jamais en clair sur le disque. Import depuis Chrome par CSV. Le presse-papiers est effacé après 30 secondes.
-- **Téléchargements** : progression, panneau pour ouvrir ou montrer le fichier.
+- **Bookmark tree**: folders, subfolders, drag and drop. Ctrl+D bookmarks a page.
+- **Password vault**: encrypted with the Windows vault (DPAPI), never stored in plain text on disk. Import from Chrome via CSV. The clipboard is cleared after 30 seconds.
+- **Downloads**: progress, and a panel to open the file or show it in its folder.
 
-### Un navigateur complet
+### A complete browser
 
-- **Page d'accueil** avec barre de recherche, sur le bouton Accueil et pour les nouveaux onglets. Elle suit votre moteur de recherche.
-- **Recherche dans la page** (Ctrl+F), impression, enregistrement de page (HTML ou MHTML).
-- **Partage d'écran** pour Meet, Teams ou Zoom web, avec option son de l'ordinateur.
-- **Permissions par site** : caméra, micro, notifications, géolocalisation.
-- **Sessions privées** : les autorisations accordées sont oubliées à la fermeture.
-- **Liens vers d'autres applis** (Teams, Zoom, Slack, `mailto:`…) : NaX demande avant de les ouvrir.
-- **Export en Markdown** : une page devient un texte propre, prêt à coller.
-- **Recherche intelligente** dans la barre d'adresse : onglets, favoris, historique et suggestions, avec complétion.
-- **Thème** clair, sombre ou automatique. Moteur de recherche au choix : Google, DuckDuckGo, Bing, Qwant, Ecosia, Brave, Startpage.
-- **Navigateur par défaut** : enregistrement depuis les Réglages, puis choix dans les Paramètres Windows.
-
----
-
-## Installer
-
-1. Ouvrez la [page des Releases](https://github.com/TymCodeFast/nax/releases/latest) et téléchargez `NaX-Setup-x.y.z.exe`.
-2. Lancez-le. NaX s'installe dans votre dossier utilisateur, et les raccourcis Démarrer et bureau sont créés.
-3. Windows SmartScreen peut afficher un avertissement, car l'installeur n'est pas encore signé par un éditeur reconnu. Cliquez sur « Informations complémentaires », puis « Exécuter quand même ».
-
-**Vos données** (favoris, mots de passe, réglages, onglets) vivent dans `%APPDATA%/NaX`. Elles survivent aux mises à jour, et la désinstallation ne les efface pas.
-
-### Mises à jour automatiques
-
-NaX vérifie au démarrage, puis toutes les 6 heures. Quand une version plus récente existe, une bulle discrète apparaît en bas à droite. Rien ne se télécharge sans votre accord : « Télécharger », puis « Redémarrer » pour installer, ou « Plus tard ».
+- **Home page** with a search bar, on the Home button and for new tabs. It follows your search engine.
+- **Find in page** (Ctrl+F), printing, saving pages (HTML or MHTML).
+- **Screen sharing** for Meet, Teams or Zoom on the web, with an option to share computer audio.
+- **Per-site permissions**: camera, microphone, notifications, location.
+- **Private windows and tabs**: nothing is written to disk or history, and granted permissions are forgotten on close.
+- **Multiple windows**, restored at startup with their position and size.
+- **Links to other apps** (Teams, Zoom, Slack, `mailto:`…): NaX asks before opening them.
+- **Markdown export**: turns a page into clean text, ready to paste.
+- **Smart search** in the address bar: tabs, bookmarks, history and suggestions, with autocomplete.
+- **Customizable keyboard shortcuts**, listed and editable in Settings.
+- **Theme**: light, dark or automatic. Search engine of your choice: Google, DuckDuckGo, Bing, Qwant, Ecosia, Brave, Startpage.
+- **Interface in English or French**, switchable in Settings without restarting.
+- **Default browser**: register from Settings, then pick NaX in Windows Settings.
 
 ---
 
-## Raccourcis clavier
+## Install
+
+1. Open the [Releases page](https://github.com/TymCodeFast/nax/releases/latest) and download `NaX-Setup-x.y.z.exe`.
+2. Run it. NaX installs into your user folder, and Start menu and desktop shortcuts are created.
+3. Windows SmartScreen may show a warning, because the installer isn't signed by a recognized publisher yet. Click "More info", then "Run anyway".
+
+**Your data** (bookmarks, passwords, settings, tabs) lives in `%APPDATA%/NaX`. It survives updates, and uninstalling doesn't delete it.
+
+### Automatic updates
+
+NaX checks at startup, then every 6 hours. When a newer version is available, a discreet bubble appears in the bottom-right corner. Nothing is downloaded without your consent: "Download", then "Restart" to install, or "Later".
+
+---
+
+## Keyboard shortcuts
+
+Every shortcut can be changed in Settings → Shortcuts.
 
 <details>
-<summary>Voir tous les raccourcis</summary>
+<summary>See all default shortcuts</summary>
 
-| Touche | Action |
+| Key | Action |
 |---|---|
-| Ctrl+T / Ctrl+W | nouvel onglet / fermer |
-| Ctrl+Shift+N | nouvel onglet privé |
-| Ctrl+Shift+T | rouvrir le dernier onglet fermé |
-| Ctrl+L / Alt+D / F6 | barre d'adresse |
-| Ctrl+K | rechercher partout |
-| Ctrl+B | replier la liste des onglets |
-| Ctrl+Tab | dernier onglet utilisé |
-| Ctrl+PgSuiv / Ctrl+PgPréc | onglet suivant / précédent |
-| Ctrl+1 … Ctrl+8 / Ctrl+9 | n-ième onglet / dernier onglet |
-| Alt+← / Alt+→ | précédent / suivant |
-| Alt+Début | page d'accueil |
-| Ctrl+R, F5 / Ctrl+Shift+R, Ctrl+F5 | recharger / recharger sans le cache |
-| Ctrl+F | rechercher dans la page |
-| Ctrl+D | ajouter ou retirer des favoris |
-| Ctrl+H / Ctrl+J | historique / téléchargements |
-| Ctrl+Shift+Suppr | effacer les données de navigation |
-| Ctrl+S / Ctrl+P | enregistrer la page / imprimer |
-| Ctrl+U | code source de la page |
+| Ctrl+T / Ctrl+W | new tab / close tab |
+| Ctrl+Shift+P | new private tab |
+| Ctrl+N / Ctrl+Shift+N | new window / new private window |
+| Ctrl+Shift+W | close window |
+| Ctrl+Shift+T | reopen last closed tab |
+| Ctrl+L / Alt+D / F6 | address bar |
+| Ctrl+K | search everywhere |
+| Ctrl+B | collapse the tab list |
+| Ctrl+Tab | last used tab |
+| Ctrl+PgDn / Ctrl+PgUp | next / previous tab |
+| Ctrl+1 … Ctrl+8 / Ctrl+9 | nth tab / last tab |
+| Alt+← / Alt+→ | back / forward |
+| Alt+Home | home page |
+| Ctrl+R, F5 / Ctrl+Shift+R, Ctrl+F5 | reload / reload without cache |
+| Ctrl+F | find in page |
+| Ctrl+D | add or remove bookmark |
+| Ctrl+H / Ctrl+J | history / downloads |
+| Ctrl+Shift+Del | clear browsing data |
+| Ctrl+S / Ctrl+P | save page / print |
+| Ctrl+U | view page source |
 | Ctrl+= / Ctrl+- / Ctrl+0 | zoom |
-| F11 | plein écran |
-| F12 / Ctrl+Shift+I | outils de développement (page / interface) |
+| F11 | full screen |
+| F12 / Ctrl+Shift+I | developer tools (page / interface) |
 
 </details>
 
 ---
 
-## Feuille de route
+## Roadmap
 
-- Suggestions personnalisées sur la page d'accueil.
-- Pastilles de notification sur les applis (événement proche, etc.).
-- Vue « récurrents », calculée depuis l'historique.
-- Remplissage automatique des formulaires web.
-- Applis en panneau latéral, en plus du plein écran.
+- Personalized suggestions on the home page.
+- Notification badges on apps (upcoming event, etc.).
+- A "recurring" view, computed from history.
+- Web form autofill.
+- Apps in a side panel, in addition to full screen.
 
 ---
 
-## Pour les développeurs
+## For developers
 
-NaX est une application Electron. Pas de chaîne de build complexe.
+NaX is an Electron app. No complex build chain.
 
-### Lancer en dev
+### Run in dev mode
 
-Prérequis : Node.js, puis `npm install` (une fois).
+Requirements: Node.js, then `npm install` (once).
 
     npm start
 
-Pour une démo sans vos données (profil séparé, onglets neutres) : `npm run demo`. Le profil de démo est `%APPDATA%/NaX-demo` et ne touche jamais le profil réel.
+For a demo without your data (separate profile, neutral tabs): `npm run demo`. The demo profile is `%APPDATA%/NaX-demo` and never touches the real profile.
 
-NaX n'accepte qu'une seule instance par profil : fermez la version installée avant de lancer `npm start`, sinon le dev se fait renvoyer vers elle.
+NaX only allows one instance per profile: close the installed version before running `npm start`, otherwise the dev build gets redirected to it.
 
 ### Structure
 
-- `main.js` : processus principal. Une fenêtre, une vue d'interface qui la couvre, et une seule vue de contenu (onglet ou appli) posée par-dessus. Modèle des onglets, groupes, applis, archive, historique et veille.
-- `preload.js` : pont IPC exposé à l'interface (`window.api`). Les fenêtres overlay ont chacune leur `*-preload.js`.
-- `ui/` : interface (rail, liste d'onglets, barre de navigation, palette, menus, tooltips, page d'accueil, bulle de mise à jour).
-- État persisté dans `%APPDATA%/browser/state.json`.
+- `main.js`: main process. A window, an interface view covering it, and a single content view (tab or app) laid on top. Model for tabs, groups, apps, archive, history and sleep.
+- `preload.js`: IPC bridge exposed to the interface (`window.api`). Overlay windows each have their own `*-preload.js`.
+- `ui/`: interface (rail, tab list, navigation bar, palette, menus, tooltips, home page, update bubble).
+- State is persisted in `%APPDATA%/NaX/state.json`.
 
-Pour ajouter un réglage : un `.settings-navitem` dans la nav, une `.settings-pane` dans le contenu (`ui/index.html`), et le câblage dans `ui/app.js`.
+To add a setting: a `.settings-navitem` in the nav, a `.settings-pane` in the content (`ui/index.html`), and the wiring in `ui/app.js`.
 
-### Construire l'installeur
+### Translations
+
+The interface is written in French in the code: the French texts are the translation keys, wrapped in `tr('…')` (and `trn()` for plurals). Dictionaries live in `ui/locales/`, one file per language (`en.js` maps each French text to its English version). A missing key falls back to French.
+
+To add a language: copy `ui/locales/en.js` to `ui/locales/<code>.js`, translate the values (keep the French keys and the `{variables}`), then add the language to `ui/locales/languages.js`. It then appears in Settings → Languages.
+
+Changing a French text in the code also changes its key: update the matching entry in each locale file.
+
+### Build the installer
 
     npm run dist
 
-Résultat : `dist/NaX Setup x.y.z.exe` (installeur NSIS) et `dist/win-unpacked/NaX.exe`.
+Output: `dist/NaX Setup x.y.z.exe` (NSIS installer) and `dist/win-unpacked/NaX.exe`.
 
 ### Versions
 
-Un seul numéro, dans `package.json` (`version`). Il est affiché dans l'installeur, dans Réglages → À propos, et utilisé par les mises à jour automatiques. Schéma [semver](https://semver.org/lang/fr/) :
+A single number, in `package.json` (`version`). It's shown in the installer and in Settings → About, and used by automatic updates. [Semver](https://semver.org/) scheme:
 
-| Numéro | Étape |
+| Number | Stage |
 |---|---|
-| `0.0.x` | bêta fermée (historique) |
-| `0.1.x`, `0.2.x`… | **bêta** (actuelle) |
-| `1.0.0` | première version stable |
+| `0.0.x` | closed beta (history) |
+| `0.1.x`, `0.2.x`… | **beta** (current) |
+| `1.0.0` | first stable release |
 
-L'auto-update ne propose jamais une version inférieure ou égale à celle installée. Ne republiez jamais un numéro déjà publié.
+Auto-update never offers a version lower than or equal to the installed one. Never republish a number that has already been published.
 
-### Publier une version
+### Publish a release
 
-1. Incrémenter la version : `npm run bump` (patch) ou `npm run bump:minor`. Aucun tag Git n'est créé ici.
-2. Créer un jeton GitHub avec la portée `repo`, puis publier :
+1. Bump the version: `npm run bump` (patch) or `npm run bump:minor`. No Git tag is created at this step.
+2. Create a GitHub token with the `repo` scope, then publish:
 
         # PowerShell
         $env:GH_TOKEN = "ghp_xxx"
         npm run publish
 
-   electron-builder construit l'installeur et crée une Release GitHub taguée `v<version>`, avec `NaX-Setup-<version>.exe` et `latest.yml`, le fichier que l'app lit pour détecter les mises à jour.
+   electron-builder builds the installer and creates a GitHub Release tagged `v<version>`, with `NaX-Setup-<version>.exe` and `latest.yml`, the file the app reads to detect updates.
 
-### Contribuer
+### Contributing
 
-Les contributions sont bienvenues. Ouvrez une issue pour discuter d'une idée, puis une pull request.
+Contributions are welcome. Open an issue to discuss an idea, then a pull request.
 
 ---
 
-## Licence
+## License
 
-Distribué sous licence MIT. Voir [LICENSE](LICENSE).
+Distributed under the MIT license. See [LICENSE](LICENSE).

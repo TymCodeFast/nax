@@ -1,14 +1,38 @@
 // Browser — process principal.
 // Fenêtre = une vue "chrome" (rail d'applis + liste d'onglets + barre de nav) qui couvre
 // toute la fenêtre, et UNE vue de contenu (onglet ou appli) posée par-dessus dans la zone principale.
-const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, nativeImage, net, screen, shell, desktopCapturer } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, clipboard, safeStorage, dialog, session, nativeTheme, nativeImage, net, screen, shell, desktopCapturer, webContents } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
+// Traduction de l'interface : tr('texte français') renvoie le texte dans la langue choisie (voir ui/i18n.js)
+const I18N = require('./ui/i18n.js');
+const { tr, trn } = I18N; // pas « t » : sert de variable d'onglet partout
 // Script d'overlay Picture-in-Picture, injecté dans le monde principal de chaque page (voir wakeTab).
 const PIP_INJECT = (() => { try { return fs.readFileSync(path.join(__dirname, 'content-preload.js'), 'utf8'); } catch { return ''; } })();
+// Le script est écrit en français : ses deux libellés sont remplacés à l'injection par leur traduction (mis en cache par langue).
+let pipCache = null;
+function pipScript() {
+  if (!PIP_INJECT) return '';
+  if (pipCache && pipCache.lang === uiLang) return pipCache.code;
+  const html = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const jsq = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n\u2028\u2029]+/g, ' '); // texte sûr dans une chaîne JS entre apostrophes
+  const code = PIP_INJECT
+    .replace("'Détacher la vidéo'", () => JSON.stringify(tr('Détacher la vidéo')))
+    .replace('>Détacher</span>', () => '>' + jsq(html(tr('Détacher'))) + '</span>');
+  pipCache = { lang: uiLang, code };
+  return code;
+}
+// Page d'accueil (ui/home.html, sans script de traduction) : titre et champ de recherche traduits à chaque chargement.
+function homeI18nScript() {
+  const s = { lang: uiLang, title: tr('Accueil'), ph: tr('Rechercher ou saisir une adresse') };
+  return `(() => { const s = ${JSON.stringify(s)}; document.documentElement.lang = s.lang; document.title = s.title;
+    const i = document.querySelector('input[name=q]'); if (i) { i.placeholder = s.ph; i.setAttribute('aria-label', s.ph); } })()`;
+}
+function isHomeUrl(u) { return typeof u === 'string' && u.split(/[?#]/)[0].toLowerCase() === HOME_URL.toLowerCase(); }
+function translateHome(wc) { try { if (wc && !wc.isDestroyed() && isHomeUrl(wc.getURL())) wc.executeJavaScript(homeI18nScript()).catch(() => {}); } catch {} }
 
 // Nom d'app figé AVANT tout getPath : les données vivent dans %APPDATA%/NaX,
 // identique en dev et une fois installé (donc favoris/mots de passe/réglages suivent).
@@ -72,7 +96,7 @@ if (DEMO && !fs.existsSync(path.join(app.getPath('userData'), 'state.json'))) {
 
 const RAIL = 60;          // colonne des applis
 let sidebarWidth = 264;   // colonne des onglets (redimensionnable)
-const SIDEBAR_MIN = 180, SIDEBAR_MAX = 520;
+const SIDEBAR_MIN = 150, SIDEBAR_MAX = 520;
 const NAV = 56;           // barre de navigation
 const DORMANT_AFTER = 2 * 60 * 60 * 1000;      // 2 h sans usage → veille
 const ARCHIVE_AFTER = 3 * 24 * 60 * 60 * 1000; // 3 j en veille → archive
@@ -103,35 +127,58 @@ function currentEngine() { return SEARCH_ENGINES.find((e) => e.id === searchEngi
 function searchUrl(q) { return currentEngine().url.replace('%s', encodeURIComponent(q)); }
 
 // ---------- état ----------
-let win, chrome;
-// Fermeture de NaX : les pages affichées sont détruites AVEC la fenêtre. Ce n'est pas une page qui se ferme
+// Chaque fenêtre NaX (normale ou privée) porte son propre état — onglets, groupes, vue affichée, calques, menus — dans
+// makeWindow(). Ici ne vit que ce qui est partagé par toutes : réglages, favoris, historique, archive, applis du rail,
+// téléchargements, autorisations, tâches Claude.
+const windows = [];          // fenêtres ouvertes (API renvoyée par makeWindow), dans l'ordre d'ouverture
+let lastFocusedWin = null;   // dernière fenêtre active : cible des actions sans fenêtre explicite (lien externe, 2e instance…)
+let privateWinSeq = 1;       // partitions mémoire des fenêtres privées
+// Fermeture de NaX : les pages affichées sont détruites AVEC leurs fenêtres. Ce n'est pas une page qui se ferme
 // d'elle-même : sans ce garde-fou, leur onglet serait retiré (et l'état enregistré sans lui).
 let quitting = false;
-const shuttingDown = () => quitting || !win || win.isDestroyed();
 let nextId = 1;
-let tabs = [];      // {id, url, title, favicon, groupId, lastActive, createdAt, view|null}
-let groups = [];    // {id, title|null}
 let apps = [];      // {id, name, url, icon?, shortcuts?: [{id, name, url}] (liste d'options au survol)}
 let railPins = [];  // favoris épinglés au rail : {id, kind:'fav'|'favfolder', favId}
 let archive = [];   // {url, title, favicon, closedAt, groupTitle}
 let history = {};   // url normalisée -> {title, url, count, last}
 let passwords = []; // {id, name, url, username, password} — chiffré au repos via safeStorage (DPAPI)
 let favorites = []; // {id, url, title, favicon}
-let current = null; // {kind:'tab'|'app', id}
-let sidebarOpen = true;
-let overlayOpen = false;
+let sidebarOpenDefault = true; // état de la liste d'onglets pour les nouvelles fenêtres (dernier choix de l'utilisateur)
 let theme = 'light'; // 'system' | 'light' | 'dark'
 let devMode = false;      // mode développeur : détecte les serveurs de dev locaux
+let betaFeatures = false; // fonctionnalités bêta (panneau Claude…) : masquées tant que ce réglage est coupé
 let devProjects = [];     // [{port, url, title}]
 let devTimer = null;
-let htmlFullscreen = false; // plein écran HTML demandé par une page (vidéo)
-let tabMRU = [];          // ids d'onglets par ordre d'utilisation (le plus récent en tête)
 let downloads = [];       // {id, filename, url, savePath, received, total, state, paused, ts}
 let dlNextId = 1;
 const dlItems = new Map(); // id -> DownloadItem (en cours)
 const permGrants = new Map(); // "origin|permission" -> bool (persisté entre les sessions)
-const appViews = new Map();
-let contentView = null; // vue actuellement attachée dans la zone principale
+
+// Fenêtre visée par une action globale : celle qui a le focus (ou dont un calque l'a), sinon la dernière active, sinon la première.
+function focusedWin() {
+  const live = windows.filter((w) => !w.isDestroyed());
+  const fb = BaseWindow.getFocusedWindow();
+  return (fb && live.find((w) => w.ownsWindow(fb))) || (lastFocusedWin && !lastFocusedWin.isDestroyed() ? lastFocusedWin : null) || live[0] || null;
+}
+// Fenêtre principale : la seule à porter le rail d'applis (session connectée) et le panneau Claude. Jamais une fenêtre privée.
+function mainWin() { return windows.find((w) => w.isMain && !w.isDestroyed()) || null; }
+function windowOfPage(wc) { return windows.find((w) => w.ownsPage(wc)) || null; }
+function dialogParent() { const w = focusedWin(); return w ? w.win : null; }
+function broadcast(ch, ...args) { for (const w of windows) w.sendChrome(ch, ...args); }
+function sendStateAll() { for (const w of windows) w.scheduleState(); }
+// ipcMain.handle n'accepte qu'un gestionnaire par canal : on en pose un seul, qui délègue à la fenêtre émettrice
+// (repli : la première fenêtre inscrite, pour les calques dont l'émetteur n'est pas l'interface principale).
+const ipcHandlers = new Map(); // canal -> Map(id du webContents émetteur -> fn)
+function handleFor(ch, senderId, fn) {
+  let m = ipcHandlers.get(ch);
+  if (!m) {
+    m = new Map(); ipcHandlers.set(ch, m);
+    ipcMain.handle(ch, (e, ...a) => { const f = m.get(e.sender.id) || m.values().next().value; return f ? f(e, ...a) : undefined; });
+  }
+  m.set(senderId, fn);
+}
+function unregisterHandles(senderId) { for (const m of ipcHandlers.values()) m.delete(senderId); }
+ipcMain.setMaxListeners(0); // un gestionnaire par fenêtre et par canal : plus de 10 fenêtres ne doit pas déclencher d'avertissement
 
 // ---------- Claude (tâches IA via le CLI Claude Code — utilise l'abonnement, aucune clé API) ----------
 const CLAUDE_W = 400;          // largeur du panneau latéral (doit suivre --claude-w dans style.css)
@@ -153,6 +200,7 @@ let zoomHosts = {};          // hôte -> facteur de zoom mémorisé
 let spellcheckOn = false;
 let spellLangs = ['fr'];     // langues du correcteur + langues préférées des pages
 let acceptLanguage = 'fr';
+let uiLang = I18N.defaultLang; // langue de l'interface (Paramètres › Langues)
 let permDefaults = { notifications: 'ask', geolocation: 'ask', media: 'ask', popups: 'allow' };
 function newTabTarget() { return newTabUrl === 'blank' ? 'about:blank' : (newTabUrl || homepage); }
 function defaultDownloadDir() { return downloadDir || app.getPath('downloads'); }
@@ -164,6 +212,21 @@ function applyLanguages() {
   const ordered = [];
   for (const l of base) { if (!ordered.includes(l)) ordered.push(l); const p = l.split('-')[0]; if (!ordered.includes(p)) ordered.push(p); }
   acceptLanguage = ordered.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
+}
+// Langue de l'interface changée : menus natifs reconstruits, fenêtres flottantes rechargées dans la nouvelle langue
+// (la fenêtre principale se retraduit à chaud à réception de l'état).
+function setUiLang(code) {
+  uiLang = code; I18N.setLang(code);
+  buildMenu();
+  setupJumpList();
+  for (const wc of webContents.getAllWebContents()) translateHome(wc); // onglets déjà ouverts sur la page d'accueil
+  for (const wc of webContents.getAllWebContents()) {
+    let u; try { u = new URL(wc.getURL()); } catch { continue; }
+    if (u.protocol !== 'file:' || !/\/ui\/(?!index\.html|home\.html)[a-z]+\.html$/.test(u.pathname)) continue;
+    u.searchParams.set('lang', code);
+    try { wc.loadURL(u.href); } catch {}
+  }
+  sendStateAll();
 }
 function applySpellcheck(ses) {
   try { ses.setSpellCheckerEnabled(!!spellcheckOn); } catch {}
@@ -194,12 +257,7 @@ function configureSession(ses) {
 // webContents d'une vue, ou null si elle est détruite. Une page qui appelle window.close() détruit son webContents :
 // view.webContents devient alors undefined (et non un objet « isDestroyed »), donc tout accès direct peut planter.
 function wcOf(view) { try { const w = view && view.webContents; return w && !w.isDestroyed() ? w : null; } catch { return null; } }
-function allWebContents() {
-  const list = [];
-  for (const t of tabs) { const w = wcOf(t.view); if (w) list.push(w); }
-  for (const v of appViews.values()) { const w = wcOf(v); if (w) list.push(w); }
-  return list;
-}
+function allWebContents() { const list = []; for (const w of windows) list.push(...w.pageWebContents()); return list; }
 function applyZoom(wc) { try { if (!wc || wc.isDestroyed()) return; const host = hostOf(wc.getURL()); const f = (host && zoomHosts[host]) || defaultZoom || 1; wc.setZoomFactor(f); } catch {} }
 function applyZoomToAll() { for (const wc of allWebContents()) applyZoom(wc); }
 function zoomStep(wc, dir) {
@@ -220,98 +278,35 @@ function zoomReset(wc) {
 }
 
 // ---------- vue divisée : le volet droit est un VRAI onglet, lié à son onglet parent ----------
-let splitView = null;   // vue de l'onglet secondaire affichée à droite (null hors paire active)
-let splitMode = null;   // 'shared' | 'private' (déduit de l'onglet secondaire)
-let splitRatio = 0.5;   // largeur relative du volet gauche
+// (l'état d'affichage — splitView, splitMode, splitRatio — est propre à chaque fenêtre : voir makeWindow)
 let splitSeq = 1;       // compteur pour des partitions privées uniques
 const SPLIT_GAP = 6;    // écart entre les deux volets (zone du séparateur)
 function splitPartition(mode) {
   // TODO (profil persistant) : pour un profil conservé entre les lancements, renvoyer `persist:nax-profile-<nom>`.
   if (mode === 'private') return 'nax-private-' + (splitSeq++); // en mémoire, stable pour l'onglet → login conservé le temps de la session
-  return null; // partagé : session par défaut (même connexion qu'à gauche)
+  return null; // partagé : session de la fenêtre (par défaut, ou celle de la fenêtre privée)
 }
 const isPrivate = (t) => !!(t && t.partition && String(t.partition).startsWith('nax-private')); // navigation privée (jetable)
 const isIsolated = (t) => !!(t && t.partition); // session isolée (privée ou autre profil) → pas d'historique/archive partagés
-function secondaryOf(tab) { return tab ? tabs.find((t) => t.splitParent === tab.id) : null; }
-function pairOf(tab) {
-  if (!tab) return null;
-  if (tab.splitParent) { const p = tabById(tab.splitParent); return p ? { primary: p, secondary: tab } : null; }
-  const s = secondaryOf(tab); return s ? { primary: tab, secondary: s } : null;
-}
-function setSplitView(view) {
-  if (splitView === view) return;
-  if (splitView) { try { win.contentView.removeChildView(splitView); } catch {} } // détache l'affichage sans fermer l'onglet
-  splitView = view || null;
-  if (splitView) { try { win.contentView.addChildView(splitView); } catch {} splitView.setVisible(!overlayOpen); }
-  layout();
-}
-// Affiche l'onglet courant : seul, ou en paire (primaire à gauche, secondaire à droite).
-function showActive() {
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : (current && current.kind === 'app' ? null : null);
-  if (current && current.kind === 'app') { const v = appViews.get(current.id); attach(v || null); setSplitView(null); splitMode = null; return; }
-  const pair = cur ? pairOf(cur) : null;
-  if (pair) {
-    wakeTab(pair.primary); wakeTab(pair.secondary);
-    pair.primary.lastActive = pair.secondary.lastActive = Date.now(); // les deux restent éveillés
-    attach(pair.primary.view);
-    setSplitView(pair.secondary.view);
-    splitMode = pair.secondary.partition ? 'private' : 'shared';
-  } else {
-    attach(cur ? cur.view : null);
-    setSplitView(null);
-    splitMode = null;
-  }
-}
-// Change la session d'un onglet (normale ⇄ privée) en recréant sa vue ; la page se recharge.
-function setTabSession(id, makePrivate) {
-  const tab = tabById(id); if (!tab) return;
-  if (!!tab.partition === !!makePrivate) return; // déjà dans l'état voulu
-  if (makePrivate) tab.partition = splitPartition('private'); else delete tab.partition;
-  if (tab.splitMode) tab.splitMode = makePrivate ? 'private' : 'shared';
-  if (tab.view) {
-    const w = wcOf(tab.view);
-    if (w) tab.url = w.getURL() || tab.url;
-    if (contentView === tab.view) attach(null);
-    if (splitView === tab.view) setSplitView(null);
-    if (w) w.close();
-  }
-  tab.view = null;
-  wakeTab(tab); // recrée la vue dans la nouvelle session et recharge l'URL
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
-  const pair = cur ? pairOf(cur) : null;
-  if (isCurrentTab(id) || (pair && (pair.primary.id === id || pair.secondary.id === id))) showActive();
-  sendState();
-}
-function openSplit(mode) {
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
-  if (!cur || cur.splitParent || secondaryOf(cur)) return; // pas déjà dans une paire
-  mode = mode === 'private' ? 'private' : 'shared';
-  const b = newTab({ url: cur.url, openerId: cur.id, activate: false, partition: splitPartition(mode), splitParent: cur.id });
-  b.splitMode = mode;
-  activateTab(cur.id); // réaffiche en montrant la paire
-}
-function closeSplit() {
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
-  const pair = cur ? pairOf(cur) : null;
-  if (pair) closeTab(pair.secondary.id); // ferme le volet secondaire (c'est un onglet)
-}
-
 // ---------- persistance ----------
+// state.json : réglages, données partagées et fenêtres. Les champs plats tabs/groups/currentTabId décrivent la fenêtre
+// principale (lisibles par une version de NaX antérieure au multi-fenêtre) ; `windows` liste toutes les fenêtres normales.
+// Les fenêtres privées ne sont jamais écrites sur le disque.
 function load() {
+  let saved = [];
   try {
     const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
     nextId = s.nextId || 1;
-    tabs = (s.tabs || []).map((t) => ({ ...t, view: null }));
-    groups = s.groups || [];
     apps = s.apps && s.apps.length ? s.apps : DEFAULT_APPS;
     railPins = Array.isArray(s.railPins) ? s.railPins : [];
     archive = s.archive || [];
     history = s.history || {};
     favorites = (s.favorites || []).map(favMigrate);
-    sidebarOpen = s.sidebarOpen !== false;
+    sidebarOpenDefault = s.sidebarOpen !== false;
     if (s.sidebarWidth) sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, s.sidebarWidth));
     if (['system', 'light', 'dark'].includes(s.theme)) theme = s.theme;
     devMode = !!s.devMode;
+    betaFeatures = !!s.betaFeatures;
     if (s.searchEngine && SEARCH_ENGINES.some((e) => e.id === s.searchEngine)) searchEngine = s.searchEngine;
     if (s.perms) for (const [k, v] of Object.entries(s.perms)) permGrants.set(k, v);
     // l'ancien défaut (Google) passe à la page d'accueil de NaX ; un autre choix de l'utilisateur est conservé
@@ -324,14 +319,24 @@ function load() {
     if (s.zoomHosts && typeof s.zoomHosts === 'object') zoomHosts = s.zoomHosts;
     spellcheckOn = !!s.spellcheckOn;
     if (Array.isArray(s.spellLangs) && s.spellLangs.length) spellLangs = s.spellLangs;
+    if (I18N.isKnown(s.uiLang)) uiLang = s.uiLang;
+    I18N.setLang(uiLang); // avant loadClaudeTasks : ses messages sont traduits
     if (s.permDefaults && typeof s.permDefaults === 'object') permDefaults = { ...permDefaults, ...s.permDefaults };
+    if (s.shortcuts && typeof s.shortcuts === 'object') for (const [k, v] of Object.entries(s.shortcuts)) if (typeof v === 'string') shortcutKeys[k] = v;
+    saved = Array.isArray(s.windows) && s.windows.length
+      ? s.windows
+      : [{ tabs: s.tabs || [], groups: s.groups || [], currentTabId: s.currentTabId || null, sidebarOpen: s.sidebarOpen !== false }];
+    // un transfert en cours à la fermeture ne peut pas reprendre : il est marqué interrompu
+    downloads = (Array.isArray(s.downloads) ? s.downloads : []).map((d) => (d.state === 'progressing' || d.state === 'paused') ? { ...d, state: 'interrupted', paused: false } : d);
+    dlNextId = Math.max(s.dlNextId || 1, ...downloads.map((d) => (d.id || 0) + 1));
     loadClaudeTasks(s);
-    return s.currentTabId || null;
   } catch {
     apps = DEFAULT_APPS;
+    I18N.setLang(uiLang);
     loadClaudeTasks(null);
-    return null;
   }
+  I18N.setLang(uiLang);
+  return saved; // fenêtres à restaurer : [{tabs, groups, currentTabId, sidebarOpen, bounds?, maximized?}]
 }
 // Charge les tâches Claude depuis leur fichier dédié (migration depuis state.json au premier passage).
 function loadClaudeTasks(stateFallback) {
@@ -342,7 +347,7 @@ function loadClaudeTasks(stateFallback) {
   }
   if (!c) return;
   // celles encore « running » à la fermeture sont marquées interrompues
-  claudeTasks = (c.tasks || []).map((t) => (t.status === 'running' ? { ...t, status: 'error', error: 'Interrompue à la fermeture de NaX', finishedAt: t.finishedAt || Date.now() } : t));
+  claudeTasks = (c.tasks || []).map((t) => (t.status === 'running' ? { ...t, status: 'error', error: tr('Interrompue à la fermeture de NaX'), finishedAt: t.finishedAt || Date.now() } : t));
   claudeNextId = c.nextId || claudeTasks.reduce((m, t) => Math.max(m, t.id || 0), 0) + 1;
   claudeOpen = !!c.claudeOpen;
   persistClaudeTasks(); // écrit le fichier dédié dès le chargement (migration comprise)
@@ -356,12 +361,17 @@ function persistClaudeTasks() {
 }
 function snapshot() {
   railPins = railPins.filter((p) => favFind(p.favId)); // un favori supprimé emporte son épingle
+  const normals = windows.filter((w) => !w.isPrivate); // à la fermeture de NaX les fenêtres sont déjà détruites mais encore listées
+  const main = normals.find((w) => w.isMain) || normals[0] || null;
+  const flat = main ? main.snapshotWindow() : { tabs: [], groups: [], currentTabId: null, sidebarOpen: sidebarOpenDefault };
   return {
-    nextId, groups, apps, railPins, archive, history, favorites, sidebarOpen, sidebarWidth, theme, devMode, searchEngine,
-    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
+    nextId, groups: flat.groups, apps, railPins, archive, history, favorites, sidebarOpen: flat.sidebarOpen, sidebarWidth, theme, devMode, betaFeatures, searchEngine,
+    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, uiLang, permDefaults, shortcuts: shortcutKeys,
     perms: Object.fromEntries(permGrants),
-    tabs: tabs.filter((t) => !isPrivate(t)).map(({ view, ...t }) => t), // onglets privés non persistés (rien sur le disque)
-    currentTabId: current && current.kind === 'tab' ? current.id : null,
+    tabs: flat.tabs, // onglets privés non persistés (rien sur le disque)
+    currentTabId: flat.currentTabId,
+    windows: normals.map((w) => w.snapshotWindow()),
+    downloads, dlNextId,
   };
 }
 let saveTimer = null;
@@ -415,13 +425,13 @@ async function clearBrowsingData(opts = {}) {
   if (opts.history) { history = {}; }
   if (opts.archive) { archive = []; }
   if (opts.perms) { permGrants.clear(); }
-  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); }
+  if (opts.downloads) { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); }
   try {
     if (opts.cookies) await ses.clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'websql', 'filesystem'] });
     if (opts.cache) { await ses.clearCache(); await ses.clearStorageData({ storages: ['cachestorage', 'shadercache'] }); }
   } catch {}
   persist();
-  sendState();
+  sendStateAll();
   return browsingDataStats();
 }
 
@@ -459,20 +469,20 @@ function parseCsv(text) {
   return rows;
 }
 async function importPasswordsCsv() {
-  if (!safeStorage.isEncryptionAvailable()) return { error: 'Le chiffrement sécurisé est indisponible sur ce système.' };
-  const res = await dialog.showOpenDialog(win, {
-    title: 'Importer le CSV exporté depuis Chrome',
+  if (!safeStorage.isEncryptionAvailable()) return { error: tr('Le chiffrement sécurisé est indisponible sur ce système.') };
+  const res = await dialog.showOpenDialog(dialogParent(), {
+    title: tr('Importer le CSV exporté depuis Chrome'),
     filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'],
   });
   if (res.canceled || !res.filePaths[0]) return { canceled: true };
   const file = res.filePaths[0];
   let rows;
-  try { rows = parseCsv(fs.readFileSync(file, 'utf8')); } catch { return { error: 'Lecture du fichier impossible.' }; }
+  try { rows = parseCsv(fs.readFileSync(file, 'utf8')); } catch { return { error: tr('Lecture du fichier impossible.') }; }
   if (rows.length < 2) return { imported: 0, updated: 0, total: passwords.length, file };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const col = (...names) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i; } return -1; };
   const ci = { name: col('name', 'title'), url: col('url', 'origin_url', 'origin'), user: col('username', 'username_value', 'login'), pass: col('password', 'password_value') };
-  if (ci.pass < 0) return { error: 'Colonne « password » introuvable. Est-ce bien un export Chrome ?' };
+  if (ci.pass < 0) return { error: tr('Colonne « password » introuvable. Est-ce bien un export Chrome ?') };
   let imported = 0, updated = 0;
   for (const r of rows.slice(1)) {
     if (!r.length || r.every((c) => !c)) continue;
@@ -487,11 +497,6 @@ async function importPasswordsCsv() {
   persistPasswords();
   return { imported, updated, total: passwords.length, file };
 }
-
-// ---------- helpers ----------
-const tabById = (id) => tabs.find((t) => t.id === id);
-const groupById = (id) => groups.find((g) => g.id === id);
-const isCurrentTab = (id) => !!current && current.kind === 'tab' && current.id === id;
 
 function normalize(url) {
   try {
@@ -530,403 +535,23 @@ function toUrl(input) {
   return searchUrl(s);
 }
 
-// Titre déduit d'un groupe : requête Google du 1er onglet, sinon son titre, sinon son domaine.
-function groupTitle(g) {
-  if (!g) return '';
-  if (g.title) return g.title;
-  const root = tabs.find((t) => t.groupId === g.id);
-  if (!root) return '';
-  try {
-    const u = new URL(root.url);
-    if (u.hostname.includes('google.') && u.pathname === '/search' && u.searchParams.get('q')) return u.searchParams.get('q');
-  } catch {}
-  return root.title || hostOf(root.url);
-}
-
-// ---------- layout ----------
-function mainBounds() {
-  const { width, height } = win.getContentBounds();
-  const x = RAIL + (sidebarOpen ? sidebarWidth : 0);
-  const right = claudeOpen ? CLAUDE_W : 0; // place du panneau Claude
-  return { x, y: NAV, width: Math.max(0, width - x - right), height: Math.max(0, height - NAV) };
-}
-function layout() {
-  const { width, height } = win.getContentBounds();
-  if (htmlFullscreen && contentView) {
-    // plein écran HTML (vidéo) : la page couvre toute la fenêtre, l'interface est masquée
-    chrome.setVisible(false);
-    contentView.setBounds({ x: 0, y: 0, width, height });
-    return;
-  }
-  chrome.setVisible(true);
-  chrome.setBounds({ x: 0, y: 0, width, height });
-  const b = mainBounds();
-  if (splitView) {
-    const leftW = Math.max(140, Math.round((b.width - SPLIT_GAP) * splitRatio));
-    const rightW = Math.max(140, b.width - SPLIT_GAP - leftW);
-    if (contentView) contentView.setBounds({ x: b.x, y: b.y, width: leftW, height: b.height });
-    splitView.setBounds({ x: b.x + leftW + SPLIT_GAP, y: b.y, width: rightW, height: b.height });
-  } else if (contentView) {
-    contentView.setBounds(b);
-  }
-}
-function attach(view) {
-  if (contentView === view) return;
-  if (contentView) win.contentView.removeChildView(contentView);
-  contentView = view;
-  hideLinkStatus(); // la bulle d'adresse appartenait à la page qu'on quitte
-  if (view) {
-    win.contentView.addChildView(view);
-    view.setVisible(!overlayOpen);
-    // garde le volet droit au-dessus dans l'ordre d'empilement
-    if (splitView) { try { win.contentView.removeChildView(splitView); win.contentView.addChildView(splitView); } catch {} }
-  }
-  layout();
-}
-
-// ---------- état → UI ----------
-// L'ordre d'affichage des groupes suit l'ordre des onglets (premier onglet de chaque groupe), et non l'ordre de
-// création de la liste groups : sinon un groupe déplacé ne bouge pas à l'écran, et un onglet déposé entre deux
-// groupes (nouveau groupe, ajouté en fin de liste) s'affiche toujours en dernier.
-function orderedGroups() {
-  const rank = new Map();
-  for (const t of tabs) if (!rank.has(t.groupId)) rank.set(t.groupId, rank.size);
-  return [...groups].sort((x, y) => (rank.has(x.id) ? rank.get(x.id) : 1e9) - (rank.has(y.id) ? rank.get(y.id) : 1e9));
-}
-let stateScheduled = false;
-function sendState() {
-  if (stateScheduled) return;
-  stateScheduled = true;
-  setImmediate(() => {
-    stateScheduled = false;
-    const wc = currentWC();
-    const live = wc && !wc.isDestroyed();
-    const ct = current && current.kind === 'tab' ? tabById(current.id) : null;
-    chrome.webContents.send('state', {
-      tabs: tabs.map(({ view, ...t }) => { const w = wcOf(view); return { ...t, dormant: !w, loading: !!w && w.isLoading() }; }),
-      groups: orderedGroups().map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
-      apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
-      railPins: railPins.map((p) => {
-        const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît
-        const n = r.node;
-        return n.type === 'folder'
-          ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || 'Dossier', icon: n.icon || null, color: n.color || null, count: (n.children || []).length }
-          : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
-      }).filter(Boolean),
-      claudeOpen, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
-      favorites, favActive: !!(ct && favByUrl(ct.url)),
-      devMode, devProjects,
-      searchEngine, searchEngines: SEARCH_ENGINES.map((e) => ({ id: e.id, name: e.name })),
-      archiveCount: archive.length,
-      nav: live ? {
-        url: (ct && isErrorPage(wc.getURL()) && ct.errorURL) ? ct.errorURL : wc.getURL(),
-        title: wc.getTitle(), loading: wc.isLoading(),
-        canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(),
-      } : { url: '', title: '', loading: false, canGoBack: false, canGoForward: false },
-      navPrivate: !!(ct && ct.partition && String(ct.partition).startsWith('nax-private')),
-      split: (() => {
-        const p = ct ? pairOf(ct) : null;
-        return p ? { active: true, mode: splitMode, primaryId: p.primary.id, secondaryId: p.secondary.id } : { active: false };
-      })(),
-      splitRatio,
-      splitNav: (splitView && !splitView.webContents.isDestroyed()) ? {
-        url: splitView.webContents.getURL(), title: splitView.webContents.getTitle(),
-        loading: splitView.webContents.isLoading(),
-        canGoBack: splitView.webContents.navigationHistory.canGoBack(),
-        canGoForward: splitView.webContents.navigationHistory.canGoForward(),
-      } : null,
-    });
-    persist();
-  });
-}
-function currentWC() {
-  if (!current) return null;
-  if (current.kind === 'tab') { const t = tabById(current.id); return t ? wcOf(t.view) : null; }
-  return wcOf(appViews.get(current.id));
-}
-// Vue réellement affichée (celle attachée), pour les actions qui doivent viser l'écran (recherche…).
-function visibleWC() { return wcOf(contentView) || currentWC(); }
-
-// ---------- onglets ----------
-const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'page-favicon-updated'];
-function createView(onEvent, partition) {
-  const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
-  configureSession(view.webContents.session);
-  for (const ev of NAV_EVENTS) view.webContents.on(ev, (...args) => onEvent(ev, ...args));
-  wirePageBasics(view.webContents);
-  return view;
-}
-// Comportements de navigateur communs à toutes les pages (onglets, volets, applis du rail).
-function wirePageBasics(wc) {
-  // « Quitter la page ? » : sans ce gestionnaire, Electron annule la navigation EN SILENCE
-  // dès que la page a des modifications non enregistrées (beforeunload) — taper une adresse ne faisait rien.
-  wc.on('will-prevent-unload', (e) => {
-    const choice = dialog.showMessageBoxSync(win, {
-      type: 'question', buttons: ['Quitter la page', 'Rester'], defaultId: 1, cancelId: 1, noLink: true,
-      title: 'Quitter la page ?', message: 'Quitter cette page ?',
-      detail: 'Les modifications que tu as apportées ne seront peut-être pas enregistrées.',
-    });
-    if (choice === 0) e.preventDefault(); // preventDefault = ignorer le beforeunload et laisser partir
-  });
-  // adresse du lien survolé, en bas à gauche de la page (vérifier où mène un lien avant de cliquer)
-  wc.on('update-target-url', (_e, url) => showLinkStatus(wc, url));
-  // page figée (boucle infinie…) : on propose de l'arrêter, seulement si elle est à l'écran
-  let hangAsked = false;
-  wc.on('unresponsive', async () => {
-    if (hangAsked || !isOnScreen(wc)) return;
-    hangAsked = true;
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'warning', buttons: ['Attendre', 'Arrêter la page'], defaultId: 0, cancelId: 0, noLink: true,
-      title: 'Page figée', message: 'Cette page ne répond pas',
-      detail: `${hostOf(wc.getURL()) || 'La page'} ne répond plus. Tu peux attendre qu’elle reprenne, ou l’arrêter (elle pourra être rechargée).`,
-    }).catch(() => ({ response: 0 }));
-    hangAsked = false;
-    if (response === 1 && !wc.isDestroyed()) wc.forcefullyCrashRenderer(); // → render-process-gone → page « Oups »
-  });
-}
 // Les vues d'interface (liste d'onglets, menus, calques…) ont accès à window.api, mots de passe compris :
 // elles ne doivent JAMAIS charger autre chose que leur fichier. Sans ce verrou, un lien glissé-déposé sur la
 // liste d'onglets (ou cliqué dans l'aperçu Markdown) remplaçait l'interface par la page, qui héritait du pont.
-// Le lien s'ouvre à la place dans un nouvel onglet, comme dans Chrome.
-function lockUiContents(wc) {
-  const openInTab = (url) => { if (/^(https?|file):/i.test(url || '')) newTab({ url }); };
-  wc.on('will-navigate', (e, url) => { e.preventDefault(); openInTab(url); });
+// Le lien s'ouvre à la place dans un nouvel onglet, comme dans Chrome (openInTab : ouverture dans la fenêtre propriétaire).
+function lockUiContents(wc, openInTab = null) {
+  const open = (url) => {
+    if (!/^(https?|file):/i.test(url || '')) return;
+    if (openInTab) openInTab(url); else { const w = focusedWin(); if (w) w.newTab({ url }); }
+  };
+  wc.on('will-navigate', (e, url) => { e.preventDefault(); open(url); });
   wc.on('will-redirect', (e) => e.preventDefault());
-  wc.setWindowOpenHandler(({ url }) => { openInTab(url); return { action: 'deny' }; });
+  wc.setWindowOpenHandler(({ url }) => { open(url); return { action: 'deny' }; });
 }
-function isOnScreen(wc) { return [contentView, splitView].some((v) => v && wcOf(v) === wc); }
-
-// Bulle d'adresse du lien survolé : dessinée dans l'overlay des tooltips (au-dessus des vues natives),
-// calée en bas à gauche de la vue qui l'a émise (page principale ou volet de droite).
-function showLinkStatus(wc, url) {
-  if (!tipWin || tipWin.isDestroyed()) return;
-  const view = [contentView, splitView].find((v) => v && wcOf(v) === wc);
-  let text = '';
-  if (url && view && !overlayOpen) { try { text = decodeURI(url); } catch { text = url; } }
-  const payload = text ? { text, bounds: view.getBounds(), dark: nativeTheme.shouldUseDarkColors } : null;
-  try { tipWin.webContents.send('link-status', payload); } catch {}
-}
-function hideLinkStatus() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('link-status', null); } catch {} } }
-
 // Fenêtres de connexion : les fournisseurs d'identité ouvrent un popup qui dialogue avec la page d'origine
 // (window.opener, postMessage) puis se ferme seul. Converti en onglet, ce lien serait perdu et la connexion n'aboutirait pas.
 const AUTH_POPUP_HOSTS = /(^|\.)(accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|appleid\.apple\.com|id\.atlassian\.com|okta\.com|auth0\.com)$/i;
 function isAuthPopupUrl(url) { try { const u = new URL(url); return u.protocol === 'https:' && AUTH_POPUP_HOSTS.test(u.hostname); } catch { return false; } }
-function authPopupOptions() {
-  return { action: 'allow', overrideBrowserWindowOptions: { parent: win, width: 520, height: 720, title: 'Connexion', autoHideMenuBar: true, minimizable: false, webPreferences: { sandbox: true } } };
-}
-function wakeTab(tab) {
-  if (tab.view) return;
-  tab.view = createView((ev, _e, arg) => {
-    const wc = wcOf(tab.view);
-    if (!wc) return;
-    const onErr = isErrorPage(wc.getURL());
-    if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0]) tab.favicon = arg[0];
-    if (ev === 'did-navigate') { tab.url = onErr ? (tab.errorURL || tab.url) : wc.getURL(); if (!onErr) { tab.favicon = null; tab.errorURL = null; } }
-    if (ev === 'did-navigate-in-page') { if (!onErr) tab.url = wc.getURL(); }
-    if (ev === 'page-title-updated') { if (!onErr) tab.title = wc.getTitle(); }
-    if (ev === 'did-stop-loading' && !onErr) {
-      tab.title = wc.getTitle() || tab.title;
-      // navigation privée / session isolée : aucune trace dans l'historique
-      if (!isIsolated(tab) && !/^view-source:/i.test(tab.url)) {
-        const key = normalize(tab.url);
-        const h = history[key] || { count: 0 };
-        history[key] = { title: tab.title, url: tab.url, count: h.count + 1, last: Date.now() };
-      }
-    }
-    if (isCurrentTab(tab.id)) win.setTitle((onErr ? hostOf(tab.url) : tab.title) || 'NaX');
-    sendState();
-  }, tab.partition);
-  const view = tab.view;
-  const wc = view.webContents;
-  // La page se ferme d'elle-même (window.close() : fin d'un flux de connexion, par exemple) : on ferme l'onglet.
-  // Si tab.view n'est plus cette vue, c'est une fermeture voulue (sleepTab / closeTab) déjà prise en charge.
-  wc.on('destroyed', () => {
-    if (tab.view !== view || shuttingDown()) return;
-    if (contentView === view) attach(null);
-    if (splitView === view) setSplitView(null);
-    tab.view = null;
-    closeTab(tab.id, { toArchive: false });
-  });
-  wc.setWindowOpenHandler(({ url, disposition }) => {
-    // connexion (Google, Microsoft, Okta…) : vraie fenêtre fille, pour que window.opener / postMessage fonctionnent
-    if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
-    // blocage des pop-ups : uniquement les fenêtres scriptées (window.open avec options), pas les liens _blank
-    if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
-    if (isExternalScheme(url)) { openExternalFrom(wc, url); return { action: 'deny' }; }
-    newTab({ url, openerId: tab.id, activate: disposition !== 'background-tab' });
-    return { action: 'deny' };
-  });
-  wc.on('context-menu', (_e, params) => pageContextMenu(wc, params, tab.id));
-  wc.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
-  wc.on('enter-html-full-screen', () => { if (isCurrentTab(tab.id)) enterHtmlFullscreen(); });
-  wc.on('leave-html-full-screen', () => leaveHtmlFullscreen());
-  // Recherche de la page d'accueil (ui/home.html) : le formulaire part en nax-home://search?q=…
-  // et la recherche suit le moteur choisi. Aucune API n'est exposée aux pages.
-  wc.on('will-navigate', (e, url) => {
-    const m = /^nax-home:\/\/search\?(.*)$/i.exec(url);
-    if (!m) return;
-    e.preventDefault();
-    const q = new URLSearchParams(m[1]).get('q');
-    if (q && q.trim()) navigateCurrent(q);
-  });
-  wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
-    // -3 = requête abandonnée (navigation normale), on ignore ; on ignore aussi les échecs de la page d'erreur elle-même
-    if (isMainFrame && code !== -3 && !isErrorPage(failedUrl) && failedUrl && failedUrl !== 'about:blank') loadErrorPage(tab, failedUrl, code, desc);
-  });
-  // La page a planté (mémoire, bug, arrêt forcé) : sinon l'onglet resterait blanc, sans rien pour le relancer.
-  wc.on('render-process-gone', (_e, d) => {
-    if (tab.view !== view || d.reason === 'clean-exit') return; // fermeture voulue (veille, fermeture)
-    loadErrorPage(tab, tab.errorURL || tab.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
-  });
-  // Injecte l'overlay « Détacher la vidéo » (PiP) + applique le zoom (par site ou par défaut) à chaque chargement.
-  wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(PIP_INJECT).catch(() => {}); applyZoom(wc); });
-  wc.loadURL(tab.url);
-}
-
-function sleepTab(tab) {
-  if (!tab.view || isCurrentTab(tab.id)) return;
-  // ne pas endormir un volet actuellement affiché dans la vue divisée
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
-  const pair = cur ? pairOf(cur) : null;
-  if (pair && (tab.id === pair.primary.id || tab.id === pair.secondary.id)) return;
-  const v = tab.view; tab.view = null;
-  const w = wcOf(v); if (w) w.close();
-  sendState();
-}
-
-function newTab({ url = newTabTarget(), openerId = null, groupId = null, activate = true, partition = null, splitParent = null } = {}) {
-  const opener = openerId ? tabById(openerId) : null;
-  let gid = groupId ?? (opener ? opener.groupId : null);
-  if (gid == null) { gid = nextId++; groups.push({ id: gid, title: null }); }
-  const tab = { id: nextId++, url, title: hostOf(url), favicon: null, groupId: gid, lastActive: Date.now(), createdAt: Date.now(), view: null };
-  if (partition) tab.partition = partition;
-  if (splitParent) tab.splitParent = splitParent;
-  // insérer à la fin de l'îlot de l'ouvreur pour le garder contigu et dans l'ordre d'ouverture
-  let idx = tabs.length;
-  if (opener) { idx = tabs.indexOf(opener) + 1; while (idx < tabs.length && tabs[idx].groupId === gid) idx++; }
-  tabs.splice(idx, 0, tab);
-  wakeTab(tab);
-  if (activate) activateTab(tab.id); else sendState();
-  return tab;
-}
-
-function activateTab(id) {
-  let tab = tabById(id);
-  if (!tab) return;
-  // cliquer le volet secondaire active la paire ; le primaire reste le pilote de gauche
-  const pair = pairOf(tab);
-  const activeTab = pair ? pair.primary : tab;
-  wakeTab(activeTab);
-  // arriver sur un onglet d'un groupe replié (Ctrl+Tab, cycle…) déplie le groupe, sinon l'onglet actif reste invisible
-  const grp = groupById(activeTab.groupId);
-  if (grp && grp.collapsed) grp.collapsed = false;
-  activeTab.lastActive = Date.now();
-  tabMRU = [activeTab.id, ...tabMRU.filter((x) => x !== activeTab.id)]; // ordre d'utilisation : le plus récent en tête
-  current = { kind: 'tab', id: activeTab.id };
-  showActive();
-  { const w = wcOf(activeTab.view); if (w) w.focus(); }
-  win.setTitle(activeTab.title || 'NaX');
-  hidePeek(); hideFind();
-  sendState();
-}
-// Dernier onglet utilisé (hors onglet courant) : pour Ctrl+Tab.
-function lastUsedTab() {
-  const cur = current && current.kind === 'tab' ? current.id : null;
-  for (const id of tabMRU) if (id !== cur && tabById(id)) return id;
-  const other = tabs.find((t) => t.id !== cur); return other ? other.id : null;
-}
-
-function closeTab(id, { toArchive = true } = {}) {
-  const idx = tabs.findIndex((t) => t.id === id);
-  if (idx < 0) return;
-  const tab = tabs[idx];
-  // si on ferme le volet primaire, son secondaire redevient un onglet normal
-  const sec = secondaryOf(tab);
-  if (sec) { delete sec.splitParent; delete sec.splitMode; }
-  const g = groupById(tab.groupId);
-  // les onglets en session isolée (privée/profil) ne vont pas dans l'archive
-  if (toArchive && !isIsolated(tab) && tab.url && normalize(tab.url) !== normalize(homepage)) {
-    archive.unshift({ url: tab.url, title: tab.title, favicon: tab.favicon, closedAt: Date.now(), groupTitle: groupTitle(g) });
-    if (archive.length > 2000) archive.length = 2000;
-  }
-  tabs.splice(idx, 1);
-  tabMRU = tabMRU.filter((x) => x !== id);
-  if (!tabs.some((t) => t.groupId === tab.groupId)) groups = groups.filter((x) => x.id !== tab.groupId);
-  const wasCurrent = isCurrentTab(id);
-  if (tab.view) { if (contentView === tab.view) attach(null); if (splitView === tab.view) setSplitView(null); const w = wcOf(tab.view); if (w) w.close(); tab.view = null; }
-  if (wasCurrent) {
-    current = null;
-    // le dernier onglet utilisé d'abord, sinon un voisin du même groupe, sinon l'onglet à la même position
-    const mru = tabMRU.find((x) => tabById(x));
-    const next = (mru && tabById(mru)) || tabs.find((t) => t.groupId === tab.groupId) || tabs[Math.min(idx, tabs.length - 1)];
-    if (next) activateTab(next.id); else newTab();
-  } else { showActive(); sendState(); }
-}
-
-// Dédoublonnage : si l'URL est déjà ouverte, on y va au lieu d'ouvrir une 2e fois.
-function navigateCurrent(input) {
-  const url = toUrl(input);
-  if (!url) return;
-  if (isExternalScheme(url)) {
-    let scheme = ''; try { scheme = new URL(url).protocol.toLowerCase(); } catch {}
-    if (scheme && !BLOCKED_SCHEMES.has(scheme)) shell.openExternal(url).catch(() => {});
-    return;
-  }
-  const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
-  const dup = tabs.find((t) => t !== cur && sameTarget(url, t.url));
-  if (dup) {
-    // un onglet vierge fraîchement ouvert n'a pas de raison de rester
-    if (cur && normalize(cur.url) === normalize(homepage) && cur.createdAt > Date.now() - 5 * 60 * 1000) closeTab(cur.id, { toArchive: false });
-    activateTab(dup.id);
-    return;
-  }
-  const curWc = cur ? wcOf(cur.view) : null;
-  if (curWc) curWc.loadURL(url);
-  else newTab({ url });
-}
-
-// ---------- organisation manuelle (drag & drop) ----------
-// Invariant : les onglets d'un même groupe sont contigus dans `tabs`, et l'ordre des groupes
-// suit la 1re apparition. On réordonne librement puis on renormalise pour tenir l'invariant.
-function normalizeGroups() {
-  const order = []; const seen = new Set();
-  for (const t of tabs) if (!seen.has(t.groupId)) { seen.add(t.groupId); order.push(t.groupId); }
-  const byGroup = new Map(order.map((g) => [g, []]));
-  for (const t of tabs) byGroup.get(t.groupId).push(t);
-  tabs = order.flatMap((g) => byGroup.get(g));
-}
-// Déplace un onglet : réordonner, rejoindre un groupe, ou en sortir (nouveau groupe).
-function moveTab({ tabId, afterTabId = null, targetGroupId = null, makeNewGroup = false }) {
-  const tab = tabById(tabId); if (!tab) return;
-  const oldGroupId = tab.groupId;
-  let gid;
-  if (makeNewGroup) { gid = nextId++; groups.push({ id: gid, title: null }); }
-  else if (targetGroupId != null && groupById(targetGroupId)) gid = targetGroupId;
-  else gid = tab.groupId;
-  tabs = tabs.filter((t) => t.id !== tabId);
-  tab.groupId = gid;
-  let idx;
-  if (afterTabId == null) idx = 0;
-  else { const i = tabs.findIndex((t) => t.id === afterTabId); idx = i < 0 ? tabs.length : i + 1; }
-  tabs.splice(idx, 0, tab);
-  normalizeGroups();
-  if (oldGroupId !== gid && !tabs.some((t) => t.groupId === oldGroupId)) groups = groups.filter((g) => g.id !== oldGroupId);
-  sendState();
-}
-// Déplace un groupe entier avant un autre groupe (ou à la fin si beforeGroupId absent).
-function moveGroup({ groupId, beforeGroupId = null }) {
-  const members = tabs.filter((t) => t.groupId === groupId);
-  if (!members.length) return;
-  const rest = tabs.filter((t) => t.groupId !== groupId);
-  let idx = rest.length;
-  if (beforeGroupId != null) { const i = rest.findIndex((t) => t.groupId === beforeGroupId); if (i >= 0) idx = i; }
-  rest.splice(idx, 0, ...members);
-  tabs = rest;
-  normalizeGroups();
-  sendState();
-}
-
 // ---------- favoris (arbre : liens + dossiers imbriqués) ----------
 // node = { id, type:'link'|'folder', title, url?, favicon?, children?, collapsed? }
 function favWalk(nodes, fn, parent = null) { for (const n of nodes) { fn(n, parent); if (n.children) favWalk(n.children, fn, n); } }
@@ -955,18 +580,17 @@ function addFavorite({ url, title, favicon, parentId = null }) {
   if (!url || favByUrl(url)) return;
   const node = { id: 'fav' + nextId++, type: 'link', url, title: title || hostOf(url), favicon: favicon || null };
   const list = parentId ? (favFind(parentId) || {}).node?.children : favorites;
-  (list || favorites).push(node); sendState();
+  (list || favorites).push(node); sendStateAll();
 }
-function createFolder({ title = 'Nouveau dossier', parentId = null } = {}) {
+function createFolder({ title = tr('Nouveau dossier'), parentId = null } = {}) {
   const node = { id: 'fav' + nextId++, type: 'folder', title, children: [], collapsed: false };
   const list = parentId ? (favFind(parentId) || {}).node?.children : favorites;
-  (list || favorites).push(node); sendState(); return node.id;
+  (list || favorites).push(node); sendStateAll(); return node.id;
 }
-function removeFavorite(id) { const r = favFind(id); if (r) { r.list.splice(r.index, 1); sendState(); } }
-function renameFavorite(id, title) { const r = favFind(id); if (r) { r.node.title = (title || '').trim() || r.node.title; sendState(); } }
-function toggleFolder(id) { const r = favFind(id); if (r && r.node.type === 'folder') { r.node.collapsed = !r.node.collapsed; sendState(); } }
+function removeFavorite(id) { const r = favFind(id); if (r) { r.list.splice(r.index, 1); sendStateAll(); } }
+function renameFavorite(id, title) { const r = favFind(id); if (r) { r.node.title = (title || '').trim() || r.node.title; sendStateAll(); } }
+function toggleFolder(id) { const r = favFind(id); if (r && r.node.type === 'folder') { r.node.collapsed = !r.node.collapsed; sendStateAll(); } }
 function toggleFavoriteUrl(url, title, favicon) { const ex = favByUrl(url); if (ex) removeFavorite(ex.id); else addFavorite({ url, title, favicon }); }
-function openAllInFolder(id) { const r = favFind(id); if (r && r.node.children) favWalk(r.node.children, (n) => { if (n.type === 'link') newTab({ url: n.url, activate: false }); }); }
 // Déplacement : dans un dossier (targetParentId) avant beforeId, ou à la fin. Empêche les cycles.
 function moveFavorite({ id, targetParentId = null, beforeId = null }) {
   const r = favFind(id); if (!r) return;
@@ -976,7 +600,7 @@ function moveFavorite({ id, targetParentId = null, beforeId = null }) {
   const list = targetParentId ? favFind(targetParentId).node.children : favorites;
   let i = beforeId ? list.findIndex((x) => x.id === beforeId) : list.length;
   if (i < 0) i = list.length;
-  list.splice(i, 0, node); sendState();
+  list.splice(i, 0, node); sendStateAll();
 }
 
 // ---------- mode développeur : détection des serveurs de dev locaux ----------
@@ -1036,18 +660,35 @@ async function scanDevProjects() {
   if (!devMode) return;
   const ports = await listListeningPorts();
   const results = (await Promise.all(ports.map((p) => probeDevPort(p)))).filter(Boolean).sort((a, b) => a.port - b.port);
-  if (JSON.stringify(results) !== JSON.stringify(devProjects)) { devProjects = results; sendState(); }
+  if (JSON.stringify(results) !== JSON.stringify(devProjects)) { devProjects = results; sendStateAll(); }
 }
 function setDevMode(on) {
   devMode = !!on;
   if (devTimer) { clearInterval(devTimer); devTimer = null; }
   if (devMode) { scanDevProjects(); devTimer = setInterval(scanDevProjects, 4000); }
   else devProjects = [];
-  sendState();
+  sendStateAll();
+}
+// Bêta coupée : le panneau Claude se replie (les tâches en cours continuent, l'historique est conservé)
+function setBetaFeatures(on) {
+  betaFeatures = !!on;
+  if (!betaFeatures && claudeOpen) {
+    claudeOpen = false;
+    persistClaudeTasks();
+    const mw = mainWin(); if (mw) mw.layout();
+  }
+  persist();
+  sendStateAll();
 }
 
 // ---------- téléchargements ----------
-function sendDownloads() { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('downloads', downloads.map((d) => ({ ...d }))); }
+function sendDownloads() {
+  const list = downloads.map((d) => ({ ...d }));
+  broadcast('downloads', list);
+  // notification flottante au-dessus de la page web, dans la fenêtre active seulement (son tipWin couvre tout le contenu)
+  const w = focusedWin();
+  if (w) w.sendTip('dl-toasts', { list, dark: nativeTheme.shouldUseDarkColors });
+}
 function uniquePath(p) {
   if (!fs.existsSync(p)) return p;
   const dir = path.dirname(p), ext = path.extname(p), base = path.basename(p, ext);
@@ -1071,11 +712,10 @@ function initDownloads(ses) {
     downloads.unshift(rec);
     if (downloads.length > 100) downloads.length = 100;
     dlItems.set(rec.id, item);
-    sendDownloads();
-    if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('download-started');
+    sendDownloads(); persist();
     const syncPath = () => { const p = item.getSavePath(); if (p && p !== rec.savePath) { rec.savePath = p; rec.filename = path.basename(p); } };
     item.on('updated', (_e, state) => { syncPath(); rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes(); rec.paused = item.isPaused(); rec.state = state === 'interrupted' ? 'interrupted' : (rec.paused ? 'paused' : 'progressing'); sendDownloads(); });
-    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); });
+    item.on('done', (_e, state) => { syncPath(); rec.state = state; rec.received = item.getReceivedBytes(); rec.total = rec.total || item.getReceivedBytes(); dlItems.delete(rec.id); sendDownloads(); persist(); });
   });
 }
 
@@ -1102,11 +742,15 @@ function initDisplayMedia(ses) {
     // les fenêtres-calques de NaX (infobulles, menus, recherche…) ne sont pas des choix sensés
     const own = new Set(BrowserWindow.getAllWindows().map((w) => { try { return w.getMediaSourceId(); } catch { return ''; } }));
     sources = sources.filter((x) => !own.has(x.id));
-    if (!sources.length || !chrome || chrome.webContents.isDestroyed()) return callback({});
+    // la fenêtre de la page demandeuse (sinon la fenêtre active) affiche le sélecteur
+    let target = null;
+    try { const fwc = request.frame ? webContents.fromFrame(request.frame) : null; target = fwc ? windowOfPage(fwc) : null; } catch {}
+    target = target || focusedWin();
+    if (!sources.length || !target) return callback({});
     const id = displaySeq++;
     displayPick = { id, callback, sources, audio: !!request.audioRequested };
     const origin = request.securityOrigin || (request.frame && request.frame.origin) || '';
-    chrome.webContents.send('display-pick', {
+    target.sendChrome('display-pick', {
       id, host: hostOf(origin) || origin, audio: !!request.audioRequested,
       sources: sources.map((x) => ({ id: x.id, name: x.name, screen: x.id.startsWith('screen:'), thumb: x.thumbnail.isEmpty() ? '' : x.thumbnail.toDataURL(), icon: x.appIcon && !x.appIcon.isEmpty() ? x.appIcon.toDataURL() : '' })),
     });
@@ -1128,7 +772,8 @@ function initHttpAuth() {
 }
 function showNextAuth() {
   const a = authQueue[0];
-  if (a && chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('auth-request', { id: a.id, host: a.host, realm: a.realm, isProxy: a.isProxy });
+  const w = focusedWin();
+  if (a && w) w.sendChrome('auth-request', { id: a.id, host: a.host, realm: a.realm, isProxy: a.isProxy });
 }
 function answerAuth({ id, username, password, cancel } = {}) {
   const i = authQueue.findIndex((a) => a.id === id);
@@ -1139,33 +784,72 @@ function answerAuth({ id, username, password, cancel } = {}) {
 }
 
 // ---------- permissions (caméra, micro, notifications, géoloc…) ----------
-const PERM_LABELS = { media: 'utiliser votre caméra et/ou votre micro', 'clipboard-read': 'lire le presse-papiers', geolocation: 'accéder à votre position', notifications: 'afficher des notifications', 'midi-sysex': 'accéder à vos périphériques MIDI', pointerLock: 'verrouiller le pointeur' };
+// Les demandes sont posées une par une dans une modale de l'interface (même DA que le reste de l'appli).
+// Elle s'affiche dans la fenêtre de l'onglet demandeur (wc), à défaut dans la fenêtre active.
+// Réponse : { choice, remember } ; null si aucune fenêtre n'est disponible ou si la demande est écartée.
+const promptQueue = [];
+let promptSeq = 1;
+function askUi(req, wc) {
+  return new Promise((resolve) => {
+    promptQueue.push({ req: { ...req, id: promptSeq++ }, wc, resolve });
+    if (promptQueue.length === 1) showNextPrompt();
+  });
+}
+function showNextPrompt() {
+  const p = promptQueue[0];
+  if (!p) return;
+  const w = (p.wc && !p.wc.isDestroyed() && windowOfPage(p.wc)) || focusedWin();
+  if (!w || w.isDestroyed()) { promptQueue.shift().resolve(null); return showNextPrompt(); }
+  w.sendChrome('perm-prompt', p.req);
+}
+function answerPrompt({ id, choice, remember } = {}) {
+  const i = promptQueue.findIndex((p) => p.req.id === id);
+  if (i < 0) return;
+  const [p] = promptQueue.splice(i, 1);
+  p.resolve(choice ? { choice: String(choice), remember: !!remember } : null);
+  if (i === 0) showNextPrompt();
+}
+// libellés évalués à chaque demande : ils suivent la langue de l'interface
+function permLabel(p) {
+  switch (p) {
+    case 'media': return tr('utiliser votre caméra et/ou votre micro');
+    case 'clipboard-read': return tr('lire le presse-papiers');
+    case 'geolocation': return tr('accéder à votre position');
+    case 'notifications': return tr('afficher des notifications');
+    case 'midi-sysex': return tr('accéder à vos périphériques MIDI');
+    case 'pointerLock': return tr('verrouiller le pointeur');
+    default: return p;
+  }
+}
 const PERM_ASK = new Set(['media', 'geolocation', 'notifications', 'midi-sysex', 'clipboard-read']);
 const PERM_ALLOW = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'idle-detection', 'background-sync']);
 function originOf(u) { try { return new URL(u).origin; } catch { return u || ''; } }
 // Liens vers d'autres applis (mailto:, tel:, msteams:, zoommtg:…). Schémas capables de lancer du code ou
 // d'ouvrir des fichiers locaux : jamais, même sur confirmation.
 const BLOCKED_SCHEMES = new Set(['file:', 'javascript:', 'vbscript:', 'data:', 'blob:', 'ms-msdt:', 'search-ms:', 'search:', 'ms-cxh:', 'ms-cxh-full:', 'hcp:', 'shell:', 'ms-officecmd:']);
-const EXTERNAL_APPS = { 'mailto:': 'ta messagerie', 'tel:': 'ton application d’appel', 'callto:': 'ton application d’appel', 'sms:': 'ton application de SMS', 'msteams:': 'Microsoft Teams', 'zoommtg:': 'Zoom', 'zoomus:': 'Zoom', 'slack:': 'Slack', 'spotify:': 'Spotify', 'vscode:': 'Visual Studio Code', 'skype:': 'Skype', 'sip:': 'ton application d’appel' };
+function externalAppName(scheme) {
+  const call = tr('ton application d’appel');
+  const names = { 'mailto:': tr('ta messagerie'), 'tel:': call, 'callto:': call, 'sms:': tr('ton application de SMS'), 'msteams:': 'Microsoft Teams', 'zoommtg:': 'Zoom', 'zoomus:': 'Zoom', 'slack:': 'Slack', 'spotify:': 'Spotify', 'vscode:': 'Visual Studio Code', 'skype:': 'Skype', 'sip:': call };
+  return names[scheme] || null;
+}
 const isWebScheme = (u) => /^(https?|about|view-source|data|blob|file):/i.test(u || '');
 const isExternalScheme = (u) => /^[a-z][a-z0-9+.-]*:/i.test(u || '') && !isWebScheme(u);
 // Demande avant d'ouvrir une autre appli depuis une page (comme Chrome), avec « toujours autoriser » par site.
 // grants : décisions mémorisées de la session (persistées pour les sessions conservées, en mémoire pour le privé).
-async function confirmExternal(origin, url, grants) {
+async function confirmExternal(origin, url, grants, wc) {
   let scheme; try { scheme = new URL(url).protocol.toLowerCase(); } catch { return false; }
   if (BLOCKED_SCHEMES.has(scheme)) return false;
   const key = origin + '|openExternal:' + scheme;
   if (grants.get(key) === true) return true;
   let host = ''; try { host = new URL(origin).hostname; } catch {}
-  const what = EXTERNAL_APPS[scheme] || `l’application associée aux liens « ${scheme} »`;
-  const res = await dialog.showMessageBox(win, {
-    type: 'none', title: 'Ouvrir une application', icon: path.join(__dirname, 'assets', 'icon.png'),
-    message: `${host || 'Cette page'} veut ouvrir ${what}.`, detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
-    buttons: ['Ouvrir', 'Annuler'], defaultId: 0, cancelId: 1, noLink: true,
-    ...(host ? { checkboxLabel: `Toujours autoriser ${host} à ouvrir ce type de lien`, checkboxChecked: false } : {}),
-  }).catch(() => ({ response: 1 }));
-  if (res.response !== 0) return false;
-  if (res.checkboxChecked && host) { grants.set(key, true); if (grants === permGrants) persist(); }
+  const what = externalAppName(scheme) || tr('l’application associée aux liens « {scheme} »', { scheme });
+  const res = await askUi({
+    kind: 'external', host: host || tr('Cette page'), message: tr('{host} veut ouvrir {what}.', { host: host || tr('Cette page'), what }),
+    detail: url.length > 160 ? url.slice(0, 160) + '…' : url,
+    remember: host ? tr('Toujours autoriser {host} à ouvrir ce type de lien', { host }) : '',
+  }, wc);
+  if (!res || res.choice !== 'open') return false;
+  if (res.remember && host) { grants.set(key, true); if (grants === permGrants) persist(); }
   return true;
 }
 const sessionGrants = new WeakMap(); // session non conservée (privée) → décisions en mémoire, oubliées à la fermeture
@@ -1177,15 +861,16 @@ function grantsOf(ses) {
 // Lien externe ouvert en nouvel onglet (target=_blank) : pas d'onglet vide, on passe directement à l'appli.
 async function openExternalFrom(wc, url) {
   const origin = wc && !wc.isDestroyed() ? originOf(wc.getURL()) : '';
-  if (await confirmExternal(origin, url, grantsOf(wc && !wc.isDestroyed() ? wc.session : null))) shell.openExternal(url).catch(() => {});
+  if (await confirmExternal(origin, url, grantsOf(wc && !wc.isDestroyed() ? wc.session : null), wc)) shell.openExternal(url).catch(() => {});
 }
 function initPermissions(ses) {
   const grants = grantsOf(ses);
+  const onceGrants = new Set(); // « autoriser cette fois » : en mémoire seulement
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     if (PERM_ALLOW.has(permission)) return callback(true);
     if (permission === 'openExternal') {
       const origin = originOf((details && details.requestingUrl) || (wc && wc.getURL()));
-      return callback(await confirmExternal(origin, (details && details.externalURL) || '', grants));
+      return callback(await confirmExternal(origin, (details && details.externalURL) || '', grants, wc));
     }
     // getDisplayMedia passe d'abord par une demande « media » SANS périphérique (mediaTypes vide) :
     // le vrai consentement est le sélecteur d'écran (initDisplayMedia), pas une question « caméra/micro ».
@@ -1198,12 +883,13 @@ function initPermissions(ses) {
     const key = origin + '|' + permission;
     if (grants.has(key)) return callback(grants.get(key));
     const host = (() => { try { return new URL(origin).hostname; } catch { return origin; } })();
-    const res = await dialog.showMessageBox(win, {
-      type: 'none', title: 'Autorisation', icon: path.join(__dirname, 'assets', 'icon.png'),
-      message: `${host} souhaite ${PERM_LABELS[permission] || permission}.`,
-      buttons: ['Autoriser', 'Bloquer'], defaultId: 0, cancelId: 1, noLink: true,
-    });
-    const ok = res.response === 0;
+    if (onceGrants.has(key)) return callback(true);
+    const res = await askUi({ kind: 'permission', permission, host, message: tr('{host} souhaite {what}.', { host, what: permLabel(permission) }) }, wc);
+    // demande écartée (Échap, clic à côté) : refus sans mémoriser, le site pourra redemander
+    if (!res) return callback(false);
+    // « cette fois » : valable jusqu'à la fermeture du navigateur, jamais persisté
+    if (res.choice === 'once') { onceGrants.add(key); return callback(true); }
+    const ok = res.choice === 'always';
     grants.set(key, ok);
     if (grants === permGrants) persist(); // mémorise la décision entre les sessions (plus de prompt répété)
     callback(ok);
@@ -1213,13 +899,14 @@ function initPermissions(ses) {
     const dkey = permission === 'media' ? 'media' : permission === 'geolocation' ? 'geolocation' : permission === 'notifications' ? 'notifications' : null;
     if (dkey && permDefaults[dkey] === 'block') return false;
     const key = originOf(requestingOrigin) + '|' + permission;
+    if (onceGrants.has(key)) return true;
+    // Caméra/micro pas encore décidés : Electron n'a pas d'état « prompt », un refus ici fait répondre
+    // « denied » à permissions.query() et des sites comme Google Meet n'appellent alors jamais
+    // getUserMedia (donc jamais notre demande). On laisse passer : getUserMedia repasse par la demande.
+    if (permission === 'media' && !grants.has(key)) return true;
     return grants.get(key) === true;
   });
 }
-
-// ---------- plein écran HTML (vidéo) ----------
-function enterHtmlFullscreen() { if (htmlFullscreen) return; htmlFullscreen = true; hideMenu(); hideTip(); hidePeek(); try { win.setFullScreen(true); } catch {} layout(); }
-function leaveHtmlFullscreen() { if (!htmlFullscreen) return; htmlFullscreen = false; try { win.setFullScreen(false); } catch {} layout(); }
 
 // ---------- page d'erreur ----------
 const ERROR_FILE = path.join(__dirname, 'ui', 'error.html');
@@ -1231,7 +918,7 @@ function loadErrorPage(tab, failedUrl, code, desc) {
   showErrorPage(w, failedUrl, code, desc);
 }
 function showErrorPage(w, failedUrl, code, desc) {
-  w.loadFile(ERROR_FILE, { query: { url: failedUrl, code: String(code), desc: desc || '' } }).catch(() => {});
+  w.loadFile(ERROR_FILE, { query: { lang: uiLang, url: failedUrl, code: String(code), desc: desc || '' } }).catch(() => {});
 }
 
 // ---------- autocomplétion de la barre d'adresse ----------
@@ -1247,7 +934,7 @@ function prefixBoost(cand, q) {
   return 0;
 }
 function matchQ(c, q) { if (!q) return true; const u = (c.url || '').toLowerCase(); const t = (c.title || '').toLowerCase(); return u.includes(q) || t.includes(q) || stripScheme(c.url).toLowerCase().includes(q); }
-function omniSuggest(qraw) {
+function omniSuggest(qraw, tabs = []) {
   const q = (qraw || '').trim().toLowerCase();
   if (!q) return [];
   const out = []; const seen = new Set();
@@ -1286,51 +973,6 @@ function googleSuggest(qraw) {
   });
 }
 
-// ---------- applis ----------
-function ensureAppView(a) {
-  let v = appViews.get(a.id);
-  if (!v) {
-    v = createView((ev, _e, arg) => { if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0] && !a.icon) { a.favicon = arg[0]; } sendState(); });
-    const appView = v;
-    v.webContents.on('destroyed', () => {
-      if (appViews.get(a.id) !== appView || shuttingDown()) return;
-      appViews.delete(a.id);
-      if (contentView === appView) attach(null);
-      if (current && current.kind === 'app' && current.id === a.id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
-      sendState();
-    });
-    v.webContents.setWindowOpenHandler(({ url, disposition }) => {
-      if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
-      if (isExternalScheme(url)) { openExternalFrom(v.webContents, url); return { action: 'deny' }; }
-      newTab({ url }); return { action: 'deny' };
-    });
-    v.webContents.on('context-menu', (_e, params) => pageContextMenu(v.webContents, params, null));
-    v.webContents.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
-    v.webContents.on('enter-html-full-screen', () => { if (current && current.kind === 'app' && current.id === a.id) enterHtmlFullscreen(); });
-    v.webContents.on('leave-html-full-screen', () => leaveHtmlFullscreen());
-    v.webContents.on('render-process-gone', (_e, d) => {
-      if (appViews.get(a.id) !== appView || d.reason === 'clean-exit') return;
-      const u = v.webContents.getURL();
-      showErrorPage(v.webContents, u && !isErrorPage(u) ? u : a.url, d.reason === 'oom' ? 'oom' : 'crash', `Processus de la page arrêté (${d.reason})`);
-    });
-    v.webContents.loadURL(a.url);
-    appViews.set(a.id, v);
-  }
-  return v;
-}
-function activateApp(id) {
-  const a = apps.find((x) => x.id === id);
-  if (!a) return;
-  const v = ensureAppView(a);
-  current = { kind: 'app', id };
-  attach(v);
-  setSplitView(null); splitMode = null; // une appli masque la vue divisée
-  v.webContents.focus();
-  win.setTitle(a.name);
-  hidePeek(); hideFind();
-  sendState();
-}
-
 // ---------- widget Gmail (flux des non-lus, via la session connectée) ----------
 const isGmailApp = (a) => /mail\.google\.com/i.test(a.url);
 let gmailCount = 0;
@@ -1349,7 +991,7 @@ function parseGmailAtom(xml) {
     const email = g(/<author>[\s\S]*?<email>([\s\S]*?)<\/email>/i);
     const link = g(/<link[^>]*href="([^"]+)"/i);
     messages.push({
-      subject: decodeXml(g(/<title>([\s\S]*?)<\/title>/i)) || '(sans objet)',
+      subject: decodeXml(g(/<title>([\s\S]*?)<\/title>/i)) || tr('(sans objet)'),
       summary: decodeXml(g(/<summary>([\s\S]*?)<\/summary>/i)),
       from: decodeXml(name) || decodeXml(email) || '?',
       date: g(/<(?:issued|modified|updated)>([\s\S]*?)<\/(?:issued|modified|updated)>/i) || '',
@@ -1378,19 +1020,10 @@ function fetchGmailFeed() {
     try { req.end(); } catch { finish({ error: true }); }
   });
 }
-function openGmailMessage(link) {
-  const a = apps.find(isGmailApp) || apps.find((x) => x.id === 'gmail');
-  if (!a) { if (link) navigateCurrent(link); return; }
-  const v = ensureAppView(a);
-  if (link) v.webContents.loadURL(link);
-  current = { kind: 'app', id: a.id };
-  attach(v); v.webContents.focus(); win.setTitle(a.name);
-  hidePeek(); sendState();
-}
 async function pollGmail() {
   if (!apps.some(isGmailApp)) return;
   const r = await fetchGmailFeed().catch(() => null);
-  if (r && r.authed) { gmailCount = r.count || 0; if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('gmail-count', gmailCount); }
+  if (r && r.authed) { gmailCount = r.count || 0; broadcast('gmail-count', gmailCount); }
 }
 
 // ---------- widget Google Chat (conversations non lues, via une vue cachée sur la session) ----------
@@ -1466,429 +1099,51 @@ function fetchChatFeed(force) {
     if (wc.isLoading()) wc.once('did-finish-load', extract); else extract();
   });
 }
-// Ouvre Chat (une conversation précise si on connaît son id « space/… » ou « dm/… »)
-function openChat(groupId) {
-  let url = 'https://chat.google.com/';
-  if (typeof groupId === 'string') {
-    if (groupId.startsWith('space/')) url += 'room/' + groupId.slice(6);
-    else if (groupId.startsWith('dm/')) url += 'dm/' + groupId.slice(3);
-  }
-  const a = apps.find((x) => /chat\.google\.com/i.test(x.url));
-  if (a) {
-    const v = ensureAppView(a);
-    v.webContents.loadURL(url);
-    current = { kind: 'app', id: a.id };
-    attach(v); v.webContents.focus(); win.setTitle(a.name);
-  } else {
-    newTab({ url });
-  }
-  hidePeek(); sendState();
-}
-
-// ---------- panneau d'aperçu au survol (widget façon Opera) ----------
-let peekWin = null, peekAppId = null, peekHideTimer = null, peekCloseTimer = null;
-function ensurePeekWin() {
-  if (peekWin && !peekWin.isDestroyed()) return peekWin;
-  peekWin = new BrowserWindow({
-    width: 400 + 32, height: 560, show: false, frame: false, resizable: false, minimizable: false,
-    maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false,
-    transparent: true, // la page dessine un panneau arrondi + ombre (même langage que les panneaux de l'app)
-    webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
-  });
-  lockUiContents(peekWin.webContents);
-  peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'));
-  peekWin.on('blur', () => hidePeek());
-  return peekWin;
-}
-function showPeek(id, clientY) {
-  const a = apps.find((x) => x.id === id);
-  if (!a || !win) return;
-  if (!isGmailApp(a)) return; // aperçu au survol réservé au widget Gmail
-  if (current && current.kind === 'app' && current.id === id) return; // déjà en plein écran
-  clearTimeout(peekHideTimer); clearTimeout(peekCloseTimer);
-  let w;
-  try { w = ensurePeekWin(); } catch { return; }
-  const b = win.getContentBounds();
-  // dimensions du PANNEAU (la fenêtre transparente y ajoute les marges d'ombre : gauche 8, haut 8, droite 24, bas 28)
-  const panelH = Math.min(536, b.height - 48);
-  const panelTop = Math.max(b.y + NAV + 12, Math.min(b.y + (clientY || NAV) - 12, b.y + b.height - panelH - 24));
-  w.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(panelTop - 8), width: 400 + 32, height: Math.round(panelH + 36) });
-  peekAppId = id;
-  const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
-  const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web', fresh };
-  const send = () => { try { w.webContents.send('peek-load', payload); } catch {} };
-  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-  if (!fresh) w.showInactive(); // sinon : on attend 'peek-ready' (contenu posé) avant de montrer la fenêtre
-}
-function hidePeek() {
-  clearTimeout(peekHideTimer);
-  if (peekWin && !peekWin.isDestroyed() && peekWin.isVisible()) {
-    try { peekWin.webContents.send('peek-close'); } catch {}
-    clearTimeout(peekCloseTimer);
-    peekCloseTimer = setTimeout(() => { if (peekWin && !peekWin.isDestroyed()) peekWin.hide(); }, 110);
-  }
-  peekAppId = null;
-}
-function hidePeekSoon() { clearTimeout(peekHideTimer); peekHideTimer = setTimeout(hidePeek, 260); }
-
-// ---------- flyout du rail : options au survol (raccourcis d'appli, liens d'un dossier épinglé) ----------
-let flyWin = null, flyHideTimer = null, flyCloseTimer = null;
-function ensureFlyWin() {
-  if (flyWin && !flyWin.isDestroyed()) return flyWin;
-  flyWin = new BrowserWindow({
-    width: 300 + 32, height: 220, show: false, frame: false, resizable: false, minimizable: false,
-    maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
-    webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
-  });
-  lockUiContents(flyWin.webContents);
-  flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'));
-  flyWin.on('blur', () => hideFly());
-  return flyWin;
-}
-function hideFly() {
-  clearTimeout(flyHideTimer);
-  if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) {
-    try { flyWin.webContents.send('fly-close'); } catch {}
-    clearTimeout(flyCloseTimer);
-    flyCloseTimer = setTimeout(() => { if (flyWin && !flyWin.isDestroyed()) flyWin.hide(); }, 110);
-  }
-}
-function hideFlySoon() { clearTimeout(flyHideTimer); flyHideTimer = setTimeout(hideFly, 260); }
-let flyClientY = 0;
-// Place la fenêtre du flyout à côté du rail, en-tête aligné sur l'icône survolée ; H = hauteur voulue (ombre comprise).
-function flyPlace(H) {
-  if (!win || !flyWin || flyWin.isDestroyed()) return;
-  const b = win.getContentBounds();
-  H = Math.max(110, Math.min(Math.round(H), b.height - 24)); // hauteur de la fenêtre, marges d'ombre comprises
-  const y = Math.max(b.y + 8, Math.min(b.y + (flyClientY || 0) - 6 - 8, b.y + b.height - H - 8)); // en-tête du panneau aligné sur l'icône survolée
-  flyWin.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(y), width: 300 + 32, height: H });
-}
-function showFly(payload, clientY) {
-  if (!win) return;
-  clearTimeout(flyHideTimer); clearTimeout(flyCloseTimer);
-  let w;
-  try { w = ensureFlyWin(); } catch { return; }
-  flyClientY = clientY || 0;
-  // estimation initiale (marges d'ombre 36 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
-  const est = payload.items.reduce((n, it) => n + (it.type === 'folder' ? 38 : 44), 0) || 44;
-  flyPlace(36 + 47 + 12 + est);
-  const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
-  const send = () => { try { w.webContents.send('fly-load', { ...payload, fresh }); } catch {} };
-  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-  if (!fresh) w.showInactive(); // sinon : on attend 'fly-ready' (contenu posé, hauteur ajustée) avant de montrer la fenêtre
-}
 // Contenu d'un dossier de favoris, sous-dossiers compris (profondeur 4, 200 éléments max)
 function favTreeItems(children, depth, budget) {
   const out = [];
   for (const c of (children || [])) {
     if (budget.n <= 0) break;
     budget.n--;
-    if (c.type === 'folder') out.push({ id: c.id, type: 'folder', name: c.title || 'Dossier', color: c.color || null, count: (c.children || []).length, children: depth < 4 ? favTreeItems(c.children, depth + 1, budget) : [] });
+    if (c.type === 'folder') out.push({ id: c.id, type: 'folder', name: c.title || tr('Dossier'), color: c.color || null, count: (c.children || []).length, children: depth < 4 ? favTreeItems(c.children, depth + 1, budget) : [] });
     else out.push({ id: c.id, type: 'link', name: c.title || hostOf(c.url), url: c.url, favicon: c.favicon || null });
   }
   return out;
 }
-// Survol d'un élément du rail : Gmail garde son widget, une appli à raccourcis ou un dossier épinglé a son flyout.
-function railHover(id, kind, clientY) {
-  if (kind === 'app') {
-    const a = apps.find((x) => x.id === id); if (!a) return;
-    if (isGmailApp(a)) return showPeek(id, clientY);
-    const sc = a.shortcuts || [];
-    if (!sc.length) return;
-    showFly({ kind: 'app', id, title: a.name, icon: a.icon || a.favicon || null, edit: true, items: sc.map((s) => ({ id: s.id, name: s.name, url: s.url })) }, clientY);
-  } else if (kind === 'pin') {
-    const p = railPins.find((x) => x.id === id); if (!p) return;
-    const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
-    showFly({ kind: 'folder', id, favId: p.favId, title: r.node.title || 'Favoris', items: favTreeItems(r.node.children, 1, { n: 200 }) }, clientY);
-  }
-}
-
-function removeApp(id) {
-  apps = apps.filter((a) => a.id !== id);
-  const v = appViews.get(id);
-  if (v) { if (contentView === v) attach(null); appViews.delete(id); const w = wcOf(v); if (w) w.close(); }
-  if (current && current.kind === 'app' && current.id === id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
-  sendState();
-}
-
-// ---------- veille / archive automatiques ----------
-function housekeeping() {
-  const now = Date.now();
-  for (const t of [...tabs]) {
-    if (isCurrentTab(t.id)) { t.lastActive = now; continue; }
-    if (t.view && now - t.lastActive > DORMANT_AFTER) sleepTab(t);
-    else if (!t.view && now - t.lastActive > ARCHIVE_AFTER) closeTab(t.id);
-  }
-  persist();
-}
-
-// ---------- menus contextuels personnalisés (au style de NaX) ----------
-// Overlay transparent au-dessus de toute la fenêtre pour dessiner les menus par-dessus les vues natives.
-let menuWin = null, menuFns = [];
-function ensureMenuWin() {
-  if (menuWin && !menuWin.isDestroyed()) return menuWin;
-  menuWin = new BrowserWindow({
-    show: false, frame: false, transparent: true, resizable: false, movable: false,
-    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
-    backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'menu-preload.js') },
-  });
-  lockUiContents(menuWin.webContents);
-  menuWin.loadFile(path.join(__dirname, 'ui', 'menu.html'));
-  menuWin.on('blur', () => hideMenu());
-  return menuWin;
-}
-function hideMenu() { if (menuWin && !menuWin.isDestroyed() && menuWin.isVisible()) menuWin.hide(); }
-
-// ---------- tooltips personnalisés (overlay transparent, click-through) ----------
-let tipWin = null;
-function ensureTipWin() {
-  if (tipWin && !tipWin.isDestroyed()) return tipWin;
-  tipWin = new BrowserWindow({
-    show: false, frame: false, transparent: true, focusable: false, resizable: false, movable: false,
-    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
-    backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'tip-preload.js') },
-  });
-  tipWin.setIgnoreMouseEvents(true); // laisse tout passer : ne bloque jamais l'app
-  lockUiContents(tipWin.webContents);
-  tipWin.loadFile(path.join(__dirname, 'ui', 'tip.html'));
-  tipWin.webContents.once('did-finish-load', () => { syncTipBounds(); tipWin.showInactive(); });
-  return tipWin;
-}
-function syncTipBounds() {
-  if (tipWin && !tipWin.isDestroyed() && win) { const b = win.getContentBounds(); tipWin.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }); }
-}
-function hideTip() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('tip-hide'); } catch {} } }
-
-// ---------- rechercher dans la page (Ctrl+F) ----------
-let findWin = null;
-function ensureFindWin() {
-  if (findWin && !findWin.isDestroyed()) return findWin;
-  findWin = new BrowserWindow({
-    width: 380, height: 46, show: false, frame: false, transparent: false, resizable: false, movable: false,
-    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: true, focusable: true, parent: win,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1f2b' : '#ffffff',
-    webPreferences: { preload: path.join(__dirname, 'find-preload.js') },
-  });
-  lockUiContents(findWin.webContents);
-  findWin.loadFile(path.join(__dirname, 'ui', 'find.html'));
-  return findWin;
-}
-function findBounds() { const b = win.getContentBounds(); const w = 380, h = 46; return { x: Math.round(b.x + b.width - w - 14), y: Math.round(b.y + NAV + 10), width: w, height: h }; }
-function showFind() {
-  if (!visibleWC()) return;
-  const w = ensureFindWin(); w.setBounds(findBounds());
-  const open = () => {
-    w.show(); w.focus(); w.webContents.focus();
-    try { w.webContents.send('find-open', { dark: nativeTheme.shouldUseDarkColors }); } catch {}
-  };
-  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', open); else open();
-}
-function hideFind() { const wc = visibleWC(); if (wc && !wc.isDestroyed()) wc.stopFindInPage('clearSelection'); if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.hide(); }
-
-// ---------- overlay des suggestions (barre d'adresse) ----------
-let suggestWin = null, suggestCloseTimer = null;
-function ensureSuggestWin() {
-  if (suggestWin && !suggestWin.isDestroyed()) return suggestWin;
-  suggestWin = new BrowserWindow({
-    show: false, frame: false, transparent: true, focusable: false, resizable: false, movable: false,
-    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
-    backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'suggest-preload.js') },
-  });
-  lockUiContents(suggestWin.webContents);
-  suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'));
-  return suggestWin;
-}
-function hideSuggest() {
-  if (suggestWin && !suggestWin.isDestroyed() && suggestWin.isVisible()) {
-    try { suggestWin.webContents.send('suggest-close'); } catch {}
-    clearTimeout(suggestCloseTimer);
-    suggestCloseTimer = setTimeout(() => { if (suggestWin && !suggestWin.isDestroyed()) suggestWin.hide(); }, 110);
-  }
-}
-// template : liste de { label, click, enabled?, danger? } ou { type:'separator' }.
-function popupMenu(template) {
-  if (!win) return;
-  // Masque les overlays flottants (aperçu Gmail, infobulle, suggestions) AVANT d'ouvrir le menu :
-  // sinon, en prenant le focus, le menu fait perdre le focus au peek, ce qui déclenche une cascade
-  // d'événements de focus qui rejouait l'animation du menu (bug « animation qui se répète »).
-  hidePeek(); hideTip(); hideSuggest(); hideFly();
-  const items = template.filter(Boolean);
-  menuFns = items.map((i) => i.click || null);
-  const view = items.map((i, idx) => i.type === 'separator' ? { sep: true } : { label: i.label, enabled: i.enabled !== false, danger: !!i.danger, idx });
-  const cur = screen.getCursorScreenPoint();
-  const b = win.getContentBounds();
-  const w = ensureMenuWin();
-  w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
-  const payload = { items: view, x: cur.x - b.x, y: cur.y - b.y, dark: nativeTheme.shouldUseDarkColors };
-  const send = () => { try { w.webContents.send('menu-show', payload); } catch {} };
-  // on n'affiche PAS tout de suite : le rendu envoie 'menu-ready' quand le contenu est prêt et positionné,
-  // ce qui évite de montrer brièvement le menu précédent (double animation).
-  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-}
-
-function tabContextMenu(id) {
-  const tab = tabById(id); if (!tab) return;
-  const siblings = tabs.filter((t) => t.groupId === tab.groupId);
-  const inGroup = siblings.length > 1;
-  const grp = groupById(tab.groupId);
-  const named = !!(grp && grp.title); // un onglet seul mais dans un groupe nommé : le groupe existe quand même
-  const items = [
-    { label: favByUrl(tab.url) ? 'Retirer des favoris' : 'Ajouter aux favoris', click: () => toggleFavoriteUrl(tab.url, tab.title, tab.favicon) },
-    { label: 'Mettre en veille', enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
-    { label: 'Dupliquer', click: () => newTab({ url: tab.url, openerId: tab.id }) },
-    { label: "Copier l'adresse", click: () => clipboard.writeText(tab.url) },
-    { type: 'separator' },
-    { label: tab.partition ? 'Revenir à la session normale' : 'Passer en navigation privée', click: () => setTabSession(tab.id, !tab.partition) },
-  ];
-  items.push({ type: 'separator' });
-  // nommer un onglet seul = créer un groupe d'un onglet (utile pour garder un nom, replier, etc.)
-  items.push({ label: inGroup || named ? 'Renommer le groupe…' : 'Créer un groupe…', click: () => { uiFocus('rename-group', tab.groupId); setTimeout(() => { try { chrome.webContents.focus(); } catch {} }, 80); } }); // focus explicite : le menu est une fenêtre à part, sinon le clavier reste sur la page
-  if (inGroup) items.push({ label: 'Sortir du groupe', click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
-  else if (named) items.push({ label: 'Dissoudre le groupe', click: () => { grp.title = null; grp.collapsed = false; sendState(); } });
-  items.push({ type: 'separator' });
-  items.push({ label: 'Fermer', danger: true, click: () => closeTab(id) });
-  if (inGroup) items.push({ label: 'Fermer le groupe', danger: true, click: () => siblings.forEach((t) => closeTab(t.id)) });
-  popupMenu(items);
-}
-function appContextMenu(id) {
-  popupMenu([
-    { label: 'Recharger', click: () => { const w = wcOf(appViews.get(id)); if (w) w.reload(); } },
-    { label: 'Raccourcis au survol…', click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
-    { type: 'separator' },
-    { label: 'Retirer du rail', danger: true, click: () => removeApp(id) },
-  ]);
-}
-function pinContextMenu(id) {
-  const p = railPins.find((x) => x.id === id); if (!p) return;
-  const r = favFind(p.favId);
-  const items = [];
-  if (r && r.node.type === 'folder') items.push({ label: 'Ouvrir tous les liens', enabled: !!(r.node.children || []).length, click: () => openAllInFolder(p.favId) });
-  if (r && r.node.type === 'link') items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: r.node.url }) });
-  items.push({ type: 'separator' });
-  items.push({ label: 'Retirer du rail', danger: true, click: () => { railPins = railPins.filter((x) => x.id !== id); sendState(); } });
-  popupMenu(items);
-}
-function favContextMenu(id) {
-  const r = favFind(id); if (!r) return;
-  const n = r.node; const items = [];
-  if (n.type === 'link') {
-    items.push({ label: 'Ouvrir', click: () => navigateCurrent(n.url) });
-    items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: n.url }) });
-  } else {
-    items.push({ label: 'Ouvrir tous les liens', enabled: !!(n.children && n.children.length), click: () => openAllInFolder(id) });
-    items.push({ label: 'Nouveau sous-dossier', click: () => { const nid = createFolder({ parentId: id }); if (n.collapsed) toggleFolder(id); chrome.webContents.send('rename-fav', nid); } });
-  }
-  items.push({ type: 'separator' });
-  const pinned = railPins.find((x) => x.favId === id);
-  items.push(pinned
-    ? { label: 'Retirer du rail', click: () => { railPins = railPins.filter((x) => x.favId !== id); sendState(); } }
-    : { label: 'Épingler au rail', click: () => { railPins.push({ id: 'pin' + nextId++, kind: n.type === 'folder' ? 'favfolder' : 'fav', favId: id }); sendState(); } });
-  items.push({ label: 'Renommer', click: () => chrome.webContents.send('rename-fav', id) });
-  if (n.type === 'folder') items.push({ label: 'Personnaliser (icône, couleur)…', click: () => chrome.webContents.send('customize-fav', id) });
-  items.push({ label: 'Supprimer', danger: true, click: () => removeFavorite(id) });
-  popupMenu(items);
-}
-// Extrait le contenu lisible de la page (URLs absolues) et l'envoie à l'interface pour conversion Markdown.
-async function exportMarkdown(wc) {
-  if (!wc || wc.isDestroyed()) return;
-  const extractor = `(() => {
-    const pick = document.querySelector('article') || document.querySelector('main') || document.querySelector('[role=main]') || document.body;
-    const clone = pick.cloneNode(true);
-    clone.querySelectorAll('script,style,noscript,iframe,svg,canvas,nav,header,footer,aside,form,button,[aria-hidden=true],.no-print').forEach(el => el.remove());
-    clone.querySelectorAll('a[href]').forEach(a => { try { a.setAttribute('href', new URL(a.getAttribute('href'), location.href).href); } catch {} });
-    clone.querySelectorAll('img[src]').forEach(im => { try { im.setAttribute('src', new URL(im.getAttribute('src'), location.href).href); } catch {} im.removeAttribute('srcset'); });
-    return { title: document.title || location.hostname, url: location.href, html: clone.innerHTML };
-  })()`;
-  let data;
-  try { data = await wc.executeJavaScript(extractor, true); } catch { return; }
-  if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', data);
-}
-
-// Ctrl+S : page complète (.html + dossier), un seul fichier (.mhtml) ou HTML seul (.htm), selon l'extension choisie.
-async function savePageAs(wc) {
-  if (!wc || wc.isDestroyed() || isErrorPage(wc.getURL())) return;
-  const base = (wc.getTitle() || hostOf(wc.getURL()) || 'page').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'page';
-  const res = await dialog.showSaveDialog(win, {
-    title: 'Enregistrer la page sous', defaultPath: path.join(defaultDownloadDir(), base + '.html'),
-    filters: [{ name: 'Page web complète', extensions: ['html'] }, { name: 'Page web, un seul fichier', extensions: ['mhtml'] }, { name: 'Page web, HTML uniquement', extensions: ['htm'] }],
-  });
-  if (res.canceled || !res.filePath) return;
-  const ext = path.extname(res.filePath).toLowerCase();
-  const type = ext === '.mhtml' || ext === '.mht' ? 'MHTML' : ext === '.htm' ? 'HTMLOnly' : 'HTMLComplete';
-  try { await wc.savePage(res.filePath, type); }
-  catch (err) { dialog.showMessageBox(win, { type: 'error', title: 'Enregistrement impossible', message: 'La page n’a pas pu être enregistrée.', detail: String((err && err.message) || err) }).catch(() => {}); }
-}
-// Ctrl+U : le code source s'ouvre dans un onglet voisin (moteur Chromium, schéma view-source:).
-function viewSource(wc, openerId = null) {
-  const u = wc && !wc.isDestroyed() ? wc.getURL() : '';
-  if (u && !isErrorPage(u) && !/^view-source:/i.test(u)) newTab({ url: 'view-source:' + u, openerId });
-}
-
-// wc = webContents de la page (onglet OU appli du rail) ; openerId = onglet ouvreur (null pour une appli).
-function pageContextMenu(wc, p, openerId = null) {
-  if (!wc || wc.isDestroyed()) return;
-  const items = [];
-  // mot souligné par le correcteur : suggestions en tête, comme dans Chrome
-  if (p.misspelledWord) {
-    const sugg = (p.dictionarySuggestions || []).slice(0, 5);
-    for (const w of sugg) items.push({ label: w, click: () => wc.replaceMisspelling(w) });
-    if (!sugg.length) items.push({ label: 'Aucune suggestion', enabled: false });
-    items.push({ label: 'Ajouter au dictionnaire', click: () => wc.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
-    items.push({ type: 'separator' });
-  }
-  if (p.linkURL) {
-    items.push({ label: 'Ouvrir dans un nouvel onglet', click: () => newTab({ url: p.linkURL, openerId, activate: false }) });
-    items.push({ label: 'Ouvrir dans un onglet privé', click: () => newTab({ url: p.linkURL, partition: splitPartition('private') }) });
-    items.push({ label: 'Copier le lien', click: () => clipboard.writeText(p.linkURL) });
-    items.push({ label: 'Enregistrer le lien sous…', click: () => downloadAs(wc, p.linkURL) });
-    items.push({ type: 'separator' });
-  }
-  if (p.mediaType === 'image' && p.srcURL) {
-    items.push({ label: 'Ouvrir l’image dans un nouvel onglet', click: () => newTab({ url: p.srcURL, openerId, activate: false }) });
-    items.push({ label: 'Enregistrer l’image sous…', click: () => downloadAs(wc, p.srcURL) });
-    items.push({ label: 'Copier l’image', click: () => wc.copyImageAt(p.x, p.y) });
-    items.push({ label: 'Copier l’adresse de l’image', click: () => clipboard.writeText(p.srcURL) });
-    items.push({ type: 'separator' });
-  } else if ((p.mediaType === 'video' || p.mediaType === 'audio') && /^https?:/i.test(p.srcURL || '')) {
-    items.push({ label: p.mediaType === 'video' ? 'Enregistrer la vidéo sous…' : 'Enregistrer l’audio sous…', click: () => downloadAs(wc, p.srcURL) });
-    items.push({ label: 'Copier l’adresse du média', click: () => clipboard.writeText(p.srcURL) });
-    items.push({ type: 'separator' });
-  }
-  if (p.selectionText) {
-    items.push({ label: 'Copier', click: () => wc.copy() });
-    items.push({ label: `Rechercher « ${p.selectionText.slice(0, 30)} »`, click: () => newTab({ url: toUrl(p.selectionText), openerId }) });
-    items.push({ type: 'separator' });
-  }
-  if (p.isEditable) {
-    items.push({ label: 'Couper', enabled: !!p.selectionText, click: () => wc.cut() });
-    items.push({ label: 'Copier', enabled: !!p.selectionText, click: () => wc.copy() });
-    items.push({ label: 'Coller', click: () => wc.paste() });
-    items.push({ label: 'Tout sélectionner', click: () => wc.selectAll() });
-    items.push({ type: 'separator' });
-  }
-  items.push({ label: 'Précédent', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() });
-  items.push({ label: 'Suivant', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
-  items.push({ label: 'Recharger', click: () => wc.reload() });
-  items.push({ type: 'separator' });
-  items.push({ label: 'Enregistrer la page sous…', click: () => savePageAs(wc) });
-  items.push({ label: 'Imprimer…', click: () => wc.print() });
-  items.push({ label: 'Exporter en Markdown', click: () => exportMarkdown(wc) });
-  items.push({ label: 'Copier l’adresse de la page', click: () => clipboard.writeText(wc.getURL()) });
-  items.push({ type: 'separator' });
-  items.push({ label: 'Afficher le code source', click: () => viewSource(wc, openerId) });
-  items.push({ label: 'Inspecter', click: () => wc.inspectElement(p.x, p.y) });
-  popupMenu(items);
-}
-
-// Donne le clavier à l'interface (et non à la page) puis lui envoie un ordre de focus.
-function uiFocus(channel, ...args) {
-  chrome.webContents.focus();
-  chrome.webContents.send(channel, ...args);
-}
-
-// ---------- raccourcis ----------
-function buildMenu() {
-  const withWC = (fn) => () => { const wc = currentWC(); if (wc) fn(wc); };
+// ============================================================================================================
+// Une fenêtre NaX. Tout ce qui suit jusqu'à la fin de makeWindow() est propre à la fenêtre : ses onglets et groupes,
+// la vue affichée, ses calques (menus, infobulles, aperçus, recherche, suggestions) et ses gestionnaires IPC.
+// saved : fenêtre à restaurer ({tabs, groups, currentTabId, sidebarOpen, bounds, maximized}) ; isPrivate : navigation
+// privée (session mémoire propre à la fenêtre, rien sur le disque) ; main : porte le rail d'applis et le panneau Claude.
+// ============================================================================================================
+function makeWindow({ saved = null, isPrivate: privateWin = false, main = false, initialUrl = null, cascadeFrom = null } = {}) {
+  let win, chrome;
+  let closing = false; // la fenêtre se ferme : les vues meurent avec elle, ce n'est pas une fermeture d'onglet
+  const shuttingDown = () => quitting || closing || !win || win.isDestroyed();
+  let tabs = [];      // {id, url, title, favicon, groupId, lastActive, createdAt, view|null}
+  let groups = [];    // {id, title|null}
+  let current = null; // {kind:'tab'|'app', id}
+  let sidebarOpen = saved ? saved.sidebarOpen !== false : sidebarOpenDefault;
+  let overlayOpen = false;
+  let htmlFullscreen = false; // plein écran HTML demandé par une page (vidéo)
+  let tabMRU = [];            // ids d'onglets par ordre d'utilisation (le plus récent en tête)
+  const appViews = new Map(); // applis du rail (fenêtre principale seulement)
+  let contentView = null;     // vue actuellement attachée dans la zone principale
+  let splitView = null;       // vue de l'onglet secondaire affichée à droite (null hors paire active)
+  let splitMode = null;       // 'shared' | 'private' (déduit de l'onglet secondaire)
+  let splitRatio = 0.5;       // largeur relative du volet gauche
+  let isMain = !!main && !privateWin;
+  const winPartition = privateWin ? 'nax-private-w' + (privateWinSeq++) : null; // session mémoire partagée par tous les onglets de la fenêtre privée
+  let geom = saved && saved.bounds ? { bounds: saved.bounds, maximized: !!saved.maximized } : { bounds: null, maximized: false };
+  if (saved) { tabs = (saved.tabs || []).map((t) => ({ ...t, view: null })); groups = saved.groups || []; }
+  // IPC : seuls les messages émis par cette fenêtre (interface + calques) sont traités ici
+  const mine = new Set(); const ipcOffs = [];
+  const own = (bw) => { try { mine.add(bw.webContents.id); } catch {} return bw; };
+  const on = (ch, fn) => { const h = (e, ...a) => { if (mine.has(e.sender.id)) fn(e, ...a); }; ipcMain.on(ch, h); ipcOffs.push(() => ipcMain.removeListener(ch, h)); };
+  const handle = (ch, fn) => handleFor(ch, chrome.webContents.id, fn);
+  const openInTab = (url) => newTab({ url });
+  const setTitle = (t) => { if (win && !win.isDestroyed()) win.setTitle(privateWin ? tr('{title} (privé)', { title: t || 'NaX' }) : (t || 'NaX')); };
+  // Ctrl+Tab et Ctrl+1…9 (menu d'application)
   const cycle = (dir) => {
     if (!tabs.length) return;
     const i = current && current.kind === 'tab' ? tabs.findIndex((t) => t.id === current.id) : -1;
@@ -1900,53 +1155,1635 @@ function buildMenu() {
     const t = n === 9 ? list[list.length - 1] : list[n - 1];
     if (t) activateTab(t.id);
   };
-  const uiCommand = (cmd) => () => uiFocus('ui-command', cmd);
+
+  function secondaryOf(tab) { return tab ? tabs.find((t) => t.splitParent === tab.id) : null; }
+  function pairOf(tab) {
+    if (!tab) return null;
+    if (tab.splitParent) { const p = tabById(tab.splitParent); return p ? { primary: p, secondary: tab } : null; }
+    const s = secondaryOf(tab); return s ? { primary: tab, secondary: s } : null;
+  }
+  function setSplitView(view) {
+    if (splitView === view) return;
+    if (splitView) { try { win.contentView.removeChildView(splitView); } catch {} } // détache l'affichage sans fermer l'onglet
+    splitView = view || null;
+    if (splitView) { try { win.contentView.addChildView(splitView); } catch {} splitView.setVisible(!overlayOpen); }
+    layout();
+  }
+  // Affiche l'onglet courant : seul, ou en paire (primaire à gauche, secondaire à droite).
+  function showActive() {
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : (current && current.kind === 'app' ? null : null);
+    if (current && current.kind === 'app') { const v = appViews.get(current.id); attach(v || null); setSplitView(null); splitMode = null; return; }
+    const pair = cur ? pairOf(cur) : null;
+    if (pair) {
+      wakeTab(pair.primary); wakeTab(pair.secondary);
+      pair.primary.lastActive = pair.secondary.lastActive = Date.now(); // les deux restent éveillés
+      attach(pair.primary.view);
+      setSplitView(pair.secondary.view);
+      splitMode = pair.secondary.partition ? 'private' : 'shared';
+    } else {
+      attach(cur ? cur.view : null);
+      setSplitView(null);
+      splitMode = null;
+    }
+  }
+  // Change la session d'un onglet (normale ⇄ privée) en recréant sa vue ; la page se recharge.
+  function setTabSession(id, makePrivate) {
+    const tab = tabById(id); if (!tab) return;
+    if (!!tab.partition === !!makePrivate) return; // déjà dans l'état voulu
+    if (makePrivate) tab.partition = splitPartition('private'); else delete tab.partition;
+    if (tab.splitMode) tab.splitMode = makePrivate ? 'private' : 'shared';
+    if (tab.view) {
+      const w = wcOf(tab.view);
+      if (w) tab.url = w.getURL() || tab.url;
+      if (contentView === tab.view) attach(null);
+      if (splitView === tab.view) setSplitView(null);
+      if (w) w.close();
+    }
+    tab.view = null;
+    wakeTab(tab); // recrée la vue dans la nouvelle session et recharge l'URL
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+    const pair = cur ? pairOf(cur) : null;
+    if (isCurrentTab(id) || (pair && (pair.primary.id === id || pair.secondary.id === id))) showActive();
+    sendState();
+  }
+  function openSplit(mode) {
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+    if (!cur || cur.splitParent || secondaryOf(cur)) return; // pas déjà dans une paire
+    mode = mode === 'private' ? 'private' : 'shared';
+    const b = newTab({ url: cur.url, openerId: cur.id, activate: false, partition: splitPartition(mode), splitParent: cur.id });
+    b.splitMode = mode;
+    activateTab(cur.id); // réaffiche en montrant la paire
+  }
+  function closeSplit() {
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+    const pair = cur ? pairOf(cur) : null;
+    if (pair) closeTab(pair.secondary.id); // ferme le volet secondaire (c'est un onglet)
+  }
+
+  // ---------- helpers ----------
+  const tabById = (id) => tabs.find((t) => t.id === id);
+  const groupById = (id) => groups.find((g) => g.id === id);
+  const isCurrentTab = (id) => !!current && current.kind === 'tab' && current.id === id;
+
+  // Titre déduit d'un groupe : requête Google du 1er onglet, sinon son titre, sinon son domaine.
+  function groupTitle(g) {
+    if (!g) return '';
+    if (g.title) return g.title;
+    const root = tabs.find((t) => t.groupId === g.id);
+    if (!root) return '';
+    try {
+      const u = new URL(root.url);
+      if (u.hostname.includes('google.') && u.pathname === '/search' && u.searchParams.get('q')) return u.searchParams.get('q');
+    } catch {}
+    return root.title || hostOf(root.url);
+  }
+
+  // ---------- layout ----------
+  function mainBounds() {
+    const { width, height } = win.getContentBounds();
+    const x = RAIL + (sidebarOpen ? sidebarWidth : 0);
+    const right = isMain && claudeOpen && betaFeatures ? CLAUDE_W : 0; // place du panneau Claude (fenêtre principale seulement)
+    return { x, y: NAV, width: Math.max(0, width - x - right), height: Math.max(0, height - NAV) };
+  }
+  function layout() {
+    const { width, height } = win.getContentBounds();
+    if (htmlFullscreen && contentView) {
+      // plein écran HTML (vidéo) : la page couvre toute la fenêtre, l'interface est masquée
+      chrome.setVisible(false);
+      contentView.setBounds({ x: 0, y: 0, width, height });
+      return;
+    }
+    chrome.setVisible(true);
+    chrome.setBounds({ x: 0, y: 0, width, height });
+    const b = mainBounds();
+    if (splitView) {
+      const leftW = Math.max(140, Math.round((b.width - SPLIT_GAP) * splitRatio));
+      const rightW = Math.max(140, b.width - SPLIT_GAP - leftW);
+      if (contentView) contentView.setBounds({ x: b.x, y: b.y, width: leftW, height: b.height });
+      splitView.setBounds({ x: b.x + leftW + SPLIT_GAP, y: b.y, width: rightW, height: b.height });
+    } else if (contentView) {
+      contentView.setBounds(b);
+    }
+  }
+  function attach(view) {
+    if (contentView === view) return;
+    if (contentView) win.contentView.removeChildView(contentView);
+    contentView = view;
+    hideLinkStatus(); // la bulle d'adresse appartenait à la page qu'on quitte
+    if (view) {
+      win.contentView.addChildView(view);
+      view.setVisible(!overlayOpen);
+      // garde le volet droit au-dessus dans l'ordre d'empilement
+      if (splitView) { try { win.contentView.removeChildView(splitView); win.contentView.addChildView(splitView); } catch {} }
+    }
+    layout();
+  }
+
+  // ---------- état → UI ----------
+  // L'ordre d'affichage des groupes suit l'ordre des onglets (premier onglet de chaque groupe), et non l'ordre de
+  // création de la liste groups : sinon un groupe déplacé ne bouge pas à l'écran, et un onglet déposé entre deux
+  // groupes (nouveau groupe, ajouté en fin de liste) s'affiche toujours en dernier.
+  function orderedGroups() {
+    const rank = new Map();
+    for (const t of tabs) if (!rank.has(t.groupId)) rank.set(t.groupId, rank.size);
+    return [...groups].sort((x, y) => (rank.has(x.id) ? rank.get(x.id) : 1e9) - (rank.has(y.id) ? rank.get(y.id) : 1e9));
+  }
+  // Toute donnée affichée peut être partagée entre fenêtres (favoris, applis, archive, thème…) : on rafraîchit toutes les
+  // fenêtres, chacune construisant son propre état. L'envoi est différé et dédoublonné par fenêtre.
+  function sendState() { sendStateAll(); }
+  let stateScheduled = false;
+  function scheduleState() {
+    if (stateScheduled) return;
+    stateScheduled = true;
+    setImmediate(() => {
+      stateScheduled = false;
+      if (!chrome || chrome.webContents.isDestroyed()) return;
+      const wc = currentWC();
+      const live = wc && !wc.isDestroyed();
+      const ct = current && current.kind === 'tab' ? tabById(current.id) : null;
+      chrome.webContents.send('state', {
+        tabs: tabs.map(({ view, ...t }) => { const w = wcOf(view); return { ...t, dormant: !w, loading: !!w && w.isLoading() }; }),
+        groups: orderedGroups().map((g) => ({ id: g.id, title: groupTitle(g), custom: !!g.title, collapsed: !!g.collapsed, claude: !!g.claude, claudeTaskId: g.claudeTaskId || null, bornAt: g.bornAt || 0 })),
+        apps, current, sidebarOpen, sidebarWidth, overlayOpen, theme,
+        railPins: railPins.map((p) => {
+          const r = favFind(p.favId); if (!r) return null; // favori supprimé → l'épingle disparaît
+          const n = r.node;
+          return n.type === 'folder'
+            ? { id: p.id, kind: 'favfolder', favId: p.favId, title: n.title || tr('Dossier'), icon: n.icon || null, color: n.color || null, count: (n.children || []).length }
+            : { id: p.id, kind: 'fav', favId: p.favId, title: n.title || hostOf(n.url), url: n.url, favicon: n.favicon || null };
+        }).filter(Boolean),
+        winKind: privateWin ? 'private' : isMain ? 'main' : 'secondary', windowCount: windows.length,
+        claudeOpen: isMain && claudeOpen && betaFeatures, claudeRunning: claudeTasks.filter((t) => t.status === 'running').length,
+        favorites, favActive: !!(ct && favByUrl(ct.url)),
+        devMode, devProjects, betaFeatures, uiLang,
+        searchEngine, searchEngines: SEARCH_ENGINES.map((e) => ({ id: e.id, name: e.name })),
+        archiveCount: archive.length,
+        nav: live ? {
+          url: (ct && isErrorPage(wc.getURL()) && ct.errorURL) ? ct.errorURL : wc.getURL(),
+          title: wc.getTitle(), loading: wc.isLoading(),
+          canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(),
+        } : { url: '', title: '', loading: false, canGoBack: false, canGoForward: false },
+        navPrivate: !!(ct && ct.partition && String(ct.partition).startsWith('nax-private')),
+        split: (() => {
+          const p = ct ? pairOf(ct) : null;
+          return p ? { active: true, mode: splitMode, primaryId: p.primary.id, secondaryId: p.secondary.id } : { active: false };
+        })(),
+        splitRatio,
+        splitNav: (splitView && !splitView.webContents.isDestroyed()) ? {
+          url: splitView.webContents.getURL(), title: splitView.webContents.getTitle(),
+          loading: splitView.webContents.isLoading(),
+          canGoBack: splitView.webContents.navigationHistory.canGoBack(),
+          canGoForward: splitView.webContents.navigationHistory.canGoForward(),
+        } : null,
+      });
+      persist();
+    });
+  }
+  function currentWC() {
+    if (!current) return null;
+    if (current.kind === 'tab') { const t = tabById(current.id); return t ? wcOf(t.view) : null; }
+    return wcOf(appViews.get(current.id));
+  }
+  // Vue réellement affichée (celle attachée), pour les actions qui doivent viser l'écran (recherche…).
+  function visibleWC() { return wcOf(contentView) || currentWC(); }
+
+  // ---------- onglets ----------
+  const NAV_EVENTS = ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated', 'page-favicon-updated'];
+  function createView(onEvent, partition) {
+    const view = new WebContentsView({ webPreferences: { sandbox: true, ...(partition ? { partition } : {}) } });
+    configureSession(view.webContents.session);
+    for (const ev of NAV_EVENTS) view.webContents.on(ev, (...args) => onEvent(ev, ...args));
+    wirePageBasics(view.webContents);
+    return view;
+  }
+  // Comportements de navigateur communs à toutes les pages (onglets, volets, applis du rail).
+  function wirePageBasics(wc) {
+    // « Quitter la page ? » : sans ce gestionnaire, Electron annule la navigation EN SILENCE
+    // dès que la page a des modifications non enregistrées (beforeunload) — taper une adresse ne faisait rien.
+    wc.on('will-prevent-unload', (e) => {
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'question', buttons: [tr('Quitter la page'), tr('Rester')], defaultId: 1, cancelId: 1, noLink: true,
+        title: tr('Quitter la page ?'), message: tr('Quitter cette page ?'),
+        detail: tr('Les modifications que tu as apportées ne seront peut-être pas enregistrées.'),
+      });
+      if (choice === 0) e.preventDefault(); // preventDefault = ignorer le beforeunload et laisser partir
+    });
+    // adresse du lien survolé, en bas à gauche de la page (vérifier où mène un lien avant de cliquer)
+    wc.on('update-target-url', (_e, url) => showLinkStatus(wc, url));
+    // page figée (boucle infinie…) : on propose de l'arrêter, seulement si elle est à l'écran
+    let hangAsked = false;
+    wc.on('unresponsive', async () => {
+      if (hangAsked || !isOnScreen(wc)) return;
+      hangAsked = true;
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning', buttons: [tr('Attendre'), tr('Arrêter la page')], defaultId: 0, cancelId: 0, noLink: true,
+        title: tr('Page figée'), message: tr('Cette page ne répond pas'),
+        detail: tr('{host} ne répond plus. Tu peux attendre qu’elle reprenne, ou l’arrêter (elle pourra être rechargée).', { host: hostOf(wc.getURL()) || tr('La page') }),
+      }).catch(() => ({ response: 0 }));
+      hangAsked = false;
+      if (response === 1 && !wc.isDestroyed()) wc.forcefullyCrashRenderer(); // → render-process-gone → page « Oups »
+    });
+  }
+  function isOnScreen(wc) { return [contentView, splitView].some((v) => v && wcOf(v) === wc); }
+
+  // Bulle d'adresse du lien survolé : dessinée dans l'overlay des tooltips (au-dessus des vues natives),
+  // calée en bas à gauche de la vue qui l'a émise (page principale ou volet de droite).
+  function showLinkStatus(wc, url) {
+    if (!tipWin || tipWin.isDestroyed()) return;
+    const view = [contentView, splitView].find((v) => v && wcOf(v) === wc);
+    let text = '';
+    if (url && view && !overlayOpen) { try { text = decodeURI(url); } catch { text = url; } }
+    const payload = text ? { text, bounds: view.getBounds(), dark: nativeTheme.shouldUseDarkColors } : null;
+    try { tipWin.webContents.send('link-status', payload); } catch {}
+  }
+  function hideLinkStatus() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('link-status', null); } catch {} } }
+
+  function authPopupOptions() {
+    return { action: 'allow', overrideBrowserWindowOptions: { parent: win, width: 520, height: 720, title: tr('Connexion'), autoHideMenuBar: true, minimizable: false, webPreferences: { sandbox: true } } };
+  }
+  function wakeTab(tab) {
+    if (tab.view) return;
+    tab.view = createView((ev, _e, arg) => {
+      const wc = wcOf(tab.view);
+      if (!wc) return;
+      const onErr = isErrorPage(wc.getURL());
+      if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0]) tab.favicon = arg[0];
+      if (ev === 'did-navigate') { tab.url = onErr ? (tab.errorURL || tab.url) : wc.getURL(); if (!onErr) { tab.favicon = null; tab.errorURL = null; } }
+      if (ev === 'did-navigate-in-page') { if (!onErr) tab.url = wc.getURL(); }
+      if (ev === 'page-title-updated') { if (!onErr) tab.title = wc.getTitle(); }
+      if (ev === 'did-stop-loading' && !onErr) {
+        tab.title = wc.getTitle() || tab.title;
+        // navigation privée / session isolée : aucune trace dans l'historique
+        if (!isIsolated(tab) && !/^view-source:/i.test(tab.url)) {
+          const key = normalize(tab.url);
+          const h = history[key] || { count: 0 };
+          history[key] = { title: tab.title, url: tab.url, count: h.count + 1, last: Date.now() };
+        }
+      }
+      if (isCurrentTab(tab.id)) setTitle((onErr ? hostOf(tab.url) : tab.title) || 'NaX');
+      sendState();
+    }, tab.partition || winPartition); // fenêtre privée : tous ses onglets partagent sa session mémoire
+    const view = tab.view;
+    const wc = view.webContents;
+    // La page se ferme d'elle-même (window.close() : fin d'un flux de connexion, par exemple) : on ferme l'onglet.
+    // Si tab.view n'est plus cette vue, c'est une fermeture voulue (sleepTab / closeTab) déjà prise en charge.
+    wc.on('destroyed', () => {
+      if (tab.view !== view || shuttingDown()) return;
+      if (contentView === view) attach(null);
+      if (splitView === view) setSplitView(null);
+      tab.view = null;
+      closeTab(tab.id, { toArchive: false });
+    });
+    wc.setWindowOpenHandler(({ url, disposition }) => {
+      // connexion (Google, Microsoft, Okta…) : vraie fenêtre fille, pour que window.opener / postMessage fonctionnent
+      if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
+      // blocage des pop-ups : uniquement les fenêtres scriptées (window.open avec options), pas les liens _blank
+      if (permDefaults.popups === 'block' && disposition === 'new-window') return { action: 'deny' };
+      if (isExternalScheme(url)) { openExternalFrom(wc, url); return { action: 'deny' }; }
+      newTab({ url, openerId: tab.id, activate: disposition !== 'background-tab' });
+      return { action: 'deny' };
+    });
+    wc.on('context-menu', (_e, params) => pageContextMenu(wc, params, tab.id));
+    wc.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
+    wc.on('enter-html-full-screen', () => { if (isCurrentTab(tab.id)) enterHtmlFullscreen(); });
+    wc.on('leave-html-full-screen', () => leaveHtmlFullscreen());
+    // Recherche de la page d'accueil (ui/home.html) : le formulaire part en nax-home://search?q=…
+    // et la recherche suit le moteur choisi. Aucune API n'est exposée aux pages.
+    wc.on('will-navigate', (e, url) => {
+      const m = /^nax-home:\/\/search\?(.*)$/i.exec(url);
+      if (!m) return;
+      e.preventDefault();
+      const q = new URLSearchParams(m[1]).get('q');
+      if (q && q.trim()) navigateCurrent(q);
+    });
+    wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+      // -3 = requête abandonnée (navigation normale), on ignore ; on ignore aussi les échecs de la page d'erreur elle-même
+      if (isMainFrame && code !== -3 && !isErrorPage(failedUrl) && failedUrl && failedUrl !== 'about:blank') loadErrorPage(tab, failedUrl, code, desc);
+    });
+    // La page a planté (mémoire, bug, arrêt forcé) : sinon l'onglet resterait blanc, sans rien pour le relancer.
+    wc.on('render-process-gone', (_e, d) => {
+      if (tab.view !== view || d.reason === 'clean-exit') return; // fermeture voulue (veille, fermeture)
+      loadErrorPage(tab, tab.errorURL || tab.url, d.reason === 'oom' ? 'oom' : 'crash', tr('Processus de la page arrêté ({reason})', { reason: d.reason }));
+    });
+    // Injecte l'overlay « Détacher la vidéo » (PiP) + applique le zoom (par site ou par défaut) à chaque chargement.
+    wc.on('dom-ready', () => { if (PIP_INJECT) wc.executeJavaScript(pipScript()).catch(() => {}); translateHome(wc); applyZoom(wc); });
+    wc.loadURL(tab.url);
+  }
+
+  function sleepTab(tab) {
+    if (!tab.view || isCurrentTab(tab.id)) return;
+    // ne pas endormir un volet actuellement affiché dans la vue divisée
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+    const pair = cur ? pairOf(cur) : null;
+    if (pair && (tab.id === pair.primary.id || tab.id === pair.secondary.id)) return;
+    const v = tab.view; tab.view = null;
+    const w = wcOf(v); if (w) w.close();
+    sendState();
+  }
+
+  function newTab({ url = newTabTarget(), openerId = null, groupId = null, activate = true, partition = null, splitParent = null } = {}) {
+    const opener = openerId ? tabById(openerId) : null;
+    let gid = groupId ?? (opener ? opener.groupId : null);
+    if (gid == null) { gid = nextId++; groups.push({ id: gid, title: null }); }
+    const tab = { id: nextId++, url, title: hostOf(url), favicon: null, groupId: gid, lastActive: Date.now(), createdAt: Date.now(), view: null };
+    if (partition || winPartition) tab.partition = partition || winPartition; // fenêtre privée : session de la fenêtre par défaut
+    if (splitParent) tab.splitParent = splitParent;
+    // insérer à la fin de l'îlot de l'ouvreur pour le garder contigu et dans l'ordre d'ouverture
+    let idx = tabs.length;
+    if (opener) { idx = tabs.indexOf(opener) + 1; while (idx < tabs.length && tabs[idx].groupId === gid) idx++; }
+    tabs.splice(idx, 0, tab);
+    wakeTab(tab);
+    if (activate) activateTab(tab.id); else sendState();
+    return tab;
+  }
+
+  function activateTab(id) {
+    let tab = tabById(id);
+    if (!tab) return;
+    // cliquer le volet secondaire active la paire ; le primaire reste le pilote de gauche
+    const pair = pairOf(tab);
+    const activeTab = pair ? pair.primary : tab;
+    wakeTab(activeTab);
+    // arriver sur un onglet d'un groupe replié (Ctrl+Tab, cycle…) déplie le groupe, sinon l'onglet actif reste invisible
+    const grp = groupById(activeTab.groupId);
+    if (grp && grp.collapsed) grp.collapsed = false;
+    activeTab.lastActive = Date.now();
+    tabMRU = [activeTab.id, ...tabMRU.filter((x) => x !== activeTab.id)]; // ordre d'utilisation : le plus récent en tête
+    current = { kind: 'tab', id: activeTab.id };
+    showActive();
+    { const w = wcOf(activeTab.view); if (w) w.focus(); }
+    setTitle(activeTab.title || 'NaX');
+    hidePeek(); hideFind();
+    sendState();
+  }
+  // Dernier onglet utilisé (hors onglet courant) : pour Ctrl+Tab.
+  function lastUsedTab() {
+    const cur = current && current.kind === 'tab' ? current.id : null;
+    for (const id of tabMRU) if (id !== cur && tabById(id)) return id;
+    const other = tabs.find((t) => t.id !== cur); return other ? other.id : null;
+  }
+
+  function closeTab(id, { toArchive = true } = {}) {
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const tab = tabs[idx];
+    // si on ferme le volet primaire, son secondaire redevient un onglet normal
+    const sec = secondaryOf(tab);
+    if (sec) { delete sec.splitParent; delete sec.splitMode; }
+    const g = groupById(tab.groupId);
+    // les onglets en session isolée (privée/profil) ne vont pas dans l'archive
+    if (toArchive && !isIsolated(tab) && tab.url && normalize(tab.url) !== normalize(homepage)) {
+      archive.unshift({ url: tab.url, title: tab.title, favicon: tab.favicon, closedAt: Date.now(), groupTitle: groupTitle(g) });
+      if (archive.length > 2000) archive.length = 2000;
+    }
+    tabs.splice(idx, 1);
+    tabMRU = tabMRU.filter((x) => x !== id);
+    if (!tabs.some((t) => t.groupId === tab.groupId)) groups = groups.filter((x) => x.id !== tab.groupId);
+    const wasCurrent = isCurrentTab(id);
+    if (tab.view) { if (contentView === tab.view) attach(null); if (splitView === tab.view) setSplitView(null); const w = wcOf(tab.view); if (w) w.close(); tab.view = null; }
+    if (wasCurrent) {
+      current = null;
+      // le dernier onglet utilisé d'abord, sinon un voisin du même groupe, sinon l'onglet à la même position
+      const mru = tabMRU.find((x) => tabById(x));
+      const next = (mru && tabById(mru)) || tabs.find((t) => t.groupId === tab.groupId) || tabs[Math.min(idx, tabs.length - 1)];
+      if (next) activateTab(next.id); else newTab();
+    } else { showActive(); sendState(); }
+  }
+
+  // Dédoublonnage : si l'URL est déjà ouverte, on y va au lieu d'ouvrir une 2e fois.
+  function navigateCurrent(input) {
+    const url = toUrl(input);
+    if (!url) return;
+    if (isExternalScheme(url)) {
+      let scheme = ''; try { scheme = new URL(url).protocol.toLowerCase(); } catch {}
+      if (scheme && !BLOCKED_SCHEMES.has(scheme)) shell.openExternal(url).catch(() => {});
+      return;
+    }
+    const cur = current && current.kind === 'tab' ? tabById(current.id) : null;
+    const dup = tabs.find((t) => t !== cur && sameTarget(url, t.url));
+    if (dup) {
+      // un onglet vierge fraîchement ouvert n'a pas de raison de rester
+      if (cur && normalize(cur.url) === normalize(homepage) && cur.createdAt > Date.now() - 5 * 60 * 1000) closeTab(cur.id, { toArchive: false });
+      activateTab(dup.id);
+      return;
+    }
+    const curWc = cur ? wcOf(cur.view) : null;
+    if (curWc) curWc.loadURL(url);
+    else newTab({ url });
+  }
+
+  // ---------- organisation manuelle (drag & drop) ----------
+  // Invariant : les onglets d'un même groupe sont contigus dans `tabs`, et l'ordre des groupes
+  // suit la 1re apparition. On réordonne librement puis on renormalise pour tenir l'invariant.
+  function normalizeGroups() {
+    const order = []; const seen = new Set();
+    for (const t of tabs) if (!seen.has(t.groupId)) { seen.add(t.groupId); order.push(t.groupId); }
+    const byGroup = new Map(order.map((g) => [g, []]));
+    for (const t of tabs) byGroup.get(t.groupId).push(t);
+    tabs = order.flatMap((g) => byGroup.get(g));
+  }
+  // Déplace un onglet : réordonner, rejoindre un groupe, ou en sortir (nouveau groupe).
+  function moveTab({ tabId, afterTabId = null, targetGroupId = null, makeNewGroup = false }) {
+    const tab = tabById(tabId); if (!tab) return;
+    const oldGroupId = tab.groupId;
+    let gid;
+    if (makeNewGroup) { gid = nextId++; groups.push({ id: gid, title: null }); }
+    else if (targetGroupId != null && groupById(targetGroupId)) gid = targetGroupId;
+    else gid = tab.groupId;
+    tabs = tabs.filter((t) => t.id !== tabId);
+    tab.groupId = gid;
+    let idx;
+    if (afterTabId == null) idx = 0;
+    else { const i = tabs.findIndex((t) => t.id === afterTabId); idx = i < 0 ? tabs.length : i + 1; }
+    tabs.splice(idx, 0, tab);
+    normalizeGroups();
+    if (oldGroupId !== gid && !tabs.some((t) => t.groupId === oldGroupId)) groups = groups.filter((g) => g.id !== oldGroupId);
+    sendState();
+  }
+  // Déplace un groupe entier avant un autre groupe (ou à la fin si beforeGroupId absent).
+  function moveGroup({ groupId, beforeGroupId = null }) {
+    const members = tabs.filter((t) => t.groupId === groupId);
+    if (!members.length) return;
+    const rest = tabs.filter((t) => t.groupId !== groupId);
+    let idx = rest.length;
+    if (beforeGroupId != null) { const i = rest.findIndex((t) => t.groupId === beforeGroupId); if (i >= 0) idx = i; }
+    rest.splice(idx, 0, ...members);
+    tabs = rest;
+    normalizeGroups();
+    sendState();
+  }
+
+  function openAllInFolder(id) { const r = favFind(id); if (r && r.node.children) favWalk(r.node.children, (n) => { if (n.type === 'link') newTab({ url: n.url, activate: false }); }); }
+  // ---------- plein écran HTML (vidéo) ----------
+  function enterHtmlFullscreen() { if (htmlFullscreen) return; htmlFullscreen = true; hideMenu(); hideTip(); hidePeek(); try { win.setFullScreen(true); } catch {} layout(); }
+  function leaveHtmlFullscreen() { if (!htmlFullscreen) return; htmlFullscreen = false; try { win.setFullScreen(false); } catch {} layout(); }
+
+  // ---------- applis ----------
+  function ensureAppView(a) {
+    let v = appViews.get(a.id);
+    if (!v) {
+      v = createView((ev, _e, arg) => { if (ev === 'page-favicon-updated' && Array.isArray(arg) && arg[0] && !a.icon) { a.favicon = arg[0]; } sendState(); });
+      const appView = v;
+      v.webContents.on('destroyed', () => {
+        if (appViews.get(a.id) !== appView || shuttingDown()) return;
+        appViews.delete(a.id);
+        if (contentView === appView) attach(null);
+        if (current && current.kind === 'app' && current.id === a.id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
+        sendState();
+      });
+      v.webContents.setWindowOpenHandler(({ url, disposition }) => {
+        if (disposition === 'new-window' && isAuthPopupUrl(url)) return authPopupOptions();
+        if (isExternalScheme(url)) { openExternalFrom(v.webContents, url); return { action: 'deny' }; }
+        newTab({ url }); return { action: 'deny' };
+      });
+      v.webContents.on('context-menu', (_e, params) => pageContextMenu(v.webContents, params, null));
+      v.webContents.on('found-in-page', (_e, r) => { if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.webContents.send('find-result', { active: r.activeMatchOrdinal, total: r.matches }); });
+      v.webContents.on('enter-html-full-screen', () => { if (current && current.kind === 'app' && current.id === a.id) enterHtmlFullscreen(); });
+      v.webContents.on('leave-html-full-screen', () => leaveHtmlFullscreen());
+      v.webContents.on('render-process-gone', (_e, d) => {
+        if (appViews.get(a.id) !== appView || d.reason === 'clean-exit') return;
+        const u = v.webContents.getURL();
+        showErrorPage(v.webContents, u && !isErrorPage(u) ? u : a.url, d.reason === 'oom' ? 'oom' : 'crash', tr('Processus de la page arrêté ({reason})', { reason: d.reason }));
+      });
+      v.webContents.loadURL(a.url);
+      appViews.set(a.id, v);
+    }
+    return v;
+  }
+  function activateApp(id) {
+    const a = apps.find((x) => x.id === id);
+    if (!a) return;
+    const v = ensureAppView(a);
+    current = { kind: 'app', id };
+    attach(v);
+    setSplitView(null); splitMode = null; // une appli masque la vue divisée
+    v.webContents.focus();
+    setTitle(a.name);
+    hidePeek(); hideFind();
+    sendState();
+  }
+
+  function openGmailMessage(link) {
+    const a = apps.find(isGmailApp) || apps.find((x) => x.id === 'gmail');
+    if (!a) { if (link) navigateCurrent(link); return; }
+    const v = ensureAppView(a);
+    if (link) v.webContents.loadURL(link);
+    current = { kind: 'app', id: a.id };
+    attach(v); v.webContents.focus(); setTitle(a.name);
+    hidePeek(); sendState();
+  }
+  // Ouvre Chat (une conversation précise si on connaît son id « space/… » ou « dm/… »)
+  function openChat(groupId) {
+    let url = 'https://chat.google.com/';
+    if (typeof groupId === 'string') {
+      if (groupId.startsWith('space/')) url += 'room/' + groupId.slice(6);
+      else if (groupId.startsWith('dm/')) url += 'dm/' + groupId.slice(3);
+    }
+    const a = apps.find((x) => /chat\.google\.com/i.test(x.url));
+    if (a) {
+      const v = ensureAppView(a);
+      v.webContents.loadURL(url);
+      current = { kind: 'app', id: a.id };
+      attach(v); v.webContents.focus(); setTitle(a.name);
+    } else {
+      newTab({ url });
+    }
+    hidePeek(); sendState();
+  }
+
+  // ---------- panneau d'aperçu au survol (widget façon Opera) ----------
+  let peekWin = null, peekAppId = null, peekHideTimer = null, peekCloseTimer = null;
+  function ensurePeekWin() {
+    if (peekWin && !peekWin.isDestroyed()) return peekWin;
+    peekWin = new BrowserWindow({
+      width: 400 + 32, height: 560, show: false, frame: false, resizable: false, minimizable: false,
+      maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false,
+      transparent: true, // la page dessine un panneau arrondi + ombre (même langage que les panneaux de l'app)
+      webPreferences: { preload: path.join(__dirname, 'peek-preload.js') },
+    });
+    lockUiContents(peekWin.webContents, openInTab); own(peekWin);
+    peekWin.loadFile(path.join(__dirname, 'ui', 'peek.html'), { query: { lang: uiLang } });
+    peekWin.on('blur', () => hidePeek());
+    return peekWin;
+  }
+  function showPeek(id, clientY) {
+    const a = apps.find((x) => x.id === id);
+    if (!a || !win) return;
+    if (!isGmailApp(a)) return; // aperçu au survol réservé au widget Gmail
+    if (current && current.kind === 'app' && current.id === id) return; // déjà en plein écran
+    clearTimeout(peekHideTimer); clearTimeout(peekCloseTimer);
+    let w;
+    try { w = ensurePeekWin(); } catch { return; }
+    const b = win.getContentBounds();
+    // dimensions du PANNEAU (la fenêtre transparente y ajoute les marges d'ombre : gauche 8, haut 8, droite 24, bas 28)
+    const panelH = Math.min(536, b.height - 48);
+    const panelTop = Math.max(b.y + NAV + 12, Math.min(b.y + (clientY || NAV) - 12, b.y + b.height - panelH - 24));
+    w.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(panelTop - 8), width: 400 + 32, height: Math.round(panelH + 36) });
+    peekAppId = id;
+    const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
+    const payload = { url: a.url, name: a.name, icon: a.icon || a.favicon || null, kind: isGmailApp(a) ? 'gmail' : 'web', fresh };
+    const send = () => { try { w.webContents.send('peek-load', payload); } catch {} };
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+    if (!fresh) w.showInactive(); // sinon : on attend 'peek-ready' (contenu posé) avant de montrer la fenêtre
+  }
+  function hidePeek() {
+    clearTimeout(peekHideTimer);
+    if (peekWin && !peekWin.isDestroyed() && peekWin.isVisible()) {
+      try { peekWin.webContents.send('peek-close'); } catch {}
+      clearTimeout(peekCloseTimer);
+      peekCloseTimer = setTimeout(() => { if (peekWin && !peekWin.isDestroyed()) peekWin.hide(); }, 110);
+    }
+    peekAppId = null;
+  }
+  function hidePeekSoon() { clearTimeout(peekHideTimer); peekHideTimer = setTimeout(hidePeek, 260); }
+
+  // ---------- flyout du rail : options au survol (raccourcis d'appli, liens d'un dossier épinglé) ----------
+  let flyWin = null, flyHideTimer = null, flyCloseTimer = null;
+  function ensureFlyWin() {
+    if (flyWin && !flyWin.isDestroyed()) return flyWin;
+    flyWin = new BrowserWindow({
+      width: 300 + 32, height: 220, show: false, frame: false, resizable: false, minimizable: false,
+      maximizable: false, skipTaskbar: true, parent: win, fullscreenable: false, transparent: true,
+      webPreferences: { preload: path.join(__dirname, 'fly-preload.js') },
+    });
+    lockUiContents(flyWin.webContents, openInTab); own(flyWin);
+    flyWin.loadFile(path.join(__dirname, 'ui', 'fly.html'), { query: { lang: uiLang } });
+    flyWin.on('blur', () => hideFly());
+    return flyWin;
+  }
+  function hideFly() {
+    clearTimeout(flyHideTimer);
+    if (flyWin && !flyWin.isDestroyed() && flyWin.isVisible()) {
+      try { flyWin.webContents.send('fly-close'); } catch {}
+      clearTimeout(flyCloseTimer);
+      flyCloseTimer = setTimeout(() => { if (flyWin && !flyWin.isDestroyed()) flyWin.hide(); }, 110);
+    }
+  }
+  function hideFlySoon() { clearTimeout(flyHideTimer); flyHideTimer = setTimeout(hideFly, 260); }
+  let flyClientY = 0;
+  // Place la fenêtre du flyout à côté du rail, en-tête aligné sur l'icône survolée ; H = hauteur voulue (ombre comprise).
+  function flyPlace(H) {
+    if (!win || !flyWin || flyWin.isDestroyed()) return;
+    const b = win.getContentBounds();
+    H = Math.max(110, Math.min(Math.round(H), b.height - 24)); // hauteur de la fenêtre, marges d'ombre comprises
+    const y = Math.max(b.y + 8, Math.min(b.y + (flyClientY || 0) - 6 - 8, b.y + b.height - H - 8)); // en-tête du panneau aligné sur l'icône survolée
+    flyWin.setBounds({ x: Math.round(b.x + RAIL), y: Math.round(y), width: 300 + 32, height: H });
+  }
+  function showFly(payload, clientY) {
+    if (!win) return;
+    clearTimeout(flyHideTimer); clearTimeout(flyCloseTimer);
+    let w;
+    try { w = ensureFlyWin(); } catch { return; }
+    flyClientY = clientY || 0;
+    // estimation initiale (marges d'ombre 36 + en-tête 47 + espacements 12 + lignes) ; la page renvoie la hauteur exacte via fly-resize
+    const est = payload.items.reduce((n, it) => n + (it.type === 'folder' ? 38 : 44), 0) || 44;
+    flyPlace(36 + 47 + 12 + est);
+    const fresh = !w.isVisible(); // déjà affiché : juste repositionné/rechargé, pas de rejeu de l'entrée
+    const send = () => { try { w.webContents.send('fly-load', { ...payload, fresh }); } catch {} };
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+    if (!fresh) w.showInactive(); // sinon : on attend 'fly-ready' (contenu posé, hauteur ajustée) avant de montrer la fenêtre
+  }
+  // Survol d'un élément du rail : Gmail garde son widget, une appli à raccourcis ou un dossier épinglé a son flyout.
+  function railHover(id, kind, clientY) {
+    if (kind === 'app') {
+      const a = apps.find((x) => x.id === id); if (!a) return;
+      if (isGmailApp(a)) return showPeek(id, clientY);
+      const sc = a.shortcuts || [];
+      if (!sc.length) return;
+      showFly({ kind: 'app', id, title: a.name, icon: a.icon || a.favicon || null, edit: true, items: sc.map((s) => ({ id: s.id, name: s.name, url: s.url })) }, clientY);
+    } else if (kind === 'pin') {
+      const p = railPins.find((x) => x.id === id); if (!p) return;
+      const r = favFind(p.favId); if (!r || r.node.type !== 'folder') return;
+      showFly({ kind: 'folder', id, favId: p.favId, title: r.node.title || tr('Favoris'), items: favTreeItems(r.node.children, 1, { n: 200 }) }, clientY);
+    }
+  }
+
+  function removeApp(id) {
+    apps = apps.filter((a) => a.id !== id);
+    const v = appViews.get(id);
+    if (v) { if (contentView === v) attach(null); appViews.delete(id); const w = wcOf(v); if (w) w.close(); }
+    if (current && current.kind === 'app' && current.id === id) { current = null; if (tabs[0]) activateTab(tabs[0].id); else newTab(); }
+    sendState();
+  }
+
+  // ---------- veille / archive automatiques ----------
+  function housekeeping() {
+    const now = Date.now();
+    for (const t of [...tabs]) {
+      if (isCurrentTab(t.id)) { t.lastActive = now; continue; }
+      if (t.view && now - t.lastActive > DORMANT_AFTER) sleepTab(t);
+      else if (!t.view && now - t.lastActive > ARCHIVE_AFTER) closeTab(t.id);
+    }
+  }
+
+  // ---------- menus contextuels personnalisés (au style de NaX) ----------
+  // Overlay transparent au-dessus de toute la fenêtre pour dessiner les menus par-dessus les vues natives.
+  let menuWin = null, menuFns = [];
+  function ensureMenuWin() {
+    if (menuWin && !menuWin.isDestroyed()) return menuWin;
+    menuWin = new BrowserWindow({
+      show: false, frame: false, transparent: true, resizable: false, movable: false,
+      minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
+      backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'menu-preload.js') },
+    });
+    lockUiContents(menuWin.webContents, openInTab); own(menuWin);
+    menuWin.loadFile(path.join(__dirname, 'ui', 'menu.html'), { query: { lang: uiLang } });
+    menuWin.on('blur', () => hideMenu());
+    return menuWin;
+  }
+  function hideMenu() { if (menuWin && !menuWin.isDestroyed() && menuWin.isVisible()) menuWin.hide(); }
+
+  // ---------- tooltips personnalisés (overlay transparent, click-through) ----------
+  let tipWin = null;
+  function ensureTipWin() {
+    if (tipWin && !tipWin.isDestroyed()) return tipWin;
+    tipWin = new BrowserWindow({
+      show: false, frame: false, transparent: true, focusable: false, resizable: false, movable: false,
+      minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
+      backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'tip-preload.js') },
+    });
+    tipWin.setIgnoreMouseEvents(true); // laisse tout passer : ne bloque jamais l'app
+    lockUiContents(tipWin.webContents, openInTab); own(tipWin);
+    tipWin.loadFile(path.join(__dirname, 'ui', 'tip.html'), { query: { lang: uiLang } });
+    tipWin.webContents.once('did-finish-load', () => { syncTipBounds(); tipWin.showInactive(); });
+    return tipWin;
+  }
+  function syncTipBounds() {
+    if (tipWin && !tipWin.isDestroyed() && win) { const b = win.getContentBounds(); tipWin.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }); }
+  }
+  function hideTip() { if (tipWin && !tipWin.isDestroyed()) { try { tipWin.webContents.send('tip-hide'); } catch {} } }
+
+  // ---------- rechercher dans la page (Ctrl+F) ----------
+  let findWin = null;
+  function ensureFindWin() {
+    if (findWin && !findWin.isDestroyed()) return findWin;
+    findWin = new BrowserWindow({
+      width: 380, height: 46, show: false, frame: false, transparent: false, resizable: false, movable: false,
+      minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: true, focusable: true, parent: win,
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1a1f2b' : '#ffffff',
+      webPreferences: { preload: path.join(__dirname, 'find-preload.js') },
+    });
+    lockUiContents(findWin.webContents, openInTab); own(findWin);
+    findWin.loadFile(path.join(__dirname, 'ui', 'find.html'), { query: { lang: uiLang } });
+    return findWin;
+  }
+  function findBounds() { const b = win.getContentBounds(); const w = 380, h = 46; return { x: Math.round(b.x + b.width - w - 14), y: Math.round(b.y + NAV + 10), width: w, height: h }; }
+  function showFind() {
+    if (!visibleWC()) return;
+    const w = ensureFindWin(); w.setBounds(findBounds());
+    const open = () => {
+      w.show(); w.focus(); w.webContents.focus();
+      try { w.webContents.send('find-open', { dark: nativeTheme.shouldUseDarkColors }); } catch {}
+    };
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', open); else open();
+  }
+  function hideFind() { const wc = visibleWC(); if (wc && !wc.isDestroyed()) wc.stopFindInPage('clearSelection'); if (findWin && !findWin.isDestroyed() && findWin.isVisible()) findWin.hide(); }
+
+  // ---------- overlay des suggestions (barre d'adresse) ----------
+  let suggestWin = null, suggestCloseTimer = null;
+  function ensureSuggestWin() {
+    if (suggestWin && !suggestWin.isDestroyed()) return suggestWin;
+    suggestWin = new BrowserWindow({
+      show: false, frame: false, transparent: true, focusable: false, resizable: false, movable: false,
+      minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
+      backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'suggest-preload.js') },
+    });
+    lockUiContents(suggestWin.webContents, openInTab); own(suggestWin);
+    suggestWin.loadFile(path.join(__dirname, 'ui', 'suggest.html'), { query: { lang: uiLang } });
+    return suggestWin;
+  }
+  function hideSuggest() {
+    if (suggestWin && !suggestWin.isDestroyed() && suggestWin.isVisible()) {
+      try { suggestWin.webContents.send('suggest-close'); } catch {}
+      clearTimeout(suggestCloseTimer);
+      suggestCloseTimer = setTimeout(() => { if (suggestWin && !suggestWin.isDestroyed()) suggestWin.hide(); }, 110);
+    }
+  }
+  // template : liste de { label, click, enabled?, danger? } ou { type:'separator' }.
+  function popupMenu(template) {
+    if (!win) return;
+    // Masque les overlays flottants (aperçu Gmail, infobulle, suggestions) AVANT d'ouvrir le menu :
+    // sinon, en prenant le focus, le menu fait perdre le focus au peek, ce qui déclenche une cascade
+    // d'événements de focus qui rejouait l'animation du menu (bug « animation qui se répète »).
+    hidePeek(); hideTip(); hideSuggest(); hideFly();
+    const items = template.filter(Boolean);
+    menuFns = items.map((i) => i.click || null);
+    const view = items.map((i, idx) => i.type === 'separator' ? { sep: true } : { label: i.label, hint: i.hint || null, enabled: i.enabled !== false, danger: !!i.danger, idx });
+    const cur = screen.getCursorScreenPoint();
+    const b = win.getContentBounds();
+    const w = ensureMenuWin();
+    w.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
+    const payload = { items: view, x: cur.x - b.x, y: cur.y - b.y, dark: nativeTheme.shouldUseDarkColors };
+    const send = () => { try { w.webContents.send('menu-show', payload); } catch {} };
+    // on n'affiche PAS tout de suite : le rendu envoie 'menu-ready' quand le contenu est prêt et positionné,
+    // ce qui évite de montrer brièvement le menu précédent (double animation).
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+  }
+
+  function tabContextMenu(id) {
+    const tab = tabById(id); if (!tab) return;
+    const siblings = tabs.filter((t) => t.groupId === tab.groupId);
+    const inGroup = siblings.length > 1;
+    const grp = groupById(tab.groupId);
+    const named = !!(grp && grp.title); // un onglet seul mais dans un groupe nommé : le groupe existe quand même
+    const items = [
+      { label: favByUrl(tab.url) ? tr('Retirer des favoris') : tr('Ajouter aux favoris'), click: () => toggleFavoriteUrl(tab.url, tab.title, tab.favicon) },
+      { label: tr('Mettre en veille'), enabled: !!tab.view && !isCurrentTab(id), click: () => sleepTab(tab) },
+      { label: tr('Dupliquer'), click: () => newTab({ url: tab.url, openerId: tab.id }) },
+      { label: tr("Copier l'adresse"), click: () => clipboard.writeText(tab.url) },
+      { type: 'separator' },
+      ...(privateWin ? [] : [{ label: tab.partition ? tr('Revenir à la session normale') : tr('Passer en navigation privée'), click: () => setTabSession(tab.id, !tab.partition) }]),
+      // la page repart dans une fenêtre à part (rechargée : la vue ne change pas de fenêtre) ; un onglet privé reste privé
+      { label: tr('Déplacer vers une nouvelle fenêtre'), click: () => { newWindow({ url: tab.url, isPrivate: privateWin || isPrivate(tab) }); closeTab(id, { toArchive: false }); } },
+    ];
+    items.push({ type: 'separator' });
+    // nommer un onglet seul = créer un groupe d'un onglet (utile pour garder un nom, replier, etc.)
+    items.push({ label: inGroup || named ? tr('Renommer le groupe…') : tr('Créer un groupe…'), click: () => { uiFocus('rename-group', tab.groupId); setTimeout(() => { try { chrome.webContents.focus(); } catch {} }, 80); } }); // focus explicite : le menu est une fenêtre à part, sinon le clavier reste sur la page
+    if (inGroup) items.push({ label: tr('Sortir du groupe'), click: () => { const ng = nextId++; groups.push({ id: ng, title: null }); tab.groupId = ng; sendState(); } });
+    else if (named) items.push({ label: tr('Dissoudre le groupe'), click: () => { grp.title = null; grp.collapsed = false; sendState(); } });
+    items.push({ type: 'separator' });
+    items.push({ label: tr('Fermer'), danger: true, click: () => closeTab(id) });
+    if (inGroup) items.push({ label: tr('Fermer le groupe'), danger: true, click: () => siblings.forEach((t) => closeTab(t.id)) });
+    popupMenu(items);
+  }
+  // Menu de l'application (clic sur le logo NaX, en haut du rail) : pas de barre de menu ni de bouton « hamburger »,
+  // c'est ici que vivent les commandes principales et que leurs raccourcis se découvrent.
+  function brandMenu() {
+    const cmd = (c) => () => uiFocus('ui-command', c);
+    popupMenu([
+      { label: tr('Nouvel onglet'), hint: shortcutHint('new-tab'), click: () => { newTab(); uiFocus('focus-url'); } },
+      ...(privateWin ? [] : [{ label: tr('Nouvel onglet privé'), hint: shortcutHint('new-private-tab'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } }]),
+      { label: tr('Nouvelle fenêtre'), hint: shortcutHint('new-window'), click: () => newWindow() },
+      { label: tr('Nouvelle fenêtre privée'), hint: shortcutHint('new-private-window'), click: () => newWindow({ isPrivate: true }) },
+      { type: 'separator' },
+      { label: tr('Rechercher'), hint: shortcutHint('palette'), click: () => uiFocus('open-palette') },
+      { label: tr('Historique'), hint: shortcutHint('history'), click: cmd('history') },
+      { label: tr('Téléchargements'), hint: shortcutHint('downloads'), click: cmd('downloads') },
+      { label: tr('Paramètres'), click: cmd('settings') },
+      { type: 'separator' },
+      { label: tr('À propos de NaX  v{version}', { version: app.getVersion() }), click: cmd('about') },
+      { label: tr('Fermer la fenêtre'), hint: shortcutHint('close-window'), click: () => { if (win && !win.isDestroyed()) win.close(); } },
+      { label: tr('Quitter'), click: () => app.quit() },
+    ]);
+  }
+  function appContextMenu(id) {
+    popupMenu([
+      { label: tr('Recharger'), click: () => { const w = wcOf(appViews.get(id)); if (w) w.reload(); } },
+      { label: tr('Raccourcis au survol…'), click: () => { if (chrome) chrome.webContents.send('edit-app-shortcuts', id); } },
+      { type: 'separator' },
+      { label: tr('Retirer du rail'), danger: true, click: () => removeApp(id) },
+    ]);
+  }
+  function pinContextMenu(id) {
+    const p = railPins.find((x) => x.id === id); if (!p) return;
+    const r = favFind(p.favId);
+    const items = [];
+    if (r && r.node.type === 'folder') items.push({ label: tr('Ouvrir tous les liens'), enabled: !!(r.node.children || []).length, click: () => openAllInFolder(p.favId) });
+    if (r && r.node.type === 'link') items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: r.node.url }) });
+    items.push({ type: 'separator' });
+    items.push({ label: tr('Retirer du rail'), danger: true, click: () => { railPins = railPins.filter((x) => x.id !== id); sendState(); } });
+    popupMenu(items);
+  }
+  function favContextMenu(id) {
+    const r = favFind(id); if (!r) return;
+    const n = r.node; const items = [];
+    if (n.type === 'link') {
+      items.push({ label: tr('Ouvrir'), click: () => navigateCurrent(n.url) });
+      items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: n.url }) });
+    } else {
+      items.push({ label: tr('Ouvrir tous les liens'), enabled: !!(n.children && n.children.length), click: () => openAllInFolder(id) });
+      items.push({ label: tr('Nouveau sous-dossier'), click: () => { const nid = createFolder({ parentId: id }); if (n.collapsed) toggleFolder(id); chrome.webContents.send('rename-fav', nid); } });
+    }
+    items.push({ type: 'separator' });
+    const pinned = railPins.find((x) => x.favId === id);
+    items.push(pinned
+      ? { label: tr('Retirer du rail'), click: () => { railPins = railPins.filter((x) => x.favId !== id); sendState(); } }
+      : { label: tr('Épingler au rail'), click: () => { railPins.push({ id: 'pin' + nextId++, kind: n.type === 'folder' ? 'favfolder' : 'fav', favId: id }); sendState(); } });
+    items.push({ label: tr('Renommer'), click: () => chrome.webContents.send('rename-fav', id) });
+    if (n.type === 'folder') items.push({ label: tr('Personnaliser (icône, couleur)…'), click: () => chrome.webContents.send('customize-fav', id) });
+    items.push({ label: tr('Supprimer'), danger: true, click: () => removeFavorite(id) });
+    popupMenu(items);
+  }
+  // Extrait le contenu lisible de la page (URLs absolues) et l'envoie à l'interface pour conversion Markdown.
+  async function exportMarkdown(wc) {
+    if (!wc || wc.isDestroyed()) return;
+    const extractor = `(() => {
+      const pick = document.querySelector('article') || document.querySelector('main') || document.querySelector('[role=main]') || document.body;
+      const clone = pick.cloneNode(true);
+      clone.querySelectorAll('script,style,noscript,iframe,svg,canvas,nav,header,footer,aside,form,button,[aria-hidden=true],.no-print').forEach(el => el.remove());
+      clone.querySelectorAll('a[href]').forEach(a => { try { a.setAttribute('href', new URL(a.getAttribute('href'), location.href).href); } catch {} });
+      clone.querySelectorAll('img[src]').forEach(im => { try { im.setAttribute('src', new URL(im.getAttribute('src'), location.href).href); } catch {} im.removeAttribute('srcset'); });
+      return { title: document.title || location.hostname, url: location.href, html: clone.innerHTML };
+    })()`;
+    let data;
+    try { data = await wc.executeJavaScript(extractor, true); } catch { return; }
+    if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', data);
+  }
+
+  // Ctrl+S : page complète (.html + dossier), un seul fichier (.mhtml) ou HTML seul (.htm), selon l'extension choisie.
+  async function savePageAs(wc) {
+    if (!wc || wc.isDestroyed() || isErrorPage(wc.getURL())) return;
+    const base = (wc.getTitle() || hostOf(wc.getURL()) || 'page').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'page';
+    const res = await dialog.showSaveDialog(win, {
+      title: tr('Enregistrer la page sous'), defaultPath: path.join(defaultDownloadDir(), base + '.html'),
+      filters: [{ name: tr('Page web complète'), extensions: ['html'] }, { name: tr('Page web, un seul fichier'), extensions: ['mhtml'] }, { name: tr('Page web, HTML uniquement'), extensions: ['htm'] }],
+    });
+    if (res.canceled || !res.filePath) return;
+    const ext = path.extname(res.filePath).toLowerCase();
+    const type = ext === '.mhtml' || ext === '.mht' ? 'MHTML' : ext === '.htm' ? 'HTMLOnly' : 'HTMLComplete';
+    try { await wc.savePage(res.filePath, type); }
+    catch (err) { dialog.showMessageBox(win, { type: 'error', title: tr('Enregistrement impossible'), message: tr('La page n’a pas pu être enregistrée.'), detail: String((err && err.message) || err) }).catch(() => {}); }
+  }
+  // Ctrl+U : le code source s'ouvre dans un onglet voisin (moteur Chromium, schéma view-source:).
+  function viewSource(wc, openerId = null) {
+    const u = wc && !wc.isDestroyed() ? wc.getURL() : '';
+    if (u && !isErrorPage(u) && !/^view-source:/i.test(u)) newTab({ url: 'view-source:' + u, openerId });
+  }
+
+  // wc = webContents de la page (onglet OU appli du rail) ; openerId = onglet ouvreur (null pour une appli).
+  function pageContextMenu(wc, p, openerId = null) {
+    if (!wc || wc.isDestroyed()) return;
+    const items = [];
+    // mot souligné par le correcteur : suggestions en tête, comme dans Chrome
+    if (p.misspelledWord) {
+      const sugg = (p.dictionarySuggestions || []).slice(0, 5);
+      for (const w of sugg) items.push({ label: w, click: () => wc.replaceMisspelling(w) });
+      if (!sugg.length) items.push({ label: tr('Aucune suggestion'), enabled: false });
+      items.push({ label: tr('Ajouter au dictionnaire'), click: () => wc.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
+      items.push({ type: 'separator' });
+    }
+    if (p.linkURL) {
+      items.push({ label: tr('Ouvrir dans un nouvel onglet'), click: () => newTab({ url: p.linkURL, openerId, activate: false }) });
+      items.push({ label: tr('Ouvrir dans un onglet privé'), click: () => newTab({ url: p.linkURL, partition: splitPartition('private') }) });
+      items.push({ label: tr('Ouvrir dans une nouvelle fenêtre'), click: () => newWindow({ url: p.linkURL }) });
+      items.push({ label: tr('Ouvrir dans une fenêtre privée'), click: () => newWindow({ url: p.linkURL, isPrivate: true }) });
+      items.push({ label: tr('Copier le lien'), click: () => clipboard.writeText(p.linkURL) });
+      items.push({ label: tr('Enregistrer le lien sous…'), click: () => downloadAs(wc, p.linkURL) });
+      items.push({ type: 'separator' });
+    }
+    if (p.mediaType === 'image' && p.srcURL) {
+      items.push({ label: tr('Ouvrir l’image dans un nouvel onglet'), click: () => newTab({ url: p.srcURL, openerId, activate: false }) });
+      items.push({ label: tr('Enregistrer l’image sous…'), click: () => downloadAs(wc, p.srcURL) });
+      items.push({ label: tr('Copier l’image'), click: () => wc.copyImageAt(p.x, p.y) });
+      items.push({ label: tr('Copier l’adresse de l’image'), click: () => clipboard.writeText(p.srcURL) });
+      items.push({ type: 'separator' });
+    } else if ((p.mediaType === 'video' || p.mediaType === 'audio') && /^https?:/i.test(p.srcURL || '')) {
+      items.push({ label: p.mediaType === 'video' ? tr('Enregistrer la vidéo sous…') : tr('Enregistrer l’audio sous…'), click: () => downloadAs(wc, p.srcURL) });
+      items.push({ label: tr('Copier l’adresse du média'), click: () => clipboard.writeText(p.srcURL) });
+      items.push({ type: 'separator' });
+    }
+    if (p.selectionText) {
+      items.push({ label: tr('Copier'), click: () => wc.copy() });
+      items.push({ label: tr('Rechercher « {text} »', { text: p.selectionText.slice(0, 30) }), click: () => newTab({ url: toUrl(p.selectionText), openerId }) });
+      items.push({ type: 'separator' });
+    }
+    if (p.isEditable) {
+      items.push({ label: tr('Couper'), enabled: !!p.selectionText, click: () => wc.cut() });
+      items.push({ label: tr('Copier'), enabled: !!p.selectionText, click: () => wc.copy() });
+      items.push({ label: tr('Coller'), click: () => wc.paste() });
+      items.push({ label: tr('Tout sélectionner'), click: () => wc.selectAll() });
+      items.push({ type: 'separator' });
+    }
+    items.push({ label: tr('Précédent'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() });
+    items.push({ label: tr('Suivant'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
+    items.push({ label: tr('Recharger'), click: () => wc.reload() });
+    items.push({ type: 'separator' });
+    items.push({ label: tr('Enregistrer la page sous…'), click: () => savePageAs(wc) });
+    items.push({ label: tr('Imprimer…'), click: () => wc.print() });
+    items.push({ label: tr('Exporter en Markdown'), click: () => exportMarkdown(wc) });
+    items.push({ label: tr('Copier l’adresse de la page'), click: () => clipboard.writeText(wc.getURL()) });
+    items.push({ type: 'separator' });
+    items.push({ label: tr('Afficher le code source'), click: () => viewSource(wc, openerId) });
+    items.push({ label: tr('Inspecter'), click: () => wc.inspectElement(p.x, p.y) });
+    popupMenu(items);
+  }
+
+  // Donne le clavier à l'interface (et non à la page) puis lui envoie un ordre de focus.
+  function uiFocus(channel, ...args) {
+    if (!chrome || chrome.webContents.isDestroyed()) return;
+    chrome.webContents.focus();
+    chrome.webContents.send(channel, ...args);
+  }
+
+  // ---------- Claude : îlots ----------
+  // Un îlot « ouvert par Claude » est un groupe d'onglets ordinaire, marqué claude:true et
+  // relié à sa tâche par claudeTaskId. bornAt sert à l'animation d'apparition côté UI.
+  function claudeIslandOf(taskId) {
+    const g = groups.find((x) => x.claudeTaskId === taskId);
+    return g && tabs.some((t) => t.groupId === g.id) ? g : null;
+  }
+  function claudeIsland(task) {
+    let g = claudeIslandOf(task.id);
+    if (!g) {
+      groups = groups.filter((x) => x.claudeTaskId !== task.id); // retire un éventuel îlot vidé
+      g = { id: nextId++, title: task.title.slice(0, 48), claude: true, claudeTaskId: task.id, bornAt: Date.now() };
+      groups.push(g);
+    }
+    return g;
+  }
+  // Ouvre (ou complète) l'îlot de la tâche avec ses onglets ; active le premier onglet ouvert.
+  function openClaudeIslandTabs(task, activate) {
+    const list = task.tabs || [];
+    if (!list.length) return;
+    const g = claudeIsland(task);
+    const already = new Set(tabs.filter((x) => x.groupId === g.id).map((x) => normalize(x.url)));
+    let first = null;
+    for (const it of list) {
+      if (already.has(normalize(it.url))) continue;
+      already.add(normalize(it.url));
+      const tb = newTab({ url: it.url, groupId: g.id, activate: false });
+      if (it.title) tb.title = it.title; // en attendant le vrai titre de la page
+      if (!first) first = tb;
+    }
+    if (first && activate) activateTab(first.id); else sendState();
+  }
+  // ---------- IPC ----------
+  // on()/handle() ne réagissent qu'aux messages émis par cette fenêtre (son interface et ses calques).
+  function registerIpc() {
+    const withWC = (fn) => () => { const wc = currentWC(); if (wc) fn(wc); };
+    on('navigate', (_e, input) => navigateCurrent(input));
+    on('back', withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
+    on('forward', withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));
+    on('reload', withWC((wc) => (wc.isLoading() ? wc.stop() : wc.reload())));
+    on('home', () => navigateCurrent(homepage));
+    on('focus-page', withWC((wc) => wc.focus()));
+
+    on('tab-new', () => { newTab(); uiFocus('focus-url'); });
+    on('tab-new-private', () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); });
+    on('tab-set-session', (_e, { id, private: priv } = {}) => { if (!privateWin) setTabSession(id, !!priv); }); // en fenêtre privée, tout reste privé
+    on('brand-menu', () => brandMenu());
+    on('newtab-menu', () => popupMenu([
+      privateWin
+        ? { label: tr('Navigation privée (cette fenêtre)'), click: () => { newTab(); uiFocus('focus-url'); } }
+        : { label: tr('Session par défaut'), click: () => { newTab(); uiFocus('focus-url'); } },
+      privateWin ? null : { label: tr('Navigation privée'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
+      { label: tr('Autre session (conservée)'), click: () => { newTab({ partition: 'persist:nax-profile-b' }); uiFocus('focus-url'); } },
+    ]));
+    on('tab-activate', (_e, id) => activateTab(id));
+    on('tab-close', (_e, id) => closeTab(id));
+    on('tab-context', (_e, id) => tabContextMenu(id));
+    on('group-rename', (_e, { id, title }) => { const g = groupById(id); if (g) { g.title = (title || '').trim() || null; sendState(); } });
+    on('group-toggle', (_e, id) => { const g = groupById(id); if (g) { g.collapsed = !g.collapsed; sendState(); } });
+    on('group-close', (_e, id) => tabs.filter((t) => t.groupId === id).forEach((t) => closeTab(t.id)));
+    on('tab-move', (_e, opts) => moveTab(opts || {}));
+    on('group-move', (_e, opts) => moveGroup(opts || {}));
+    // ferme les deux onglets d'une paire divisée d'un coup
+    on('tab-close-pair', (_e, id) => { const t = tabById(id); const p = t ? pairOf(t) : null; if (p) { closeTab(p.secondary.id); closeTab(p.primary.id); } else closeTab(id); });
+    // déplace une paire divisée (primaire + secondaire restent adjacents et liés)
+    on('tab-move-pair', (_e, o = {}) => {
+      moveTab({ tabId: o.primaryId, afterTabId: o.afterTabId, targetGroupId: o.targetGroupId, makeNewGroup: o.makeNewGroup });
+      const prim = tabById(o.primaryId);
+      if (prim) moveTab({ tabId: o.secondaryId, afterTabId: o.primaryId, targetGroupId: prim.groupId });
+    });
+    on('set-theme', (_e, t) => { if (['system', 'light', 'dark'].includes(t)) { theme = t; applyTheme(); sendState(); } });
+    on('app-peek', (_e, { id, clientY } = {}) => showPeek(id, clientY));
+    on('app-peek-hide-soon', () => hidePeekSoon());
+    on('peek-hover', (_e, inside) => { if (inside) clearTimeout(peekHideTimer); else hidePeekSoon(); });
+    // ---------- flyout du rail + épingles favoris ----------
+    on('rail-hover', (_e, { id, kind, clientY } = {}) => railHover(id, kind, clientY));
+    on('rail-hover-end', () => { hideFlySoon(); hidePeekSoon(); });
+    on('fly-hover', (_e, inside) => { if (inside) clearTimeout(flyHideTimer); else hideFlySoon(); });
+    on('fly-click', (_e, o) => {
+      hideFly();
+      if (!o) return;
+      if (o.kind === 'app') { // raccourci programmé : on charge l'URL dans la vue de l'appli
+        const a = apps.find((x) => x.id === o.id); if (!a) return;
+        const s = (a.shortcuts || []).find((x) => x.id === o.itemId); if (!s) return;
+        const v = ensureAppView(a);
+        try { v.webContents.loadURL(s.url); } catch { return; }
+        current = { kind: 'app', id: a.id }; attach(v); v.webContents.focus(); setTitle(a.name); sendState();
+      } else if (o.kind === 'folder') { // lien d'un dossier épinglé (Ctrl+clic ou clic molette : nouvel onglet)
+        const r = favFind(o.itemId);
+        if (r && r.node.type === 'link') { if (o.newTab) newTab({ url: r.node.url }); else navigateCurrent(r.node.url); }
+      }
+    });
+    // retire un raccourci d'appli directement depuis le flyout ; la liste se rafraîchit (ou se ferme si elle est vide)
+    on('fly-remove-item', (_e, o) => {
+      const a = apps.find((x) => x.id === (o && o.id)); if (!a || !Array.isArray(a.shortcuts)) return;
+      a.shortcuts = a.shortcuts.filter((x) => x.id !== o.itemId);
+      sendState();
+      if (a.shortcuts.length) railHover(a.id, 'app', flyClientY); else hideFly();
+    });
+    on('fly-open-all', (_e, favId) => { hideFly(); if (favFind(favId)) openAllInFolder(favId); });
+    on('fly-resize', (_e, h) => { if (flyWin && !flyWin.isDestroyed() && +h > 0) flyPlace(+h); });
+    on('fly-edit', (_e, appId) => { hideFly(); if (apps.some((x) => x.id === appId) && chrome) chrome.webContents.send('edit-app-shortcuts', appId); });
+    on('app-shortcuts-set', (_e, o) => {
+      const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
+      a.shortcuts = (Array.isArray(o.shortcuts) ? o.shortcuts : []).map((s, i) => {
+        let u; try { u = new URL(toUrl(String(s.url || '')) || ''); } catch { return null; }
+        if (!/^https?:$/.test(u.protocol)) return null;
+        return { id: 'sc' + (i + 1), name: String(s.name || u.host).slice(0, 40), url: u.href };
+      }).filter(Boolean).slice(0, 12);
+      sendState();
+    });
+    on('pin-activate', (_e, { id, clientY } = {}) => {
+      const p = railPins.find((x) => x.id === id); if (!p) return;
+      const r = favFind(p.favId); if (!r) return;
+      if (r.node.type === 'link') navigateCurrent(r.node.url);
+      else railHover(id, 'pin', clientY); // clic sur un dossier = ouvre le flyout de ses liens
+    });
+    on('pin-context', (_e, id) => pinContextMenu(id));
+    // épingle / désépingle un favori (lien ou dossier) depuis le panneau de personnalisation
+    on('rail-pin-toggle', (_e, favId) => {
+      const r = favFind(favId); if (!r) return;
+      if (railPins.some((p) => p.favId === favId)) railPins = railPins.filter((p) => p.favId !== favId);
+      else railPins.push({ id: 'pin' + nextId++, kind: r.node.type === 'folder' ? 'favfolder' : 'fav', favId });
+      sendState();
+    });
+    on('peek-open-full', () => { const id = peekAppId; hidePeek(); if (id) activateApp(id); });
+    handle('gmail-feed', () => fetchGmailFeed());
+    on('gmail-open', (_e, link) => openGmailMessage(link));
+    handle('chat-feed', (_e, force) => fetchChatFeed(!!force));
+    on('chat-open', (_e, groupId) => openChat(groupId));
+    on('menu-ready', () => { if (menuWin && !menuWin.isDestroyed()) { menuWin.show(); menuWin.focus(); menuWin.webContents.send('menu-play'); } });
+    on('peek-ready', () => { if (peekWin && !peekWin.isDestroyed()) { peekWin.showInactive(); peekWin.webContents.send('peek-play'); } });
+    on('fly-ready', () => { if (flyWin && !flyWin.isDestroyed()) { flyWin.showInactive(); flyWin.webContents.send('fly-play'); } });
+    on('suggest-ready', () => { if (suggestWin && !suggestWin.isDestroyed()) { suggestWin.showInactive(); suggestWin.webContents.send('suggest-play'); } });
+    on('tip-show', (_e, d) => { const w = ensureTipWin(); syncTipBounds(); const send = () => { try { w.webContents.send('tip-show', { ...d, dark: nativeTheme.shouldUseDarkColors }); } catch {} }; if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send(); });
+    on('tip-hide', () => hideTip());
+    handle('omni-suggest', (_e, q) => ({ local: omniSuggest(q, tabs), isUrl: looksLikeUrl(q || '') }));
+    handle('omni-google', (_e, q) => googleSuggest(q));
+    on('suggest-show', (_e, { items, sel, rect, dark, q } = {}) => {
+      const w = ensureSuggestWin();
+      clearTimeout(suggestCloseTimer);
+      const b = win.getContentBounds();
+      const h = Math.min(420, 8 + (items ? items.length : 0) * 46 + 6);
+      w.setBounds({ x: Math.round(b.x + rect.x), y: Math.round(b.y + rect.y), width: Math.round(rect.w), height: Math.max(1, Math.round(h)) });
+      const fresh = !w.isVisible(); // déjà affiché : juste un re-rendu (frappe en cours), pas de rejeu de l'entrée
+      const send = () => { try { w.webContents.send('suggest-render', { items, sel, dark, q, fresh }); } catch {} };
+      if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+      if (!fresh) w.showInactive(); // sinon : on attend 'suggest-ready' avant de montrer la fenêtre
+    });
+    on('suggest-hide', () => hideSuggest());
+    on('suggest-hover', (_e, idx) => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('suggest-hover', idx); });
+    on('suggest-choose', (_e, idx) => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('suggest-choose', idx); });
+    on('md-copy', (_e, text) => clipboard.writeText(text || ''));
+    handle('md-download', async (_e, { filename, content } = {}) => {
+      const safe = (filename || 'page').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'page';
+      const res = await dialog.showSaveDialog(win, { title: tr('Enregistrer en Markdown'), defaultPath: path.join(app.getPath('downloads'), safe + '.md'), filters: [{ name: 'Markdown', extensions: ['md'] }] });
+      if (res.canceled || !res.filePath) return { canceled: true };
+      try { fs.writeFileSync(res.filePath, content || '', 'utf8'); return { ok: true, path: res.filePath }; } catch (e) { return { error: e.message }; }
+    });
+    on('find-open-req', () => showFind());
+    on('find-query', (_e, { text, forward = true, findNext = false } = {}) => {
+      const wc = visibleWC(); if (!wc || wc.isDestroyed()) return;
+      if (!text) { wc.stopFindInPage('clearSelection'); return; }
+      // NB : passer findNext:false explicitement empêche found-in-page de se déclencher au 1er appel.
+      // Nouvelle recherche → on omet findNext ; navigation suivant/précédent → findNext:true.
+      if (findNext) wc.findInPage(text, { forward, findNext: true });
+      else wc.findInPage(text, { forward });
+    });
+    on('find-close', () => { hideFind(); const wc = visibleWC(); if (wc) wc.focus(); });
+    handle('dl-list', () => downloads.map((d) => ({ ...d })));
+    on('dl-open', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d && d.state === 'completed') shell.openPath(d.savePath).catch(() => {}); });
+    on('dl-folder', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d) shell.showItemInFolder(d.savePath); });
+    on('dl-cancel', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); });
+    on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); persist(); });
+    on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); persist(); });
+    // notification de téléchargement (tip.html) : cliquable seulement au survol, sinon l'overlay laisse passer la souris
+    on('tip-mouse', (_e, mode) => {
+      if (!tipWin || tipWin.isDestroyed()) return;
+      if (mode === 'on') tipWin.setIgnoreMouseEvents(false);
+      else if (mode === 'forward') tipWin.setIgnoreMouseEvents(true, { forward: true }); // click-through, mais reçoit les mouvements pour détecter le survol
+      else tipWin.setIgnoreMouseEvents(true);
+    });
+    on('dl-toast-click', () => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('ui-command', 'downloads-open'); });
+    on('menu-select', (_e, idx) => { hideMenu(); const fn = menuFns[idx]; menuFns = []; if (typeof fn === 'function') fn(); });
+    on('menu-close', () => hideMenu());
+    on('set-dev-mode', (_e, on) => setDevMode(on));
+    on('set-beta-features', (_e, on) => setBetaFeatures(on));
+    handle('browsing-data-stats', () => browsingDataStats());
+    handle('clear-browsing-data', (_e, opts) => clearBrowsingData(opts || {}));
+    // Détail par catégorie (voir / supprimer élément par élément)
+    handle('history-list', () => historyList());
+    handle('history-remove', (_e, key) => { delete history[key]; persist(); return historyList(); });
+    handle('perms-list', () => permsList());
+    handle('perms-remove', (_e, key) => { permGrants.delete(key); persist(); sendState(); return permsList(); });
+    handle('cookies-list', () => cookiesList());
+    handle('cookies-remove', (_e, domain) => cookiesRemoveDomain(domain));
+    handle('cache-size', () => session.defaultSession.getCacheSize().catch(() => 0));
+    handle('cache-clear', async () => { try { await session.defaultSession.clearCache(); await session.defaultSession.clearStorageData({ storages: ['cachestorage', 'shadercache'] }); } catch {} return session.defaultSession.getCacheSize().catch(() => 0); });
+    // Réglages généraux (démarrage, accueil, téléchargements, zoom, langues, autorisations par défaut)
+    handle('settings-get', () => ({
+      homepage, newTabUrl, startupMode,
+      downloadDir, downloadDirDefault: app.getPath('downloads'), askDownloadPath,
+      defaultZoom, spellcheckOn, spellLangs: [...spellLangs], uiLang,
+      availLangs: (() => { try { return session.defaultSession.availableSpellCheckerLanguages || []; } catch { return []; } })(),
+      perm: { ...permDefaults },
+      version: app.getVersion(),
+      electron: process.versions.electron, chrome: process.versions.chrome, packaged: app.isPackaged, demo: DEMO,
+    }));
+    handle('settings-set', (_e, p = {}) => {
+      let langsChanged = false, zoomChanged = false;
+      if (typeof p.homepage === 'string' && p.homepage.trim()) homepage = toUrl(p.homepage) || homepage;
+      if (typeof p.newTabUrl === 'string') { const v = p.newTabUrl.trim(); newTabUrl = (v === '' || v === 'blank') ? v : (toUrl(v) || ''); }
+      if (p.startupMode === 'restore' || p.startupMode === 'home') startupMode = p.startupMode;
+      if (typeof p.downloadDir === 'string') downloadDir = p.downloadDir;
+      if (typeof p.askDownloadPath === 'boolean') askDownloadPath = p.askDownloadPath;
+      if (typeof p.defaultZoom === 'number' && p.defaultZoom > 0) { defaultZoom = p.defaultZoom; zoomChanged = true; }
+      if (typeof p.spellcheckOn === 'boolean') { spellcheckOn = p.spellcheckOn; langsChanged = true; }
+      if (Array.isArray(p.spellLangs)) { spellLangs = p.spellLangs.length ? p.spellLangs : ['fr']; langsChanged = true; }
+      if (I18N.isKnown(p.uiLang) && p.uiLang !== uiLang) setUiLang(p.uiLang);
+      if (p.perm && typeof p.perm === 'object') permDefaults = { ...permDefaults, ...p.perm };
+      if (langsChanged) applyLanguages();
+      if (zoomChanged) applyZoomToAll();
+      persist();
+      return true;
+    });
+    handle('pick-download-dir', async () => {
+      const res = await dialog.showOpenDialog(win, { title: tr('Choisir le dossier de téléchargement'), defaultPath: defaultDownloadDir(), properties: ['openDirectory', 'createDirectory'] });
+      if (!res.canceled && res.filePaths[0]) { downloadDir = res.filePaths[0]; persist(); }
+      return { dir: downloadDir, default: app.getPath('downloads') };
+    });
+    handle('zoom-list', () => Object.entries(zoomHosts).map(([host, factor]) => ({ host, factor })).sort((a, b) => a.host.localeCompare(b.host)));
+    handle('zoom-reset', (_e, host) => { delete zoomHosts[host]; for (const wc of allWebContents()) { try { if (hostOf(wc.getURL()) === host) applyZoom(wc); } catch {} } persist(); return true; });
+    // Raccourcis clavier (Paramètres › Raccourcis)
+    handle('shortcuts-list', () => shortcutsPublic());
+    handle('shortcuts-set', (_e, id, accel) => ({ displaced: setShortcut(id, accel), list: shortcutsPublic() }));
+    handle('shortcuts-reset', (_e, id) => { resetShortcuts(id || null); return shortcutsPublic(); });
+    handle('shortcuts-suspend', (_e, on) => { suspendShortcuts(on); return true; });
+    handle('zoom-reset-all', () => { zoomHosts = {}; applyZoomToAll(); persist(); return true; });
+    on('set-search-engine', (_e, id) => { if (SEARCH_ENGINES.some((e) => e.id === id)) { searchEngine = id; sendState(); } });
+    on('dev-open', (_e, url) => { const dup = tabs.find((t) => sameTarget(url, t.url)); if (dup) activateTab(dup.id); else newTab({ url }); });
+    on('fav-toggle', () => { const t = current && current.kind === 'tab' ? tabById(current.id) : null; if (t) toggleFavoriteUrl(t.url, t.title, t.favicon); });
+    on('fav-add', (_e, o = {}) => addFavorite(o));
+    on('fav-folder', (_e, o = {}) => { const id = createFolder(o); setImmediate(() => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('rename-fav', id); }); });
+    on('fav-remove', (_e, id) => removeFavorite(id));
+    on('fav-rename', (_e, { id, title }) => renameFavorite(id, title));
+    on('fav-customize', (_e, { id, icon, color } = {}) => { const r = favFind(id); if (r && r.node.type === 'folder') { if (icon === null) delete r.node.icon; else if (icon !== undefined) r.node.icon = icon; if (color === null) delete r.node.color; else if (color !== undefined) r.node.color = color; sendState(); } });
+    on('fav-toggle-folder', (_e, id) => toggleFolder(id));
+    on('fav-open', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') navigateCurrent(r.node.url); });
+    on('fav-open-new', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') newTab({ url: r.node.url }); });
+    on('fav-open-all', (_e, id) => openAllInFolder(id));
+    on('fav-move', (_e, o) => moveFavorite(o || {}));
+    on('fav-context', (_e, id) => favContextMenu(id));
+
+    on('app-activate', (_e, id) => activateApp(id));
+    on('app-context', (_e, id) => appContextMenu(id));
+    on('app-add', (_e, input) => {
+      const url = toUrl(input); if (!url) return;
+      const host = hostOf(url);
+      const name = host.split('.')[0].replace(/^\w/, (c) => c.toUpperCase());
+      apps.push({ id: 'app' + nextId++, name, url });
+      sendState();
+    });
+    on('app-remove', (_e, id) => removeApp(id));
+    // renomme / change l'adresse d'une appli du rail (la vue déjà chargée navigue vers la nouvelle adresse)
+    on('app-update', (_e, o) => {
+      const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
+      if (typeof o.name === 'string' && o.name.trim()) a.name = o.name.trim().slice(0, 24);
+      if (typeof o.url === 'string' && o.url.trim()) {
+        const u = toUrl(o.url);
+        let ok = false; try { ok = !!u && /^https?:$/.test(new URL(u).protocol); } catch {}
+        if (ok && u !== a.url) {
+          a.url = u;
+          const v = appViews.get(a.id);
+          if (v && !v.webContents.isDestroyed()) { try { v.webContents.loadURL(u); } catch {} }
+        }
+      }
+      sendState();
+    });
+    // réordonne les favoris épinglés : place id avant beforeId (ou en fin)
+    on('pin-move', (_e, o) => {
+      const i = railPins.findIndex((p) => p.id === (o && o.id)); if (i < 0) return;
+      const [p] = railPins.splice(i, 1);
+      const j = o.beforeId ? railPins.findIndex((x) => x.id === o.beforeId) : -1;
+      if (j < 0) railPins.push(p); else railPins.splice(j, 0, p);
+      sendState();
+    });
+    // réordonne le rail : place id avant beforeId (ou en fin si beforeId absent)
+    on('app-move', (_e, o) => {
+      const i = apps.findIndex((a) => a.id === (o && o.id)); if (i < 0) return;
+      const [a] = apps.splice(i, 1);
+      const j = o.beforeId ? apps.findIndex((x) => x.id === o.beforeId) : -1;
+      if (j < 0) apps.push(a); else apps.splice(j, 0, a);
+      sendState();
+    });
+    // ajout depuis le catalogue de suggestions (nom connu, URL vérifiée, pas de doublon par hôte)
+    on('app-add-preset', (_e, o) => {
+      if (!o || typeof o.url !== 'string') return;
+      let u; try { u = new URL(o.url); } catch { return; }
+      if (!/^https?:$/.test(u.protocol)) return;
+      if (apps.some((a) => hostOf(a.url) === u.host)) return;
+      const entry = { id: 'app' + nextId++, name: String(o.name || u.host).slice(0, 24), url: u.href };
+      if (typeof o.icon === 'string' && /^https:\/\//.test(o.icon)) entry.icon = o.icon; // icône explicite (ex. Jira : l'hôte de l'appli n'a pas de favicon)
+      apps.push(entry);
+      sendState();
+    });
+
+    on('sidebar-toggle', () => { sidebarOpen = !sidebarOpen; sidebarOpenDefault = sidebarOpen; layout(); sendState(); });
+    // Redimensionnement de la liste : pendant le glisser on masque la page (vue native) pour garder la souris dans l'interface.
+    on('sidebar-resize-start', () => { if (contentView) contentView.setVisible(false); });
+    on('sidebar-resize', (_e, w) => { sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(w))); layout(); });
+    on('sidebar-resize-end', () => { if (contentView) contentView.setVisible(!overlayOpen); layout(); sendState(); });
+    on('overlay', (_e, open) => {
+      overlayOpen = !!open;
+      if (overlayOpen) hideLinkStatus();
+      if (contentView) contentView.setVisible(!overlayOpen);
+      if (splitView) splitView.setVisible(!overlayOpen);
+      if (overlayOpen) chrome.webContents.focus();
+      else { const wc = currentWC(); if (wc) wc.focus(); }
+      sendState();
+    });
+    // ---------- vue divisée ----------
+    on('split-open', (_e, mode) => openSplit(mode));
+    on('split-close', () => closeSplit());
+    // menu de choix de session (via l'overlay natif, au-dessus des pages web)
+    on('split-menu', () => popupMenu([
+      { label: tr('Cookies partagés'), click: () => openSplit('shared') },
+      { label: tr('Navigation privée'), click: () => openSplit('private') },
+    ]));
+    const withSplit = (fn) => () => { if (splitView && !splitView.webContents.isDestroyed()) fn(splitView.webContents); };
+    on('split-back', withSplit((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
+    on('split-forward', withSplit((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));
+    on('split-reload', withSplit((wc) => (wc.isLoading() ? wc.stop() : wc.reload())));
+    on('split-navigate', (_e, input) => { const u = toUrl(input); if (u && splitView && !splitView.webContents.isDestroyed()) splitView.webContents.loadURL(u); });
+    on('split-resize-start', () => { if (contentView) contentView.setVisible(false); if (splitView) splitView.setVisible(false); });
+    on('split-resize', (_e, r) => { splitRatio = Math.min(0.8, Math.max(0.2, +r || 0.5)); layout(); });
+    on('split-resize-end', () => { const vis = !overlayOpen; if (contentView) contentView.setVisible(vis); if (splitView) splitView.setVisible(vis); layout(); sendState(); });
+
+    handle('search', (_e, q) => {
+      const s = (q || '').trim().toLowerCase();
+      const match = (t) => !s || (t.title || '').toLowerCase().includes(s) || (t.url || '').toLowerCase().includes(s);
+      const open = tabs.filter(match).map((t) => ({ kind: t.view ? 'open' : 'dormant', id: t.id, title: t.title, url: t.url, favicon: t.favicon, group: groupTitle(groupById(t.groupId)) }));
+      const arch = archive.map((a, index) => ({ ...a, index })).filter(match).slice(0, 20).map((a) => ({ kind: 'archive', index: a.index, title: a.title, url: a.url, favicon: a.favicon, closedAt: a.closedAt, group: a.groupTitle }));
+      const favItem = (n) => n.type === 'folder'
+        ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null }
+        : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon };
+      // sans recherche : favoris de premier niveau (navigables) ; avec recherche : tout l'arbre.
+      let favs = [];
+      if (!s) favs = favorites.map(favItem);
+      else favWalk(favorites, (n) => { if (n.type === 'folder' ? (n.title || '').toLowerCase().includes(s) : match(n)) favs.push(favItem(n)); });
+      favs = favs.slice(0, 40);
+      const openSet = new Set(tabs.map((t) => normalize(t.url)));
+      const hist = Object.values(history).filter((h) => match(h) && !openSet.has(normalize(h.url))).sort((a, b) => b.count - a.count).slice(0, 10).map((h) => ({ kind: 'history', title: h.title, url: h.url, count: h.count }));
+      return { open, favorites: favs, archive: arch, history: hist };
+    });
+    handle('archive-list', () => archive.slice(0, 300));
+    on('archive-restore', (_e, index) => { const a = archive[index]; if (!a) return; archive.splice(index, 1); newTab({ url: a.url }); });
+    on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
+    on('auth-reply', (_e, r) => answerAuth(r));
+    on('perm-reply', (_e, r) => answerPrompt(r));
+    on('display-choose', (_e, r) => { if (displayPick && r && r.id === displayPick.id) settleDisplayPick(r.cancel ? null : r); });
+    // Changelog affiché dans Réglages → À propos : même fichier que celui du dépôt (CHANGELOG.md)
+    handle('changelog-get', () => { try { return fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8'); } catch { return ''; } });
+    handle('default-browser-status', () => defaultBrowserStatus());
+    handle('default-browser-set', () => makeDefaultBrowser());
+    on('open-url', (_e, url) => navigateCurrent(url));
+    on('open-url-new', (_e, url) => { const u = toUrl(url); if (u) newTab({ url: u }); });
+
+    handle('pw-available', () => safeStorage.isEncryptionAvailable());
+    handle('pw-import', () => importPasswordsCsv());
+    handle('pw-list', () => passwords.map(({ password, ...p }) => ({ ...p, len: (password || '').length })));
+    handle('pw-reveal', (_e, id) => { const p = passwords.find((x) => x.id === id); return p ? p.password : null; });
+    on('pw-copy', (_e, id) => { const p = passwords.find((x) => x.id === id); if (!p) return; clipboard.writeText(p.password); setTimeout(async () => { try { if ((await clipboard.readText()) === p.password) clipboard.clear(); } catch {} }, 30000); });
+    on('pw-open', (_e, id) => { const p = passwords.find((x) => x.id === id); if (p && p.url) navigateCurrent(p.url); });
+    on('pw-delete', (_e, id) => { passwords = passwords.filter((p) => p.id !== id); persistPasswords(); });
+    on('pw-clear', () => { passwords = []; persistPasswords(); });
+
+    // ---------- Claude (tâches IA) ----------
+    on('claude-toggle', () => { if (!betaFeatures) return; claudeOpen = !claudeOpen; layout(); sendState(); persistClaudeTasks(); if (claudeOpen) sendClaudeTasks(); });
+    handle('claude-tasks', () => claudePublicTasks());
+    handle('claude-run', (_e, prompt) => startClaudeTask(prompt));
+    on('claude-cancel', (_e, id) => cancelClaudeTask(id));
+    on('claude-continue', (_e, o) => continueClaudeTask(o && o.id, o && o.prompt));
+    on('claude-remove', (_e, id) => {
+      const t = claudeTasks.find((x) => x.id === id);
+      if (t && t.status === 'running') cancelClaudeTask(id);
+      claudeTasks = claudeTasks.filter((x) => x.id !== id);
+      const g = groups.find((x) => x.claudeTaskId === id);
+      if (g) g.claudeTaskId = null; // l'îlot survit à sa tâche, mais n'y renvoie plus
+      sendClaudeTasks(); sendState();
+    });
+    on('claude-clear-done', () => { claudeTasks = claudeTasks.filter((t) => t.status === 'running'); sendClaudeTasks(); sendState(); });
+    on('claude-open-md', (_e, id) => { // ouvre le résultat dans la visionneuse Markdown existante (plein écran)
+      const t = claudeTasks.find((x) => x.id === id);
+      if (t && t.output && chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', { title: t.title, md: t.output });
+    });
+    // un lien cliqué dans le résultat s'ouvre dans l'îlot de la tâche (créé au premier lien)
+    on('claude-open-link', (_e, o) => {
+      const t = claudeTasks.find((x) => x.id === (o && o.id)); if (!t) return;
+      let u; try { u = new URL(o.url); } catch { return; }
+      if (!/^https?:$/.test(u.protocol)) return;
+      newTab({ url: u.href, groupId: claudeIsland(t).id });
+    });
+    // (ré)ouvre l'îlot de la tâche avec ses onglets (bloc nax-tabs, sinon liens du rapport)
+    on('claude-open-island', (_e, id) => {
+      const t = claudeTasks.find((x) => x.id === id); if (!t) return;
+      if (!t.tabs || !t.tabs.length) t.tabs = claudeTaskSources(t).map((url) => ({ url, title: '' }));
+      openClaudeIslandTabs(t, true);
+      sendClaudeTasks();
+    });
+    // retrouve l'îlot d'une tâche (active son onglet le plus récent)
+    on('claude-focus-island', (_e, id) => {
+      const g = claudeIslandOf(id); if (!g) return;
+      const members = tabs.filter((t) => t.groupId === g.id);
+      const mru = members.slice().sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0))[0];
+      if (mru) activateTab(mru.id);
+    });
+    // depuis l'îlot (badge ✦) → ouvre le panneau sur la tâche correspondante
+    on('claude-reveal-task', (_e, taskId) => {
+      if (!betaFeatures) return;
+      if (!claudeOpen) { claudeOpen = true; layout(); }
+      sendState(); sendClaudeTasks();
+      if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-reveal', taskId);
+    });
+  }
+
+  // Page sous le curseur (vue divisée : le volet visé), sinon la page affichée ; rien si une modale couvre les pages.
+  function pageWCAtCursor() {
+    if (!win || overlayOpen) return null;
+    const pt = screen.getCursorScreenPoint(), b = win.getContentBounds();
+    const x = pt.x - b.x, y = pt.y - b.y;
+    for (const v of [splitView, contentView]) {
+      if (!v) continue;
+      const r = v.getBounds();
+      if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) return wcOf(v);
+    }
+    return visibleWC();
+  }
+  function readGeom() { try { return { bounds: win.isMaximized() ? win.getNormalBounds() : win.getBounds(), maximized: win.isMaximized() }; } catch { return geom; } }
+  function snapshotWindow() {
+    return {
+      tabs: tabs.filter((t) => !isPrivate(t)).map(({ view, ...t }) => t), groups,
+      currentTabId: current && current.kind === 'tab' ? current.id : null,
+      sidebarOpen, bounds: geom.bounds, maximized: geom.maximized,
+    };
+  }
+  function applyWindowTheme() {
+    if (!win || win.isDestroyed()) return;
+    win.setBackgroundColor(chromeBg(privateWin));
+    try { win.setTitleBarOverlay(overlayOptions(privateWin)); } catch {}
+  }
+  // Lien reçu de l'extérieur : l'onglet déjà ouvert sur cette adresse, sinon un nouveau.
+  function openOrActivate(url) {
+    const open = tabs.find((t) => normalize(t.url) === normalize(url));
+    if (open) activateTab(open.id); else newTab({ url });
+  }
+
+  // ---------- construction ----------
+  const bounds = fitBounds(geom.bounds);
+  const size = { width: 1400, height: 880 };
+  if (!bounds && cascadeFrom && cascadeFrom.win && !cascadeFrom.win.isDestroyed()) {
+    const b = cascadeFrom.win.getBounds(); Object.assign(size, { x: b.x + 32, y: b.y + 32, width: b.width, height: b.height });
+  }
+  win = new BaseWindow({
+    ...(bounds || size), minWidth: 700, minHeight: 400, title: privateWin ? tr('{title} (privé)', { title: 'NaX' }) : 'NaX',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
+    backgroundColor: chromeBg(privateWin),
+    titleBarStyle: 'hidden',                     // pas de barre de titre système : le haut de l'UI fait office de header
+    titleBarOverlay: overlayOptions(privateWin), // garde les boutons réduire/agrandir/fermer natifs en superposition
+  });
+  if (geom.maximized) win.maximize();
+  geom = readGeom(); // position réelle dès l'ouverture (une fenêtre jamais déplacée n'émet ni resize ni move)
+  // l'option icon de BaseWindow n'alimente pas la barre des tâches Windows : on la pose explicitement
+  try { win.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico'))); } catch {}
+  chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js') } });
+  win.contentView.addChildView(chrome);
+  layout();
+  win.on('resize', () => { geom = readGeom(); layout(); hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); if (isMain) syncUpdateBounds(); });
+  win.on('move', () => { geom = readGeom(); hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); if (isMain) syncUpdateBounds(); });
+  win.on('maximize', () => { geom = readGeom(); });
+  win.on('unmaximize', () => { geom = readGeom(); });
+  win.on('hide', () => { hidePeek(); hideMenu(); hideTip(); hideSuggest(); });
+  win.on('blur', () => hideTip());
+  win.on('focus', () => { lastFocusedWin = api; });
+  win.on('close', () => {
+    closing = true;
+    const others = windows.filter((w) => w !== api && !w.isDestroyed());
+    if (!others.length) { quitting = true; return; } // dernière fenêtre : NaX quitte, l'état est écrit dans before-quit (fenêtre encore listée)
+    // fermeture d'une fenêtre parmi d'autres : ses onglets (hors sessions isolées) rejoignent l'archive, comme des onglets fermés
+    for (const t of tabs) {
+      if (isIsolated(t) || !t.url || normalize(t.url) === normalize(homepage)) continue;
+      archive.unshift({ url: t.url, title: t.title, favicon: t.favicon, closedAt: Date.now(), groupTitle: groupTitle(groupById(t.groupId)) });
+    }
+    if (archive.length > 2000) archive.length = 2000;
+  });
+  win.on('closed', () => {
+    for (const t of tabs) { const w = wcOf(t.view); if (w) { try { w.close(); } catch {} } t.view = null; }
+    for (const v of appViews.values()) { const w = wcOf(v); if (w) { try { w.close(); } catch {} } }
+    appViews.clear();
+    for (const off of ipcOffs) off();
+    unregisterHandles(chromeId);
+    if (quitting) return; // la liste reste intacte pour snapshot()
+    const i = windows.indexOf(api); if (i >= 0) windows.splice(i, 1);
+    if (lastFocusedWin === api) lastFocusedWin = null;
+    if (isMain) { // le rail d'applis et le panneau Claude passent à la plus ancienne fenêtre normale restante
+      destroyUpdateWin();
+      const next = windows.find((w) => !w.isPrivate && !w.isDestroyed());
+      if (next) next.promote();
+    }
+    persist(); sendStateAll();
+  });
+  // Boutons latéraux de la souris (et touches Précédent/Suivant des claviers multimédia) : Windows les envoie
+  // à la fenêtre sous forme de commande d'application, que Chromium-sous-Electron ne traite pas lui-même.
+  win.on('app-command', (_e, cmd) => {
+    const wc = pageWCAtCursor();
+    if (!wc) return;
+    if (cmd === 'browser-backward' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+    else if (cmd === 'browser-forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
+    else if (cmd === 'browser-refresh') wc.reload();
+  });
+  lockUiContents(chrome.webContents, openInTab); own(chrome);
+  const chromeId = chrome.webContents.id;
+  chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'), { query: { lang: uiLang } });
+  let readyResolve;
+  const ready = new Promise((r) => { readyResolve = r; });
+  chrome.webContents.once('did-finish-load', () => {
+    if (saved) { const t = tabById(saved.currentTabId) || tabs[0]; if (t) activateTab(t.id); else newTab(); }
+    else { newTab({ url: initialUrl || newTabTarget() }); uiFocus('focus-url'); }
+    ensureTipWin(); // overlay des tooltips personnalisés
+    readyResolve(api);
+  });
+  registerIpc();
+
+  const api = {
+    get win() { return win; }, get chrome() { return chrome; },
+    get isPrivate() { return privateWin; }, get isMain() { return isMain; },
+    get tabs() { return tabs; }, get groups() { return groups; }, get current() { return current; },
+    get htmlFullscreen() { return htmlFullscreen; },
+    ready,
+    isDestroyed: () => !win || win.isDestroyed(),
+    ownsWindow: (bw) => { if (!bw || !win || win.isDestroyed()) return false; if (bw === win) return true; try { return typeof bw.getParentWindow === 'function' && bw.getParentWindow() === win; } catch { return false; } },
+    ownsPage: (wc) => !!wc && (tabs.some((t) => wcOf(t.view) === wc) || [...appViews.values()].some((v) => wcOf(v) === wc)),
+    pageWebContents: () => { const l = []; for (const t of tabs) { const w = wcOf(t.view); if (w) l.push(w); } for (const v of appViews.values()) { const w = wcOf(v); if (w) l.push(w); } return l; },
+    sendChrome: (ch, ...a) => { try { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send(ch, ...a); } catch {} },
+    sendTip: (ch, ...a) => { try { if (tipWin && !tipWin.isDestroyed()) tipWin.webContents.send(ch, ...a); } catch {} },
+    scheduleState, snapshotWindow, layout, housekeeping, applyTheme: applyWindowTheme,
+    promote: () => { if (privateWin || isMain) return; isMain = true; layout(); sendState(); sendClaudeTasks(); if (updateState) setUpdateState(updateState); },
+    focus: () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } },
+    close: () => { if (win && !win.isDestroyed()) win.close(); },
+    newTab, activateTab, closeTab, tabById, openOrActivate, lastUsedTab, cycle, tabAt,
+    closeCurrentTab: () => { if (current && current.kind === 'tab') closeTab(current.id); },
+    uiFocus, currentWC, navigateCurrent, showFind, leaveHtmlFullscreen, savePageAs, viewSource,
+    toggleFavoriteCurrent: () => { const t = current && current.kind === 'tab' ? tabById(current.id) : null; if (t) toggleFavoriteUrl(t.url, t.title, t.favicon); },
+    toggleSidebar: () => { sidebarOpen = !sidebarOpen; sidebarOpenDefault = sidebarOpen; layout(); sendState(); },
+    toggleFullScreen: () => { if (htmlFullscreen) leaveHtmlFullscreen(); else win.setFullScreen(!win.isFullScreen()); },
+    openClaudeIslandTabs, claudeIsland, claudeIslandOf,
+  };
+  windows.push(api);
+  return api;
+}
+
+// ---------- raccourcis ----------
+// Le menu d'application est partagé par toutes les fenêtres : chaque raccourci agit sur la fenêtre active.
+// Chaque raccourci a un id stable (clé de personnalisation), une touche principale et d'éventuelles touches
+// secondaires (alt). Paramètres › Raccourcis remplace la touche principale ; un raccourci personnalisé perd ses
+// touches secondaires (sinon l'ancienne touche continuerait d'agir en douce).
+let shortcutKeys = {};          // id -> accélérateur choisi par l'utilisateur ('' = désactivé) ; absent = par défaut
+let shortcutsSuspended = false; // saisie d'une touche en cours dans les Paramètres : menu sans accélérateurs
+function shortcutDefs() {
+  const onWin = (fn) => () => { const w = focusedWin(); if (w) fn(w); };
+  const withWC = (fn) => onWin((w) => { const wc = w.currentWC(); if (wc) fn(wc, w); });
+  const uiCommand = (cmd) => onWin((w) => w.uiFocus('ui-command', cmd));
   const hardReload = withWC((wc) => wc.reloadIgnoringCache());
-  const focusUrl = () => uiFocus('focus-url');
-  const tpl = [{
-    label: 'NaX',
-    submenu: [
-      { label: 'Nouvel onglet', accelerator: 'CmdOrCtrl+T', click: () => { newTab(); uiFocus('focus-url'); } },
-      { label: 'Nouvel onglet privé', accelerator: 'CmdOrCtrl+Shift+N', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
-      { label: "Fermer l'onglet", accelerator: 'CmdOrCtrl+W', click: () => { if (current && current.kind === 'tab') closeTab(current.id); } },
-      { label: 'Rouvrir le dernier onglet fermé', accelerator: 'CmdOrCtrl+Shift+T', click: () => { const a = archive.shift(); if (a) newTab({ url: a.url }); } },
-      { label: 'Adresse', accelerator: 'CmdOrCtrl+L', click: focusUrl },
-      { label: 'Adresse (Alt+D)', accelerator: 'Alt+D', visible: false, click: focusUrl },
-      { label: 'Adresse (F6)', accelerator: 'F6', visible: false, click: focusUrl },
-      { label: 'Rechercher', accelerator: 'CmdOrCtrl+K', click: () => uiFocus('open-palette') },
-      { label: 'Ajouter/retirer des favoris', accelerator: 'CmdOrCtrl+D', click: () => { const t = current && current.kind === 'tab' ? tabById(current.id) : null; if (t) toggleFavoriteUrl(t.url, t.title, t.favicon); } },
-      { label: 'Afficher/masquer la liste', accelerator: 'CmdOrCtrl+B', click: () => { sidebarOpen = !sidebarOpen; layout(); sendState(); } },
-      { label: 'Dernier onglet utilisé', accelerator: 'Ctrl+Tab', click: () => { const id = lastUsedTab(); if (id) activateTab(id); } },
-      { label: 'Onglet précédent', accelerator: 'Ctrl+Shift+Tab', click: () => cycle(-1) },
-      { label: 'Onglet suivant (liste)', accelerator: 'Ctrl+PageDown', click: () => cycle(1) },
-      { label: 'Onglet précédent (liste)', accelerator: 'Ctrl+PageUp', click: () => cycle(-1) },
-      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ label: n === 9 ? 'Dernier onglet' : `Onglet ${n}`, accelerator: `CmdOrCtrl+${n}`, visible: false, click: () => tabAt(n) })),
-      { label: 'Recharger', accelerator: 'CmdOrCtrl+R', click: withWC((wc) => wc.reload()) },
-      { label: 'Recharger (F5)', accelerator: 'F5', visible: false, click: withWC((wc) => wc.reload()) },
-      { label: 'Recharger sans le cache', accelerator: 'CmdOrCtrl+Shift+R', click: hardReload },
-      { label: 'Recharger sans le cache (Ctrl+F5)', accelerator: 'CmdOrCtrl+F5', visible: false, click: hardReload },
-      { label: 'Recharger sans le cache (Maj+F5)', accelerator: 'Shift+F5', visible: false, click: hardReload },
-      { label: 'Page d’accueil', accelerator: 'Alt+Home', click: () => navigateCurrent(homepage) },
-      { label: 'Historique', accelerator: 'CmdOrCtrl+H', click: uiCommand('history') },
-      { label: 'Téléchargements', accelerator: 'CmdOrCtrl+J', click: uiCommand('downloads') },
-      { label: 'Effacer les données de navigation', accelerator: 'CmdOrCtrl+Shift+Delete', click: uiCommand('privacy') },
-      { label: 'Rechercher dans la page', accelerator: 'CmdOrCtrl+F', click: () => showFind() },
-      { label: 'Imprimer…', accelerator: 'CmdOrCtrl+P', click: withWC((wc) => wc.print()) },
-      { label: 'Enregistrer la page sous…', accelerator: 'CmdOrCtrl+S', click: withWC((wc) => savePageAs(wc)) },
-      { label: 'Afficher le code source', accelerator: 'CmdOrCtrl+U', click: withWC((wc) => viewSource(wc, current && current.kind === 'tab' ? current.id : null)) },
-      { label: 'Plein écran', accelerator: 'F11', click: () => { if (htmlFullscreen) leaveHtmlFullscreen(); else win.setFullScreen(!win.isFullScreen()); } },
-      { label: 'Quitter le plein écran', accelerator: 'Escape', visible: false, click: () => { if (htmlFullscreen) leaveHtmlFullscreen(); } },
-      { label: 'Précédent', accelerator: 'Alt+Left', click: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
-      { label: 'Suivant', accelerator: 'Alt+Right', click: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
-      { label: 'Zoom +', accelerator: 'CmdOrCtrl+=', click: withWC((wc) => zoomStep(wc, 1)) },
-      { label: 'Zoom -', accelerator: 'CmdOrCtrl+-', click: withWC((wc) => zoomStep(wc, -1)) },
-      { label: 'Zoom par défaut', accelerator: 'CmdOrCtrl+0', click: withWC((wc) => zoomReset(wc)) },
-      { label: 'Outils de dev (page)', accelerator: 'F12', click: withWC((wc) => wc.toggleDevTools()) },
-      { label: 'Outils de dev (interface)', accelerator: 'CmdOrCtrl+Shift+I', click: () => chrome.webContents.toggleDevTools() },
-      { role: 'quit', label: 'Quitter' },
-    ],
-  }];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+  const focusUrl = onWin((w) => w.uiFocus('focus-url'));
+  const TABS = tr('Onglets et fenêtres'), NAV = tr('Navigation'), PAGE = tr('Page'), VIEW = tr('Affichage'), TOOLS = tr('Outils');
+  return [
+    { id: 'new-tab', group: TABS, label: tr('Nouvel onglet'), key: 'CmdOrCtrl+T', run: onWin((w) => { w.newTab(); w.uiFocus('focus-url'); }) },
+    { id: 'new-private-tab', group: TABS, label: tr('Nouvel onglet privé'), key: 'CmdOrCtrl+Shift+P', run: onWin((w) => { w.newTab({ partition: splitPartition('private') }); w.uiFocus('focus-url'); }) },
+    { id: 'new-window', group: TABS, label: tr('Nouvelle fenêtre'), key: 'CmdOrCtrl+N', run: () => newWindow() },
+    { id: 'new-private-window', group: TABS, label: tr('Nouvelle fenêtre privée'), key: 'CmdOrCtrl+Shift+N', run: () => newWindow({ isPrivate: true }) },
+    { id: 'close-tab', group: TABS, label: tr("Fermer l'onglet"), key: 'CmdOrCtrl+W', run: onWin((w) => w.closeCurrentTab()) },
+    { id: 'close-window', group: TABS, label: tr('Fermer la fenêtre'), key: 'CmdOrCtrl+Shift+W', run: onWin((w) => w.close()) },
+    { id: 'reopen-tab', group: TABS, label: tr('Rouvrir le dernier onglet fermé'), key: 'CmdOrCtrl+Shift+T', run: onWin((w) => { const a = archive.shift(); if (a) w.newTab({ url: a.url }); }) },
+    { id: 'last-used-tab', group: TABS, label: tr('Dernier onglet utilisé'), key: 'Ctrl+Tab', run: onWin((w) => { const id = w.lastUsedTab(); if (id) w.activateTab(id); }) },
+    { id: 'prev-tab', group: TABS, label: tr('Onglet précédent'), key: 'Ctrl+Shift+Tab', run: onWin((w) => w.cycle(-1)) },
+    { id: 'next-tab-list', group: TABS, label: tr('Onglet suivant (liste)'), key: 'Ctrl+PageDown', run: onWin((w) => w.cycle(1)) },
+    { id: 'prev-tab-list', group: TABS, label: tr('Onglet précédent (liste)'), key: 'Ctrl+PageUp', run: onWin((w) => w.cycle(-1)) },
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ id: `tab-${n}`, group: TABS, label: n === 9 ? tr('Dernier onglet') : tr('Onglet {n}', { n }), key: `CmdOrCtrl+${n}`, hidden: true, run: onWin((w) => w.tabAt(n)) })),
+    { id: 'focus-url', group: NAV, label: tr('Barre d’adresse'), key: 'CmdOrCtrl+L', alt: ['Alt+D', 'F6'], run: focusUrl },
+    { id: 'palette', group: NAV, label: tr('Rechercher'), key: 'CmdOrCtrl+K', run: onWin((w) => w.uiFocus('open-palette')) },
+    { id: 'back', group: NAV, label: tr('Précédent'), key: 'Alt+Left', run: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
+    { id: 'forward', group: NAV, label: tr('Suivant'), key: 'Alt+Right', run: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
+    { id: 'reload', group: NAV, label: tr('Recharger'), key: 'CmdOrCtrl+R', alt: ['F5'], run: withWC((wc) => wc.reload()) },
+    { id: 'hard-reload', group: NAV, label: tr('Recharger sans le cache'), key: 'CmdOrCtrl+Shift+R', alt: ['CmdOrCtrl+F5', 'Shift+F5'], run: hardReload },
+    { id: 'home', group: NAV, label: tr('Page d’accueil'), key: 'Alt+Home', run: onWin((w) => w.navigateCurrent(homepage)) },
+    { id: 'favorite', group: PAGE, label: tr('Ajouter/retirer des favoris'), key: 'CmdOrCtrl+D', run: onWin((w) => w.toggleFavoriteCurrent()) },
+    { id: 'find', group: PAGE, label: tr('Rechercher dans la page'), key: 'CmdOrCtrl+F', run: onWin((w) => w.showFind()) },
+    { id: 'print', group: PAGE, label: tr('Imprimer…'), key: 'CmdOrCtrl+P', run: withWC((wc) => wc.print()) },
+    { id: 'save-page', group: PAGE, label: tr('Enregistrer la page sous…'), key: 'CmdOrCtrl+S', run: withWC((wc, w) => w.savePageAs(wc)) },
+    { id: 'view-source', group: PAGE, label: tr('Afficher le code source'), key: 'CmdOrCtrl+U', run: withWC((wc, w) => w.viewSource(wc, w.current && w.current.kind === 'tab' ? w.current.id : null)) },
+    { id: 'sidebar', group: VIEW, label: tr('Afficher/masquer la liste'), key: 'CmdOrCtrl+B', run: onWin((w) => w.toggleSidebar()) },
+    { id: 'fullscreen', group: VIEW, label: tr('Plein écran'), key: 'F11', run: onWin((w) => w.toggleFullScreen()) },
+    { id: 'leave-fullscreen', group: VIEW, label: tr('Quitter le plein écran d’une vidéo'), key: 'Escape', hidden: true, run: onWin((w) => { if (w.htmlFullscreen) w.leaveHtmlFullscreen(); }) },
+    { id: 'zoom-in', group: VIEW, label: tr('Zoom +'), key: 'CmdOrCtrl+=', run: withWC((wc) => zoomStep(wc, 1)) },
+    { id: 'zoom-out', group: VIEW, label: tr('Zoom -'), key: 'CmdOrCtrl+-', run: withWC((wc) => zoomStep(wc, -1)) },
+    { id: 'zoom-reset', group: VIEW, label: tr('Zoom par défaut', { _ctx: 'raccourci' }), key: 'CmdOrCtrl+0', run: withWC((wc) => zoomReset(wc)) },
+    { id: 'history', group: TOOLS, label: tr('Historique'), key: 'CmdOrCtrl+H', run: uiCommand('history') },
+    { id: 'downloads', group: TOOLS, label: tr('Téléchargements'), key: 'CmdOrCtrl+J', run: uiCommand('downloads') },
+    { id: 'clear-data', group: TOOLS, label: tr('Effacer les données de navigation'), key: 'CmdOrCtrl+Shift+Delete', run: uiCommand('privacy') },
+    { id: 'devtools-page', group: TOOLS, label: tr('Outils de dev (page)'), key: 'F12', run: withWC((wc) => wc.toggleDevTools()) },
+    { id: 'devtools-ui', group: TOOLS, label: tr('Outils de dev (interface)'), key: 'CmdOrCtrl+Shift+I', run: onWin((w) => w.chrome.webContents.toggleDevTools()) },
+  ];
+}
+// forme canonique d'un accélérateur, pour comparer (« CmdOrCtrl+Shift+t » == « Ctrl+Shift+T » sous Windows)
+function normAccel(a) {
+  if (!a) return '';
+  const parts = String(a).split('+').map((x) => x.trim().toLowerCase());
+  const key = parts.pop() || '';
+  const mods = new Set(parts.filter(Boolean).map((m) => (m === 'cmdorctrl' || m === 'commandorcontrol' || m === 'control' ? 'ctrl' : m)));
+  return [...['ctrl', 'alt', 'shift', 'super'].filter((m) => mods.has(m)), key === 'plus' ? '=' : key].join('+');
+}
+// Raccourcis effectifs : touche principale (personnalisée ou par défaut) et touches secondaires encore libres.
+function shortcutTable() {
+  const rows = shortcutDefs().map((d) => {
+    const custom = Object.prototype.hasOwnProperty.call(shortcutKeys, d.id);
+    return { ...d, custom, defaultKey: d.key, defaultAlt: d.alt || [], key: custom ? shortcutKeys[d.id] : d.key, alt: custom ? [] : (d.alt || []) };
+  });
+  const primaries = new Set(rows.map((r) => normAccel(r.key)).filter(Boolean));
+  for (const r of rows) r.alt = r.alt.filter((a) => !primaries.has(normAccel(a)));
+  return rows;
+}
+// touche d'un raccourci telle qu'affichée dans les menus (« Ctrl+Maj+P »), '' si désactivé
+// noms évalués à chaque appel : ils suivent la langue de l'interface
+function hintNames() {
+  return { cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', control: 'Ctrl', shift: tr('Maj'), super: 'Win', left: '←', right: '→', up: '↑', down: '↓', pageup: tr('Pg préc'), pagedown: tr('Pg suiv'), delete: tr('Suppr'), escape: tr('Échap'), home: tr('Début'), end: tr('Fin'), insert: tr('Inser'), backspace: tr('Retour'), space: tr('Espace'), enter: tr('Entrée') };
+}
+function shortcutHint(id) {
+  const r = shortcutTable().find((x) => x.id === id);
+  const names = hintNames();
+  return r && r.key ? r.key.split('+').map((p) => names[p.toLowerCase()] || (p.length === 1 ? p.toUpperCase() : p)).join('+') : '';
+}
+function shortcutsPublic() {
+  return shortcutTable().map(({ id, group, label, key, alt, defaultKey, defaultAlt, custom }) => ({ id, group, label, key, alt, defaultKey, defaultAlt, custom }));
+}
+// Attribue une touche ('' = désactiver). Un autre raccourci qui l'utilisait en touche principale est désactivé :
+// renvoie leurs libellés, pour prévenir l'utilisateur.
+function setShortcut(id, accel) {
+  const rows = shortcutTable();
+  const row = rows.find((r) => r.id === id);
+  if (!row) return [];
+  const want = typeof accel === 'string' ? accel.trim() : '';
+  const n = normAccel(want);
+  const displaced = [];
+  if (n) for (const r of rows) if (r.id !== id && normAccel(r.key) === n) { shortcutKeys[r.id] = ''; displaced.push(r.label); }
+  if (n && n === normAccel(row.defaultKey)) delete shortcutKeys[id]; // retour à la touche d'origine = plus personnalisé
+  else shortcutKeys[id] = want;
+  shortcutsChanged();
+  return displaced;
+}
+// Réinitialise un raccourci (ou tous). Si sa touche d'origine est prise par un autre raccourci personnalisé,
+// celui-ci la garde et le raccourci réinitialisé reste désactivé, plutôt que de créer un doublon.
+function resetShortcuts(id) {
+  if (!id) shortcutKeys = {};
+  else {
+    delete shortcutKeys[id];
+    const rows = shortcutTable(), row = rows.find((r) => r.id === id);
+    if (row && rows.some((r) => r.id !== id && r.custom && normAccel(r.key) === normAccel(row.key))) shortcutKeys[id] = '';
+  }
+  shortcutsChanged();
+}
+function shortcutsChanged() { buildMenu(); persist(); broadcast('shortcuts-changed', shortcutsPublic()); }
+function suspendShortcuts(on) { on = !!on; if (on === shortcutsSuspended) return; shortcutsSuspended = on; buildMenu(); }
+function buildMenu() {
+  const items = [];
+  for (const r of shortcutTable()) {
+    items.push({ label: r.label, accelerator: (!shortcutsSuspended && r.key) || undefined, visible: !r.hidden, click: r.run });
+    if (!shortcutsSuspended) for (const a of r.alt) items.push({ label: `${r.label} (${a})`, accelerator: a, visible: false, click: r.run });
+  }
+  items.push({ role: 'quit', label: tr('Quitter') });
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'NaX', submenu: items }]));
 }
 
 // ---------- Claude : moteur de tâches ----------
@@ -1960,7 +2797,7 @@ function claudePublicTasks() {
   return claudeTasks;
 }
 function sendClaudeTasks() {
-  if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-tasks', claudePublicTasks());
+  { const mw = mainWin(); if (mw) mw.sendChrome('claude-tasks', claudePublicTasks()); }
   persistClaudeTasks();
 }
 function claudeWorkDir() {
@@ -1977,15 +2814,15 @@ function handleClaudeEvent(task, line) {
   let ev; try { ev = JSON.parse(line); } catch { return; }
   if (ev.type === 'system' && ev.subtype === 'init') {
     task.sessionId = ev.session_id || null;
-    claudeActivity(task, 'Claude démarre…');
+    claudeActivity(task, tr('Claude démarre…'));
   } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
     for (const b of ev.message.content) {
       if (b.type === 'text' && b.text) {
         task.output += (task.output ? '\n\n' : '') + b.text;
       } else if (b.type === 'tool_use') {
         const i = b.input || {};
-        const label = b.name === 'WebSearch' ? 'Recherche web — ' + (i.query || '')
-          : b.name === 'WebFetch' ? 'Lecture — ' + (i.url || 'une page')
+        const label = b.name === 'WebSearch' ? tr('Recherche web — {query}', { query: i.query || '' })
+          : b.name === 'WebFetch' ? tr('Lecture — {url}', { url: i.url || tr('une page') })
           : b.name + (i.query || i.url ? ' — ' + (i.query || i.url) : '');
         claudeActivity(task, label);
       }
@@ -1993,7 +2830,7 @@ function handleClaudeEvent(task, line) {
   } else if (ev.type === 'result') {
     task.status = ev.is_error ? 'error' : 'done';
     if (typeof ev.result === 'string' && ev.result) task.output = ev.result; // le résultat final remplace le flux (évite les doublons)
-    if (ev.is_error) task.error = (typeof ev.result === 'string' && ev.result) || ev.subtype || 'Erreur';
+    if (ev.is_error) task.error = (typeof ev.result === 'string' && ev.result) || ev.subtype || tr('Erreur');
     task.durationMs = ev.duration_ms || null;
     task.numTurns = ev.num_turns || null;
     task.finishedAt = Date.now();
@@ -2001,8 +2838,8 @@ function handleClaudeEvent(task, line) {
       // finalité de la tâche : ouvrir UNIQUEMENT les pages-résultat listées par Claude (bloc nax-tabs).
       // Pas de repli automatique sur les liens du rapport : ils incluent les sources, que l'utilisateur ne veut pas voir s'ouvrir.
       task.tabs = claudeParseTabs(task);
-      claudeActivity(task, task.tabs.length ? 'Îlot ouvert — ' + task.tabs.length + ' onglet' + (task.tabs.length > 1 ? 's' : '') : 'Aucune page à ouvrir');
-      openClaudeIslandTabs(task, true);
+      claudeActivity(task, task.tabs.length ? trn(task.tabs.length, 'Îlot ouvert — {n} onglet', 'Îlot ouvert — {n} onglets') : tr('Aucune page à ouvrir'));
+      { const mw = mainWin(); if (mw) mw.openClaudeIslandTabs(task, true); }
     }
   }
   sendClaudeTasks();
@@ -2020,7 +2857,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
   try {
     proc = spawn('claude', args, { cwd: claudeWorkDir(), env: process.env, windowsHide: true, shell: false });
   } catch (e) {
-    task.status = 'error'; task.error = 'Lancement impossible : ' + e.message; task.finishedAt = Date.now();
+    task.status = 'error'; task.error = tr('Lancement impossible : {error}', { error: e.message }); task.finishedAt = Date.now();
     sendClaudeTasks(); return;
   }
   claudeProcs.set(task.id, proc);
@@ -2039,7 +2876,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
     if (task.status !== 'running') return;
     task.status = 'error';
     task.error = e.code === 'ENOENT'
-      ? 'CLI « claude » introuvable. Installe Claude Code (claude.com/claude-code) et connecte ton abonnement.'
+      ? tr('CLI « claude » introuvable. Installe Claude Code (claude.com/claude-code) et connecte ton abonnement.')
       : e.message;
     task.finishedAt = Date.now();
     sendClaudeTasks();
@@ -2048,7 +2885,7 @@ function runClaudeProcess(task, prompt, resumeSession) {
     claudeProcs.delete(task.id);
     if (task.status === 'running') { // sorti sans événement « result »
       task.status = code === 0 ? 'done' : 'error';
-      if (code !== 0 && !task.error) task.error = (errBuf || 'claude a quitté avec le code ' + code).trim();
+      if (code !== 0 && !task.error) task.error = (errBuf || tr('claude a quitté avec le code {code}', { code })).trim();
       task.finishedAt = Date.now();
     }
     sendClaudeTasks();
@@ -2089,27 +2926,11 @@ function cancelClaudeTask(id) {
   if (proc) { try { proc.kill(); } catch {} claudeProcs.delete(id); }
   if (t && t.status === 'running') {
     t.status = 'canceled'; t.finishedAt = Date.now();
-    claudeActivity(t, 'Annulée');
+    claudeActivity(t, tr('Annulée'));
   }
   sendClaudeTasks();
 }
 
-// ---------- Claude : îlots ----------
-// Un îlot « ouvert par Claude » est un groupe d'onglets ordinaire, marqué claude:true et
-// relié à sa tâche par claudeTaskId. bornAt sert à l'animation d'apparition côté UI.
-function claudeIslandOf(taskId) {
-  const g = groups.find((x) => x.claudeTaskId === taskId);
-  return g && tabs.some((t) => t.groupId === g.id) ? g : null;
-}
-function claudeIsland(task) {
-  let g = claudeIslandOf(task.id);
-  if (!g) {
-    groups = groups.filter((x) => x.claudeTaskId !== task.id); // retire un éventuel îlot vidé
-    g = { id: nextId++, title: task.title.slice(0, 48), claude: true, claudeTaskId: task.id, bornAt: Date.now() };
-    groups.push(g);
-  }
-  return g;
-}
 // La finalité d'une tâche est d'ouvrir des onglets : on impose à Claude de conclure par un
 // bloc ```nax-tabs``` listant les pages à ouvrir. Le bloc est retiré du rapport affiché.
 const CLAUDE_TABS_SUFFIX = '\n\nINSTRUCTION NAVIGATEUR (obligatoire) : la finalité de cette tâche est d\'ouvrir dans le navigateur les pages qui SONT le résultat demandé — uniquement elles. '
@@ -2128,22 +2949,6 @@ function claudeParseTabs(task) {
     .filter((x) => { try { return /^https?:$/.test(new URL(x.url).protocol); } catch { return false; } })
     .slice(0, 10);
 }
-// Ouvre (ou complète) l'îlot de la tâche avec ses onglets ; active le premier onglet ouvert.
-function openClaudeIslandTabs(task, activate) {
-  const list = task.tabs || [];
-  if (!list.length) return;
-  const g = claudeIsland(task);
-  const already = new Set(tabs.filter((x) => x.groupId === g.id).map((x) => normalize(x.url)));
-  let first = null;
-  for (const it of list) {
-    if (already.has(normalize(it.url))) continue;
-    already.add(normalize(it.url));
-    const tb = newTab({ url: it.url, groupId: g.id, activate: false });
-    if (it.title) tb.title = it.title; // en attendant le vrai titre de la page
-    if (!first) first = tb;
-  }
-  if (first && activate) activateTab(first.id); else sendState();
-}
 // Sources d'une tâche : liens http(s) du markdown final, dans l'ordre, dédupliqués.
 function claudeTaskSources(task, max = 8) {
   const seen = new Set(); const out = [];
@@ -2154,378 +2959,6 @@ function claudeTaskSources(task, max = 8) {
     try { const u = new URL(raw); if (!/^https?:$/.test(u.protocol) || seen.has(u.href)) continue; seen.add(u.href); out.push(u.href); } catch {}
   }
   return out;
-}
-
-// ---------- IPC ----------
-function registerIpc() {
-  const withWC = (fn) => () => { const wc = currentWC(); if (wc) fn(wc); };
-  ipcMain.on('navigate', (_e, input) => navigateCurrent(input));
-  ipcMain.on('back', withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
-  ipcMain.on('forward', withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));
-  ipcMain.on('reload', withWC((wc) => (wc.isLoading() ? wc.stop() : wc.reload())));
-  ipcMain.on('home', () => navigateCurrent(homepage));
-  ipcMain.on('focus-page', withWC((wc) => wc.focus()));
-
-  ipcMain.on('tab-new', () => { newTab(); uiFocus('focus-url'); });
-  ipcMain.on('tab-new-private', () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); });
-  ipcMain.on('tab-set-session', (_e, { id, private: priv } = {}) => setTabSession(id, !!priv));
-  ipcMain.on('newtab-menu', () => popupMenu([
-    { label: 'Session par défaut', click: () => { newTab(); uiFocus('focus-url'); } },
-    { label: 'Navigation privée', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } },
-    { label: 'Autre session (conservée)', click: () => { newTab({ partition: 'persist:nax-profile-b' }); uiFocus('focus-url'); } },
-  ]));
-  ipcMain.on('tab-activate', (_e, id) => activateTab(id));
-  ipcMain.on('tab-close', (_e, id) => closeTab(id));
-  ipcMain.on('tab-context', (_e, id) => tabContextMenu(id));
-  ipcMain.on('group-rename', (_e, { id, title }) => { const g = groupById(id); if (g) { g.title = (title || '').trim() || null; sendState(); } });
-  ipcMain.on('group-toggle', (_e, id) => { const g = groupById(id); if (g) { g.collapsed = !g.collapsed; sendState(); } });
-  ipcMain.on('group-close', (_e, id) => tabs.filter((t) => t.groupId === id).forEach((t) => closeTab(t.id)));
-  ipcMain.on('tab-move', (_e, opts) => moveTab(opts || {}));
-  ipcMain.on('group-move', (_e, opts) => moveGroup(opts || {}));
-  // ferme les deux onglets d'une paire divisée d'un coup
-  ipcMain.on('tab-close-pair', (_e, id) => { const t = tabById(id); const p = t ? pairOf(t) : null; if (p) { closeTab(p.secondary.id); closeTab(p.primary.id); } else closeTab(id); });
-  // déplace une paire divisée (primaire + secondaire restent adjacents et liés)
-  ipcMain.on('tab-move-pair', (_e, o = {}) => {
-    moveTab({ tabId: o.primaryId, afterTabId: o.afterTabId, targetGroupId: o.targetGroupId, makeNewGroup: o.makeNewGroup });
-    const prim = tabById(o.primaryId);
-    if (prim) moveTab({ tabId: o.secondaryId, afterTabId: o.primaryId, targetGroupId: prim.groupId });
-  });
-  ipcMain.on('set-theme', (_e, t) => { if (['system', 'light', 'dark'].includes(t)) { theme = t; applyTheme(); sendState(); } });
-  ipcMain.on('app-peek', (_e, { id, clientY } = {}) => showPeek(id, clientY));
-  ipcMain.on('app-peek-hide-soon', () => hidePeekSoon());
-  ipcMain.on('peek-hover', (_e, inside) => { if (inside) clearTimeout(peekHideTimer); else hidePeekSoon(); });
-  // ---------- flyout du rail + épingles favoris ----------
-  ipcMain.on('rail-hover', (_e, { id, kind, clientY } = {}) => railHover(id, kind, clientY));
-  ipcMain.on('rail-hover-end', () => { hideFlySoon(); hidePeekSoon(); });
-  ipcMain.on('fly-hover', (_e, inside) => { if (inside) clearTimeout(flyHideTimer); else hideFlySoon(); });
-  ipcMain.on('fly-click', (_e, o) => {
-    hideFly();
-    if (!o) return;
-    if (o.kind === 'app') { // raccourci programmé : on charge l'URL dans la vue de l'appli
-      const a = apps.find((x) => x.id === o.id); if (!a) return;
-      const s = (a.shortcuts || []).find((x) => x.id === o.itemId); if (!s) return;
-      const v = ensureAppView(a);
-      try { v.webContents.loadURL(s.url); } catch { return; }
-      current = { kind: 'app', id: a.id }; attach(v); v.webContents.focus(); win.setTitle(a.name); sendState();
-    } else if (o.kind === 'folder') { // lien d'un dossier épinglé (Ctrl+clic ou clic molette : nouvel onglet)
-      const r = favFind(o.itemId);
-      if (r && r.node.type === 'link') { if (o.newTab) newTab({ url: r.node.url }); else navigateCurrent(r.node.url); }
-    }
-  });
-  // retire un raccourci d'appli directement depuis le flyout ; la liste se rafraîchit (ou se ferme si elle est vide)
-  ipcMain.on('fly-remove-item', (_e, o) => {
-    const a = apps.find((x) => x.id === (o && o.id)); if (!a || !Array.isArray(a.shortcuts)) return;
-    a.shortcuts = a.shortcuts.filter((x) => x.id !== o.itemId);
-    sendState();
-    if (a.shortcuts.length) railHover(a.id, 'app', flyClientY); else hideFly();
-  });
-  ipcMain.on('fly-open-all', (_e, favId) => { hideFly(); if (favFind(favId)) openAllInFolder(favId); });
-  ipcMain.on('fly-resize', (_e, h) => { if (flyWin && !flyWin.isDestroyed() && +h > 0) flyPlace(+h); });
-  ipcMain.on('fly-edit', (_e, appId) => { hideFly(); if (apps.some((x) => x.id === appId) && chrome) chrome.webContents.send('edit-app-shortcuts', appId); });
-  ipcMain.on('app-shortcuts-set', (_e, o) => {
-    const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
-    a.shortcuts = (Array.isArray(o.shortcuts) ? o.shortcuts : []).map((s, i) => {
-      let u; try { u = new URL(toUrl(String(s.url || '')) || ''); } catch { return null; }
-      if (!/^https?:$/.test(u.protocol)) return null;
-      return { id: 'sc' + (i + 1), name: String(s.name || u.host).slice(0, 40), url: u.href };
-    }).filter(Boolean).slice(0, 12);
-    sendState();
-  });
-  ipcMain.on('pin-activate', (_e, { id, clientY } = {}) => {
-    const p = railPins.find((x) => x.id === id); if (!p) return;
-    const r = favFind(p.favId); if (!r) return;
-    if (r.node.type === 'link') navigateCurrent(r.node.url);
-    else railHover(id, 'pin', clientY); // clic sur un dossier = ouvre le flyout de ses liens
-  });
-  ipcMain.on('pin-context', (_e, id) => pinContextMenu(id));
-  // épingle / désépingle un favori (lien ou dossier) depuis le panneau de personnalisation
-  ipcMain.on('rail-pin-toggle', (_e, favId) => {
-    const r = favFind(favId); if (!r) return;
-    if (railPins.some((p) => p.favId === favId)) railPins = railPins.filter((p) => p.favId !== favId);
-    else railPins.push({ id: 'pin' + nextId++, kind: r.node.type === 'folder' ? 'favfolder' : 'fav', favId });
-    sendState();
-  });
-  ipcMain.on('peek-open-full', () => { const id = peekAppId; hidePeek(); if (id) activateApp(id); });
-  ipcMain.handle('gmail-feed', () => fetchGmailFeed());
-  ipcMain.on('gmail-open', (_e, link) => openGmailMessage(link));
-  ipcMain.handle('chat-feed', (_e, force) => fetchChatFeed(!!force));
-  ipcMain.on('chat-open', (_e, groupId) => openChat(groupId));
-  ipcMain.on('menu-ready', () => { if (menuWin && !menuWin.isDestroyed()) { menuWin.show(); menuWin.focus(); menuWin.webContents.send('menu-play'); } });
-  ipcMain.on('peek-ready', () => { if (peekWin && !peekWin.isDestroyed()) { peekWin.showInactive(); peekWin.webContents.send('peek-play'); } });
-  ipcMain.on('fly-ready', () => { if (flyWin && !flyWin.isDestroyed()) { flyWin.showInactive(); flyWin.webContents.send('fly-play'); } });
-  ipcMain.on('suggest-ready', () => { if (suggestWin && !suggestWin.isDestroyed()) { suggestWin.showInactive(); suggestWin.webContents.send('suggest-play'); } });
-  ipcMain.on('tip-show', (_e, d) => { const w = ensureTipWin(); syncTipBounds(); const send = () => { try { w.webContents.send('tip-show', { ...d, dark: nativeTheme.shouldUseDarkColors }); } catch {} }; if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send(); });
-  ipcMain.on('tip-hide', () => hideTip());
-  ipcMain.handle('omni-suggest', (_e, q) => ({ local: omniSuggest(q), isUrl: looksLikeUrl(q || '') }));
-  ipcMain.handle('omni-google', (_e, q) => googleSuggest(q));
-  ipcMain.on('suggest-show', (_e, { items, sel, rect, dark, q } = {}) => {
-    const w = ensureSuggestWin();
-    clearTimeout(suggestCloseTimer);
-    const b = win.getContentBounds();
-    const h = Math.min(420, 8 + (items ? items.length : 0) * 46 + 6);
-    w.setBounds({ x: Math.round(b.x + rect.x), y: Math.round(b.y + rect.y), width: Math.round(rect.w), height: Math.max(1, Math.round(h)) });
-    const fresh = !w.isVisible(); // déjà affiché : juste un re-rendu (frappe en cours), pas de rejeu de l'entrée
-    const send = () => { try { w.webContents.send('suggest-render', { items, sel, dark, q, fresh }); } catch {} };
-    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
-    if (!fresh) w.showInactive(); // sinon : on attend 'suggest-ready' avant de montrer la fenêtre
-  });
-  ipcMain.on('suggest-hide', () => hideSuggest());
-  ipcMain.on('suggest-hover', (_e, idx) => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('suggest-hover', idx); });
-  ipcMain.on('suggest-choose', (_e, idx) => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('suggest-choose', idx); });
-  ipcMain.on('md-copy', (_e, text) => clipboard.writeText(text || ''));
-  ipcMain.handle('md-download', async (_e, { filename, content } = {}) => {
-    const safe = (filename || 'page').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'page';
-    const res = await dialog.showSaveDialog(win, { title: 'Enregistrer en Markdown', defaultPath: path.join(app.getPath('downloads'), safe + '.md'), filters: [{ name: 'Markdown', extensions: ['md'] }] });
-    if (res.canceled || !res.filePath) return { canceled: true };
-    try { fs.writeFileSync(res.filePath, content || '', 'utf8'); return { ok: true, path: res.filePath }; } catch (e) { return { error: e.message }; }
-  });
-  ipcMain.on('find-open-req', () => showFind());
-  ipcMain.on('find-query', (_e, { text, forward = true, findNext = false } = {}) => {
-    const wc = visibleWC(); if (!wc || wc.isDestroyed()) return;
-    if (!text) { wc.stopFindInPage('clearSelection'); return; }
-    // NB : passer findNext:false explicitement empêche found-in-page de se déclencher au 1er appel.
-    // Nouvelle recherche → on omet findNext ; navigation suivant/précédent → findNext:true.
-    if (findNext) wc.findInPage(text, { forward, findNext: true });
-    else wc.findInPage(text, { forward });
-  });
-  ipcMain.on('find-close', () => { hideFind(); const wc = visibleWC(); if (wc) wc.focus(); });
-  ipcMain.handle('dl-list', () => downloads.map((d) => ({ ...d })));
-  ipcMain.on('dl-open', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d && d.state === 'completed') shell.openPath(d.savePath).catch(() => {}); });
-  ipcMain.on('dl-folder', (_e, id) => { const d = downloads.find((x) => x.id === id); if (d) shell.showItemInFolder(d.savePath); });
-  ipcMain.on('dl-cancel', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); });
-  ipcMain.on('dl-remove', (_e, id) => { const it = dlItems.get(id); if (it) it.cancel(); downloads = downloads.filter((x) => x.id !== id); dlItems.delete(id); sendDownloads(); });
-  ipcMain.on('dl-clear', () => { downloads = downloads.filter((d) => d.state === 'progressing' || d.state === 'paused'); sendDownloads(); });
-  ipcMain.on('menu-select', (_e, idx) => { hideMenu(); const fn = menuFns[idx]; menuFns = []; if (typeof fn === 'function') fn(); });
-  ipcMain.on('menu-close', () => hideMenu());
-  ipcMain.on('set-dev-mode', (_e, on) => setDevMode(on));
-  ipcMain.handle('browsing-data-stats', () => browsingDataStats());
-  ipcMain.handle('clear-browsing-data', (_e, opts) => clearBrowsingData(opts || {}));
-  // Détail par catégorie (voir / supprimer élément par élément)
-  ipcMain.handle('history-list', () => historyList());
-  ipcMain.handle('history-remove', (_e, key) => { delete history[key]; persist(); return historyList(); });
-  ipcMain.handle('perms-list', () => permsList());
-  ipcMain.handle('perms-remove', (_e, key) => { permGrants.delete(key); persist(); sendState(); return permsList(); });
-  ipcMain.handle('cookies-list', () => cookiesList());
-  ipcMain.handle('cookies-remove', (_e, domain) => cookiesRemoveDomain(domain));
-  ipcMain.handle('cache-size', () => session.defaultSession.getCacheSize().catch(() => 0));
-  ipcMain.handle('cache-clear', async () => { try { await session.defaultSession.clearCache(); await session.defaultSession.clearStorageData({ storages: ['cachestorage', 'shadercache'] }); } catch {} return session.defaultSession.getCacheSize().catch(() => 0); });
-  // Réglages généraux (démarrage, accueil, téléchargements, zoom, langues, autorisations par défaut)
-  ipcMain.handle('settings-get', () => ({
-    homepage, newTabUrl, startupMode,
-    downloadDir, downloadDirDefault: app.getPath('downloads'), askDownloadPath,
-    defaultZoom, spellcheckOn, spellLangs: [...spellLangs],
-    availLangs: (() => { try { return session.defaultSession.availableSpellCheckerLanguages || []; } catch { return []; } })(),
-    perm: { ...permDefaults },
-    version: app.getVersion(),
-    electron: process.versions.electron, chrome: process.versions.chrome, packaged: app.isPackaged, demo: DEMO,
-  }));
-  ipcMain.handle('settings-set', (_e, p = {}) => {
-    let langsChanged = false, zoomChanged = false;
-    if (typeof p.homepage === 'string' && p.homepage.trim()) homepage = toUrl(p.homepage) || homepage;
-    if (typeof p.newTabUrl === 'string') { const v = p.newTabUrl.trim(); newTabUrl = (v === '' || v === 'blank') ? v : (toUrl(v) || ''); }
-    if (p.startupMode === 'restore' || p.startupMode === 'home') startupMode = p.startupMode;
-    if (typeof p.downloadDir === 'string') downloadDir = p.downloadDir;
-    if (typeof p.askDownloadPath === 'boolean') askDownloadPath = p.askDownloadPath;
-    if (typeof p.defaultZoom === 'number' && p.defaultZoom > 0) { defaultZoom = p.defaultZoom; zoomChanged = true; }
-    if (typeof p.spellcheckOn === 'boolean') { spellcheckOn = p.spellcheckOn; langsChanged = true; }
-    if (Array.isArray(p.spellLangs)) { spellLangs = p.spellLangs.length ? p.spellLangs : ['fr']; langsChanged = true; }
-    if (p.perm && typeof p.perm === 'object') permDefaults = { ...permDefaults, ...p.perm };
-    if (langsChanged) applyLanguages();
-    if (zoomChanged) applyZoomToAll();
-    persist();
-    return true;
-  });
-  ipcMain.handle('pick-download-dir', async () => {
-    const res = await dialog.showOpenDialog(win, { title: 'Choisir le dossier de téléchargement', defaultPath: defaultDownloadDir(), properties: ['openDirectory', 'createDirectory'] });
-    if (!res.canceled && res.filePaths[0]) { downloadDir = res.filePaths[0]; persist(); }
-    return { dir: downloadDir, default: app.getPath('downloads') };
-  });
-  ipcMain.handle('zoom-list', () => Object.entries(zoomHosts).map(([host, factor]) => ({ host, factor })).sort((a, b) => a.host.localeCompare(b.host)));
-  ipcMain.handle('zoom-reset', (_e, host) => { delete zoomHosts[host]; for (const wc of allWebContents()) { try { if (hostOf(wc.getURL()) === host) applyZoom(wc); } catch {} } persist(); return true; });
-  ipcMain.handle('zoom-reset-all', () => { zoomHosts = {}; applyZoomToAll(); persist(); return true; });
-  ipcMain.on('set-search-engine', (_e, id) => { if (SEARCH_ENGINES.some((e) => e.id === id)) { searchEngine = id; sendState(); } });
-  ipcMain.on('dev-open', (_e, url) => { const dup = tabs.find((t) => sameTarget(url, t.url)); if (dup) activateTab(dup.id); else newTab({ url }); });
-  ipcMain.on('fav-toggle', () => { const t = current && current.kind === 'tab' ? tabById(current.id) : null; if (t) toggleFavoriteUrl(t.url, t.title, t.favicon); });
-  ipcMain.on('fav-add', (_e, o = {}) => addFavorite(o));
-  ipcMain.on('fav-folder', (_e, o = {}) => { const id = createFolder(o); setImmediate(() => { if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('rename-fav', id); }); });
-  ipcMain.on('fav-remove', (_e, id) => removeFavorite(id));
-  ipcMain.on('fav-rename', (_e, { id, title }) => renameFavorite(id, title));
-  ipcMain.on('fav-customize', (_e, { id, icon, color } = {}) => { const r = favFind(id); if (r && r.node.type === 'folder') { if (icon === null) delete r.node.icon; else if (icon !== undefined) r.node.icon = icon; if (color === null) delete r.node.color; else if (color !== undefined) r.node.color = color; sendState(); } });
-  ipcMain.on('fav-toggle-folder', (_e, id) => toggleFolder(id));
-  ipcMain.on('fav-open', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') navigateCurrent(r.node.url); });
-  ipcMain.on('fav-open-new', (_e, id) => { const r = favFind(id); if (r && r.node.type === 'link') newTab({ url: r.node.url }); });
-  ipcMain.on('fav-open-all', (_e, id) => openAllInFolder(id));
-  ipcMain.on('fav-move', (_e, o) => moveFavorite(o || {}));
-  ipcMain.on('fav-context', (_e, id) => favContextMenu(id));
-
-  ipcMain.on('app-activate', (_e, id) => activateApp(id));
-  ipcMain.on('app-context', (_e, id) => appContextMenu(id));
-  ipcMain.on('app-add', (_e, input) => {
-    const url = toUrl(input); if (!url) return;
-    const host = hostOf(url);
-    const name = host.split('.')[0].replace(/^\w/, (c) => c.toUpperCase());
-    apps.push({ id: 'app' + nextId++, name, url });
-    sendState();
-  });
-  ipcMain.on('app-remove', (_e, id) => removeApp(id));
-  // renomme / change l'adresse d'une appli du rail (la vue déjà chargée navigue vers la nouvelle adresse)
-  ipcMain.on('app-update', (_e, o) => {
-    const a = apps.find((x) => x.id === (o && o.id)); if (!a) return;
-    if (typeof o.name === 'string' && o.name.trim()) a.name = o.name.trim().slice(0, 24);
-    if (typeof o.url === 'string' && o.url.trim()) {
-      const u = toUrl(o.url);
-      let ok = false; try { ok = !!u && /^https?:$/.test(new URL(u).protocol); } catch {}
-      if (ok && u !== a.url) {
-        a.url = u;
-        const v = appViews.get(a.id);
-        if (v && !v.webContents.isDestroyed()) { try { v.webContents.loadURL(u); } catch {} }
-      }
-    }
-    sendState();
-  });
-  // réordonne les favoris épinglés : place id avant beforeId (ou en fin)
-  ipcMain.on('pin-move', (_e, o) => {
-    const i = railPins.findIndex((p) => p.id === (o && o.id)); if (i < 0) return;
-    const [p] = railPins.splice(i, 1);
-    const j = o.beforeId ? railPins.findIndex((x) => x.id === o.beforeId) : -1;
-    if (j < 0) railPins.push(p); else railPins.splice(j, 0, p);
-    sendState();
-  });
-  // réordonne le rail : place id avant beforeId (ou en fin si beforeId absent)
-  ipcMain.on('app-move', (_e, o) => {
-    const i = apps.findIndex((a) => a.id === (o && o.id)); if (i < 0) return;
-    const [a] = apps.splice(i, 1);
-    const j = o.beforeId ? apps.findIndex((x) => x.id === o.beforeId) : -1;
-    if (j < 0) apps.push(a); else apps.splice(j, 0, a);
-    sendState();
-  });
-  // ajout depuis le catalogue de suggestions (nom connu, URL vérifiée, pas de doublon par hôte)
-  ipcMain.on('app-add-preset', (_e, o) => {
-    if (!o || typeof o.url !== 'string') return;
-    let u; try { u = new URL(o.url); } catch { return; }
-    if (!/^https?:$/.test(u.protocol)) return;
-    if (apps.some((a) => hostOf(a.url) === u.host)) return;
-    const entry = { id: 'app' + nextId++, name: String(o.name || u.host).slice(0, 24), url: u.href };
-    if (typeof o.icon === 'string' && /^https:\/\//.test(o.icon)) entry.icon = o.icon; // icône explicite (ex. Jira : l'hôte de l'appli n'a pas de favicon)
-    apps.push(entry);
-    sendState();
-  });
-
-  ipcMain.on('sidebar-toggle', () => { sidebarOpen = !sidebarOpen; layout(); sendState(); });
-  // Redimensionnement de la liste : pendant le glisser on masque la page (vue native) pour garder la souris dans l'interface.
-  ipcMain.on('sidebar-resize-start', () => { if (contentView) contentView.setVisible(false); });
-  ipcMain.on('sidebar-resize', (_e, w) => { sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(w))); layout(); });
-  ipcMain.on('sidebar-resize-end', () => { if (contentView) contentView.setVisible(!overlayOpen); layout(); sendState(); });
-  ipcMain.on('overlay', (_e, open) => {
-    overlayOpen = !!open;
-    if (overlayOpen) hideLinkStatus();
-    if (contentView) contentView.setVisible(!overlayOpen);
-    if (splitView) splitView.setVisible(!overlayOpen);
-    if (overlayOpen) chrome.webContents.focus();
-    else { const wc = currentWC(); if (wc) wc.focus(); }
-    sendState();
-  });
-  // ---------- vue divisée ----------
-  ipcMain.on('split-open', (_e, mode) => openSplit(mode));
-  ipcMain.on('split-close', () => closeSplit());
-  // menu de choix de session (via l'overlay natif, au-dessus des pages web)
-  ipcMain.on('split-menu', () => popupMenu([
-    { label: 'Cookies partagés', click: () => openSplit('shared') },
-    { label: 'Navigation privée', click: () => openSplit('private') },
-  ]));
-  const withSplit = (fn) => () => { if (splitView && !splitView.webContents.isDestroyed()) fn(splitView.webContents); };
-  ipcMain.on('split-back', withSplit((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()));
-  ipcMain.on('split-forward', withSplit((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()));
-  ipcMain.on('split-reload', withSplit((wc) => (wc.isLoading() ? wc.stop() : wc.reload())));
-  ipcMain.on('split-navigate', (_e, input) => { const u = toUrl(input); if (u && splitView && !splitView.webContents.isDestroyed()) splitView.webContents.loadURL(u); });
-  ipcMain.on('split-resize-start', () => { if (contentView) contentView.setVisible(false); if (splitView) splitView.setVisible(false); });
-  ipcMain.on('split-resize', (_e, r) => { splitRatio = Math.min(0.8, Math.max(0.2, +r || 0.5)); layout(); });
-  ipcMain.on('split-resize-end', () => { const vis = !overlayOpen; if (contentView) contentView.setVisible(vis); if (splitView) splitView.setVisible(vis); layout(); sendState(); });
-
-  ipcMain.handle('search', (_e, q) => {
-    const s = (q || '').trim().toLowerCase();
-    const match = (t) => !s || (t.title || '').toLowerCase().includes(s) || (t.url || '').toLowerCase().includes(s);
-    const open = tabs.filter(match).map((t) => ({ kind: t.view ? 'open' : 'dormant', id: t.id, title: t.title, url: t.url, favicon: t.favicon, group: groupTitle(groupById(t.groupId)) }));
-    const arch = archive.map((a, index) => ({ ...a, index })).filter(match).slice(0, 20).map((a) => ({ kind: 'archive', index: a.index, title: a.title, url: a.url, favicon: a.favicon, closedAt: a.closedAt, group: a.groupTitle }));
-    const favItem = (n) => n.type === 'folder'
-      ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null }
-      : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon };
-    // sans recherche : favoris de premier niveau (navigables) ; avec recherche : tout l'arbre.
-    let favs = [];
-    if (!s) favs = favorites.map(favItem);
-    else favWalk(favorites, (n) => { if (n.type === 'folder' ? (n.title || '').toLowerCase().includes(s) : match(n)) favs.push(favItem(n)); });
-    favs = favs.slice(0, 40);
-    const openSet = new Set(tabs.map((t) => normalize(t.url)));
-    const hist = Object.values(history).filter((h) => match(h) && !openSet.has(normalize(h.url))).sort((a, b) => b.count - a.count).slice(0, 10).map((h) => ({ kind: 'history', title: h.title, url: h.url, count: h.count }));
-    return { open, favorites: favs, archive: arch, history: hist };
-  });
-  ipcMain.handle('archive-list', () => archive.slice(0, 300));
-  ipcMain.on('archive-restore', (_e, index) => { const a = archive[index]; if (!a) return; archive.splice(index, 1); newTab({ url: a.url }); });
-  ipcMain.on('archive-remove', (_e, index) => { archive.splice(index, 1); sendState(); });
-  ipcMain.on('auth-reply', (_e, r) => answerAuth(r));
-  ipcMain.on('display-choose', (_e, r) => { if (displayPick && r && r.id === displayPick.id) settleDisplayPick(r.cancel ? null : r); });
-  // Changelog affiché dans Réglages → À propos : même fichier que celui du dépôt (CHANGELOG.md)
-  ipcMain.handle('changelog-get', () => { try { return fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8'); } catch { return ''; } });
-  ipcMain.handle('default-browser-status', () => defaultBrowserStatus());
-  ipcMain.handle('default-browser-set', () => makeDefaultBrowser());
-  ipcMain.on('open-url', (_e, url) => navigateCurrent(url));
-  ipcMain.on('open-url-new', (_e, url) => { const u = toUrl(url); if (u) newTab({ url: u }); });
-
-  ipcMain.handle('pw-available', () => safeStorage.isEncryptionAvailable());
-  ipcMain.handle('pw-import', () => importPasswordsCsv());
-  ipcMain.handle('pw-list', () => passwords.map(({ password, ...p }) => ({ ...p, len: (password || '').length })));
-  ipcMain.handle('pw-reveal', (_e, id) => { const p = passwords.find((x) => x.id === id); return p ? p.password : null; });
-  ipcMain.on('pw-copy', (_e, id) => { const p = passwords.find((x) => x.id === id); if (!p) return; clipboard.writeText(p.password); setTimeout(async () => { try { if ((await clipboard.readText()) === p.password) clipboard.clear(); } catch {} }, 30000); });
-  ipcMain.on('pw-open', (_e, id) => { const p = passwords.find((x) => x.id === id); if (p && p.url) navigateCurrent(p.url); });
-  ipcMain.on('pw-delete', (_e, id) => { passwords = passwords.filter((p) => p.id !== id); persistPasswords(); });
-  ipcMain.on('pw-clear', () => { passwords = []; persistPasswords(); });
-
-  // ---------- Claude (tâches IA) ----------
-  ipcMain.on('claude-toggle', () => { claudeOpen = !claudeOpen; layout(); sendState(); persistClaudeTasks(); if (claudeOpen) sendClaudeTasks(); });
-  ipcMain.handle('claude-tasks', () => claudePublicTasks());
-  ipcMain.handle('claude-run', (_e, prompt) => startClaudeTask(prompt));
-  ipcMain.on('claude-cancel', (_e, id) => cancelClaudeTask(id));
-  ipcMain.on('claude-continue', (_e, o) => continueClaudeTask(o && o.id, o && o.prompt));
-  ipcMain.on('claude-remove', (_e, id) => {
-    const t = claudeTasks.find((x) => x.id === id);
-    if (t && t.status === 'running') cancelClaudeTask(id);
-    claudeTasks = claudeTasks.filter((x) => x.id !== id);
-    const g = groups.find((x) => x.claudeTaskId === id);
-    if (g) g.claudeTaskId = null; // l'îlot survit à sa tâche, mais n'y renvoie plus
-    sendClaudeTasks(); sendState();
-  });
-  ipcMain.on('claude-clear-done', () => { claudeTasks = claudeTasks.filter((t) => t.status === 'running'); sendClaudeTasks(); sendState(); });
-  ipcMain.on('claude-open-md', (_e, id) => { // ouvre le résultat dans la visionneuse Markdown existante (plein écran)
-    const t = claudeTasks.find((x) => x.id === id);
-    if (t && t.output && chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('export-md', { title: t.title, md: t.output });
-  });
-  // un lien cliqué dans le résultat s'ouvre dans l'îlot de la tâche (créé au premier lien)
-  ipcMain.on('claude-open-link', (_e, o) => {
-    const t = claudeTasks.find((x) => x.id === (o && o.id)); if (!t) return;
-    let u; try { u = new URL(o.url); } catch { return; }
-    if (!/^https?:$/.test(u.protocol)) return;
-    newTab({ url: u.href, groupId: claudeIsland(t).id });
-  });
-  // (ré)ouvre l'îlot de la tâche avec ses onglets (bloc nax-tabs, sinon liens du rapport)
-  ipcMain.on('claude-open-island', (_e, id) => {
-    const t = claudeTasks.find((x) => x.id === id); if (!t) return;
-    if (!t.tabs || !t.tabs.length) t.tabs = claudeTaskSources(t).map((url) => ({ url, title: '' }));
-    openClaudeIslandTabs(t, true);
-    sendClaudeTasks();
-  });
-  // retrouve l'îlot d'une tâche (active son onglet le plus récent)
-  ipcMain.on('claude-focus-island', (_e, id) => {
-    const g = claudeIslandOf(id); if (!g) return;
-    const members = tabs.filter((t) => t.groupId === g.id);
-    const mru = members.slice().sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0))[0];
-    if (mru) activateTab(mru.id);
-  });
-  // depuis l'îlot (badge ✦) → ouvre le panneau sur la tâche correspondante
-  ipcMain.on('claude-reveal-task', (_e, taskId) => {
-    if (!claudeOpen) { claudeOpen = true; layout(); }
-    sendState(); sendClaudeTasks();
-    if (chrome && !chrome.webContents.isDestroyed()) chrome.webContents.send('claude-reveal', taskId);
-  });
 }
 
 // ---------- démarrage ----------
@@ -2539,83 +2972,72 @@ function cleanUserAgent() {
 }
 
 // Couleurs des boutons système (réduire/agrandir/fermer) superposés, selon le thème.
-function overlayOptions() {
+// Couleurs des boutons système (réduire/agrandir/fermer) superposés, selon le thème (et la variante « fenêtre privée »).
+function overlayOptions(privateWin = false) {
   const dark = nativeTheme.shouldUseDarkColors;
-  return { color: dark ? '#0a0d14' : '#f4f6fa', symbolColor: dark ? '#e8edf5' : '#10141c', height: NAV - 2 }; // 2 px de moins que le header : la barre de chargement (#progress, en bas) passe sous les boutons système
+  return { color: chromeBg(privateWin), symbolColor: dark ? '#e8edf5' : '#10141c', height: NAV - 2 }; // 2 px de moins que le header : la barre de chargement (#progress, en bas) passe sous les boutons système
+}
+// Fond de la fenêtre pendant le chargement et sous les boutons système : suit --bg (et sa variante privée) de style.css.
+function chromeBg(privateWin) {
+  const dark = nativeTheme.shouldUseDarkColors;
+  if (privateWin) return dark ? '#110e1c' : '#f1edfb';
+  return dark ? '#0a0d14' : '#f4f6fa';
 }
 // Le thème pilote nativeTheme : Chromium force alors prefers-color-scheme partout
 // (interface + pages web), et le CSS bascule via sa media query, sans rechargement.
 function applyTheme() {
   nativeTheme.themeSource = theme; // 'system' | 'light' | 'dark'
-  if (win) {
-    win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0a0d14' : '#f4f6fa');
-    try { win.setTitleBarOverlay(overlayOptions()); } catch {}
-  }
+  for (const w of windows) w.applyTheme();
 }
 
-function createWindow() {
-  const currentTabId = load();
+// Ouvre une fenêtre (normale ou privée), en cascade par rapport à la fenêtre active ; url = premier onglet (sinon la page de nouvel onglet).
+function newWindow({ isPrivate = false, url = null } = {}) {
+  return makeWindow({ isPrivate, main: !isPrivate && !mainWin(), initialUrl: url, cascadeFrom: focusedWin() });
+}
+// Position/taille enregistrées : ignorées si elles ne tombent plus sur aucun écran (écran débranché).
+function fitBounds(b) {
+  if (!b || !(b.width > 200) || !(b.height > 200)) return null;
+  try {
+    const d = screen.getDisplayMatching(b).workArea;
+    if (b.x + b.width <= d.x + 40 || b.x >= d.x + d.width - 40 || b.y + b.height <= d.y + 40 || b.y >= d.y + d.height - 40) return null;
+  } catch { return null; }
+  return { x: b.x, y: b.y, width: b.width, height: b.height };
+}
+function housekeepingAll() { for (const w of windows) w.housekeeping(); persist(); }
+// Liste de raccourcis Windows (clic droit sur l'icône de la barre des tâches), comme Chrome et Edge.
+function setupJumpList() {
+  if (process.platform !== 'win32') return;
+  const base = app.isPackaged ? '' : `"${app.getAppPath()}" `; // en dev, l'exécutable est electron.exe : il lui faut le chemin de l'app
+  try {
+    app.setUserTasks([
+      { program: process.execPath, arguments: base + '--new-window', iconPath: process.execPath, iconIndex: 0, title: tr('Nouvelle fenêtre'), description: tr('Ouvrir une nouvelle fenêtre NaX') },
+      { program: process.execPath, arguments: base + '--private-window', iconPath: process.execPath, iconIndex: 0, title: tr('Nouvelle fenêtre privée'), description: tr('Ouvrir une fenêtre de navigation privée') },
+    ]);
+  } catch {}
+}
+
+function boot() {
+  const saved = load();
   loadPasswords();
   cleanUserAgent();
-  applyTheme();
-  win = new BaseWindow({
-    width: 1400, height: 880, minWidth: 700, minHeight: 400, title: 'NaX',
-    icon: path.join(__dirname, 'assets', 'icon.ico'),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0d14' : '#f4f6fa',
-    titleBarStyle: 'hidden',          // pas de barre de titre système : le haut de l'UI fait office de header
-    titleBarOverlay: overlayOptions(), // garde les boutons réduire/agrandir/fermer natifs en superposition
-  });
-  // l'option icon de BaseWindow n'alimente pas la barre des tâches Windows : on la pose explicitement
-  try { win.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.ico'))); } catch {}
-  chrome = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js') } });
-  win.contentView.addChildView(chrome);
-  layout();
-  win.on('resize', () => { layout(); hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); syncUpdateBounds(); });
-  win.on('move', () => { hidePeek(); hideMenu(); hideTip(); hideFind(); hideSuggest(); syncTipBounds(); syncUpdateBounds(); });
-  win.on('hide', () => { hidePeek(); hideMenu(); hideTip(); hideSuggest(); });
-  win.on('blur', () => hideTip());
-  win.on('close', () => { quitting = true; });
-  // Boutons latéraux de la souris (et touches Précédent/Suivant des claviers multimédia) : Windows les envoie
-  // à la fenêtre sous forme de commande d'application, que Chromium-sous-Electron ne traite pas lui-même.
-  win.on('app-command', (_e, cmd) => {
-    const wc = pageWCAtCursor();
-    if (!wc) return;
-    if (cmd === 'browser-backward' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
-    else if (cmd === 'browser-forward' && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
-    else if (cmd === 'browser-refresh') wc.reload();
-  });
-  lockUiContents(chrome.webContents);
-  chrome.webContents.loadFile(path.join(__dirname, 'ui', 'index.html'));
-  chrome.webContents.once('did-finish-load', () => {
-    if (startupMode === 'home') { tabs = []; groups = []; current = null; newTab(); }
-    else { const t = tabById(currentTabId) || tabs[0]; if (t) activateTab(t.id); else newTab(); }
-    if (devMode) setDevMode(true); // relance le scan si le mode dev était actif
-    setTimeout(pollGmail, 5000);          // pastille du compteur Gmail
-    setInterval(pollGmail, 3 * 60 * 1000);
-    ensureTipWin();                       // overlay des tooltips personnalisés
-    openLaunchTargets(process.argv);      // lien cliqué dans une autre appli alors que NaX était fermé
-  });
+  nativeTheme.themeSource = theme; // avant la 1re fenêtre : sa couleur de fond en dépend
   initHttpAuth();
   registerAsBrowser();
   applyLanguages(); // calcule Accept-Language avant la 1re requête
   configureSession(session.defaultSession);
   buildMenu();
-  registerIpc();
-  setInterval(housekeeping, 60 * 1000);
+  setupJumpList();
+  setInterval(housekeepingAll, 60 * 1000);
   initAutoUpdate();
-}
-
-// Page sous le curseur (vue divisée : le volet visé), sinon la page affichée ; rien si une modale couvre les pages.
-function pageWCAtCursor() {
-  if (!win || overlayOpen) return null;
-  const pt = screen.getCursorScreenPoint(), b = win.getContentBounds();
-  const x = pt.x - b.x, y = pt.y - b.y;
-  for (const v of [splitView, contentView]) {
-    if (!v) continue;
-    const r = v.getBounds();
-    if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) return wcOf(v);
-  }
-  return visibleWC();
+  const list = startupMode === 'home' || !saved.length ? [null] : saved;
+  const made = list.map((s, i) => makeWindow({ saved: s, main: i === 0 }));
+  made[0].ready.then(() => {
+    if (devMode) setDevMode(true); // relance le scan si le mode dev était actif
+    setTimeout(pollGmail, 5000);          // pastille du compteur Gmail
+    setInterval(pollGmail, 3 * 60 * 1000);
+    if (process.argv.includes('--private-window')) newWindow({ isPrivate: true }); // lancé depuis la liste de raccourcis de la barre des tâches
+    openLaunchTargets(process.argv);      // lien cliqué dans une autre appli alors que NaX était fermé
+  });
 }
 
 // ---------- navigateur par défaut ----------
@@ -2632,11 +3054,13 @@ function launchTargets(argv) {
   return out;
 }
 function openLaunchTargets(argv) {
-  if (!chrome || chrome.webContents.isDestroyed() || chrome.webContents.isLoading()) return;
-  for (const url of launchTargets(argv)) {
-    const open = tabs.find((t) => normalize(t.url) === normalize(url)); // déjà ouvert : on y va
-    if (open) activateTab(open.id); else newTab({ url });
-  }
+  const urls = launchTargets(argv);
+  if (!urls.length) return;
+  // une fenêtre normale (jamais privée : le lien vient d'une autre appli), sinon on en ouvre une
+  let w = focusedWin();
+  if (!w || w.isPrivate) w = windows.find((x) => !x.isPrivate && !x.isDestroyed()) || null;
+  if (!w) { w = newWindow({ url: urls[0] }); urls.shift(); } // le 1er lien est l'onglet initial de la nouvelle fenêtre
+  w.ready.then(() => { for (const url of urls) w.openOrActivate(url); w.focus(); }); // ready : l'interface est chargée
 }
 
 // Enregistrement auprès de Windows (HKCU, sans droits admin) : NaX apparaît dans Paramètres → Applications
@@ -2664,12 +3088,12 @@ async function registerAsBrowser({ force = false } = {}) {
   ];
   const lines = [
     'Windows Registry Editor Version 5.00', '',
-    ...progId(REG_URL_PROGID, 'Lien NaX', true),
-    ...progId(REG_FILE_PROGID, 'Document NaX'),
+    ...progId(REG_URL_PROGID, tr('Lien NaX'), true),
+    ...progId(REG_FILE_PROGID, tr('Document NaX')),
     `[${cap}]`, `@=${q(REG_APP)}`, '',
     `[${cap}\\DefaultIcon]`, `@=${q(icon)}`, '',
     `[${cap}\\shell\\open\\command]`, `@=${q(`"${exe}"`)}`, '',
-    `[${cap}\\Capabilities]`, `"ApplicationName"=${q(REG_APP)}`, `"ApplicationDescription"=${q('Navigateur NaX, pensé pour l’organisation')}`, `"ApplicationIcon"=${q(icon)}`, '',
+    `[${cap}\\Capabilities]`, `"ApplicationName"=${q(REG_APP)}`, `"ApplicationDescription"=${q(tr('Navigateur NaX, pensé pour l’organisation'))}`, `"ApplicationIcon"=${q(icon)}`, '',
     `[${cap}\\Capabilities\\StartMenu]`, `"StartMenuInternet"=${q(REG_APP)}`, '',
     `[${cap}\\Capabilities\\URLAssociations]`, `"http"=${q(REG_URL_PROGID)}`, `"https"=${q(REG_URL_PROGID)}`, '',
     `[${cap}\\Capabilities\\FileAssociations]`, ...REG_FILE_TYPES.map((x) => `"${x}"=${q(REG_FILE_PROGID)}`), '',
@@ -2701,28 +3125,33 @@ async function makeDefaultBrowser() {
 let updateWin = null, updateState = null;
 const UPDATE_W = 380, UPDATE_H = 170; // carte 348 px + marge de 16 px pour l'ombre
 function ensureUpdateWin() {
+  const mw = mainWin(); if (!mw) return null;
   if (updateWin && !updateWin.isDestroyed()) return updateWin;
   updateWin = new BrowserWindow({
     width: UPDATE_W, height: UPDATE_H, show: false, frame: false, transparent: true, resizable: false, movable: false,
-    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: win,
+    minimizable: false, maximizable: false, skipTaskbar: true, hasShadow: false, parent: mw.win,
     backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'update-preload.js') },
   });
   lockUiContents(updateWin.webContents);
-  updateWin.loadFile(path.join(__dirname, 'ui', 'update.html'));
+  updateWin.loadFile(path.join(__dirname, 'ui', 'update.html'), { query: { lang: uiLang } });
   return updateWin;
 }
 // coin inférieur droit de la fenêtre principale, par-dessus la page
 function syncUpdateBounds() {
-  if (!updateWin || updateWin.isDestroyed() || !win) return;
-  const b = win.getContentBounds();
+  const mw = mainWin();
+  if (!updateWin || updateWin.isDestroyed() || !mw) return;
+  const b = mw.win.getContentBounds();
   updateWin.setBounds({ x: b.x + b.width - UPDATE_W, y: b.y + b.height - UPDATE_H, width: UPDATE_W, height: UPDATE_H });
 }
 function setUpdateState(s) {
   updateState = s;
-  const w = ensureUpdateWin(); syncUpdateBounds();
+  const w = ensureUpdateWin(); if (!w) return; // aucune fenêtre principale : la bulle réapparaîtra avec la prochaine (promote)
+  syncUpdateBounds();
   const send = () => { try { w.webContents.send('update-state', s); } catch {} if (!w.isVisible()) w.showInactive(); };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
 }
+// la fenêtre principale se ferme : son calque meurt avec elle, on oublie la référence
+function destroyUpdateWin() { if (updateWin && !updateWin.isDestroyed()) { try { updateWin.destroy(); } catch {} } updateWin = null; }
 function hideUpdate() { updateState = null; if (updateWin && !updateWin.isDestroyed()) updateWin.hide(); }
 function initAutoUpdate() {
   if (!app.isPackaged) return;
@@ -2756,21 +3185,26 @@ function initAutoUpdate() {
 }
 
 // Une seule instance : deux NaX sur le même profil se réécrivent state.json l'un sur l'autre
-// (pertes d'applis du rail, de tâches Claude…). Un second lancement met la fenêtre existante au premier plan.
+// (pertes d'applis du rail, de tâches Claude…). Un second lancement met la fenêtre active au premier plan,
+// ou ouvre une fenêtre (liste de raccourcis de la barre des tâches : --new-window / --private-window).
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
-    if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    if (argv.includes('--private-window')) newWindow({ isPrivate: true });
+    else if (argv.includes('--new-window')) newWindow();
+    else { const w = focusedWin(); if (w) w.focus(); }
     openLaunchTargets(argv); // NaX déjà ouvert : le lien arrive par une 2e instance, qui s'arrête aussitôt
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(boot);
 }
 // Une exception non interceptée du processus principal ouvrait une boîte d'erreur bloquante. On la journalise
 // (userData/crash.log, à joindre à un retour de bug) et NaX continue de fonctionner.
-process.on('uncaughtException', (err) => {
+function logCrash(err) {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), new Date().toISOString() + ' v' + app.getVersion() + '\n' + (err && err.stack || err) + '\n\n'); } catch {}
-});
+}
+process.on('uncaughtException', logCrash);
+process.on('unhandledRejection', logCrash); // une erreur dans boot() (whenReady) ou un IPC async n'ouvrirait aucune fenêtre, sans trace
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   quitting = true;
@@ -2781,3 +3215,4 @@ app.on('before-quit', () => {
   clearTimeout(claudeSaveTimer);
   try { fs.writeFileSync(CLAUDE_FILE, JSON.stringify({ tasks: claudeTasks, nextId: claudeNextId, claudeOpen })); } catch {}
 });
+

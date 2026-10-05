@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>NaX</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="style.css">
+<script src="locales/languages.js"></script>
+<script src="i18n.js"></script>
 </head>
 <body>
 <!-- Sprite d'icônes (traits 1.75px, style Lucide) -->
@@ -41,12 +43,18 @@
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M14.5 5.5l4 4M4 20l4.5-1 9-9-4-4-9 9z"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M8 20H5a1 1 0 0 1-1-1v-3M16 20h3a1 1 0 0 1 1-1v-3"/></symbol>
   <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M12 4.5v15"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10.5l5-3v9l-5-3z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></symbol>
   <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 5.66 0l2-2a4 4 0 1 0-5.66-5.66l-1 1"/><path d="M14 11a4 4 0 0 0-5.66 0l-2 2a4 4 0 1 0 5.66 5.66l1-1"/></symbol>
   <symbol id="i-incognito" viewBox="0 0 24 24"><path d="M5 11l1.6-5.1A2 2 0 0 1 8.5 4.5h7a2 2 0 0 1 1.9 1.4L19 11"/><path d="M3 12h18"/><circle cx="7.5" cy="15.5" r="2.6"/><circle cx="16.5" cy="15.5" r="2.6"/><path d="M10.1 15.2a3 3 0 0 1 3.8 0"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 12v4M10 14h4"/></symbol>
   <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M6.5 14h.01M17 14h.01M10 14h4"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
   <symbol id="i-nax" viewBox="32 32 448 448">
     <!-- même monogramme que assets/icon.svg : N blanc, diagonale du X en accent -->
     <rect x="150" y="148" width="52" height="216" fill="#f4f6fa"/>
@@ -59,7 +67,7 @@
 <div id="root">
   <!-- Colonne 1 : applis permanentes -->
   <nav id="rail">
-    <div id="brand" title="NaX"><svg><use href="#i-nax"/></svg></div>
+    <div id="brand" role="button" tabindex="0" aria-haspopup="menu" title="Menu NaX"><svg><use href="#i-nax"/></svg></div>
     <span id="dev-pill" class="hidden" title="Version de développement (npm start)">DEV</span>
     <div id="apps"></div>
     <div id="rail-pins"></div>
@@ -71,7 +79,7 @@
     <div class="rail-bottom">
       <button id="app-add" class="rail-btn" title="Ajouter une appli"><svg><use href="#i-plus"/></svg></button>
       <button id="settings-btn" class="rail-btn" title="Paramètres"><svg><use href="#i-settings"/></svg></button>
-      <button id="sidebar-toggle" class="rail-btn" title="Afficher/masquer la liste (Ctrl+B)"><svg><use href="#i-panel"/></svg></button>
+      <button id="sidebar-toggle" class="rail-btn" data-kb="sidebar" title="Afficher/masquer la liste (Ctrl+B)"><svg><use href="#i-panel"/></svg></button>
     </div>
   </nav>
 
@@ -81,7 +89,7 @@
       <span class="side-title">Onglets</span>
       <div class="side-head-actions">
         <button id="tab-new-opts" class="icon-btn" title="Nouvel onglet avec choix de session"><svg><use href="#i-incognito"/></svg><svg class="caret"><use href="#i-chevron"/></svg></button>
-        <button id="tab-new" class="icon-btn" title="Nouvel onglet (Ctrl+T)"><svg><use href="#i-plus"/></svg></button>
+        <button id="tab-new" class="icon-btn" data-kb="new-tab" title="Nouvel onglet (Ctrl+T)"><svg><use href="#i-plus"/></svg></button>
       </div>
     </div>
     <div id="tabs"></div>
@@ -109,7 +117,7 @@
     </div>
     <div class="sidebar-bottom">
       <div class="sidebar-tools">
-        <button id="palette-btn" class="tool-btn" title="Rechercher (Ctrl+K)"><svg><use href="#i-search"/></svg></button>
+        <button id="palette-btn" class="tool-btn" data-kb="palette" title="Rechercher (Ctrl+K)"><svg><use href="#i-search"/></svg></button>
         <button id="archive-btn" class="tool-btn" title="Archive"><svg><use href="#i-archive"/></svg><span id="archive-count" class="badge"></span></button>
         <button id="downloads-btn" class="tool-btn" title="Téléchargements"><svg><use href="#i-download"/></svg><span id="dl-badge" class="badge"></span></button>
         <button id="history-btn" class="tool-btn" title="Historique"><svg><use href="#i-history"/></svg></button>
@@ -122,8 +130,8 @@
   <main id="main">
     <div id="navbar">
       <div class="nav-group">
-        <button id="back" class="nav-btn" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
-        <button id="forward" class="nav-btn" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
+        <button id="back" class="nav-btn" data-kb="back" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
+        <button id="forward" class="nav-btn" data-kb="forward" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
         <button id="reload" class="nav-btn" title="Recharger (Ctrl+R)"><svg><use href="#i-reload"/></svg></button>
       </div>
       <div id="omnibox">
@@ -134,9 +142,9 @@
         <kbd id="omni-hint" title="Rechercher">Ctrl K</kbd>
       </div>
       <span id="private-pill" class="hidden"><svg><use href="#i-incognito"/></svg><span>Privé</span></span>
-      <button id="claude-btn" class="nav-btn" title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
+      <button id="claude-btn" class="nav-btn" data-beta title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
       <button id="split-btn" class="nav-btn" title="Diviser la vue"><svg><use href="#i-split"/></svg></button>
-      <button id="home" class="nav-btn" title="Accueil (Google)"><svg><use href="#i-home"/></svg></button>
+      <button id="home" class="nav-btn" data-kb="home" title="Accueil (Alt+Début)"><svg><use href="#i-home"/></svg></button>
       <div id="progress"></div>
     </div>
     <div id="split-tb-right" class="split-tb hidden">
@@ -218,6 +226,8 @@
             <button class="settings-navitem" data-pane="languages"><svg><use href="#i-globe"/></svg><span>Langues</span></button>
             <button class="settings-navitem" data-pane="permissions"><svg><use href="#i-lock"/></svg><span>Autorisations</span></button>
             <button class="settings-navitem" data-pane="privacy"><svg><use href="#i-shield"/></svg><span>Données de navigation</span></button>
+            <button class="settings-navitem" data-pane="shortcuts"><svg><use href="#i-keyboard"/></svg><span>Raccourcis</span></button>
+            <button class="settings-navitem" data-pane="beta"><svg><use href="#i-spark"/></svg><span>Fonctionnalités bêta</span></button>
             <button class="settings-navitem" data-pane="dev"><svg><use href="#i-code"/></svg><span>Développeur</span></button>
             <button class="settings-navitem" data-pane="about"><svg><use href="#i-spark"/></svg><span>À propos</span></button>
           </nav>
@@ -288,6 +298,10 @@
             <section class="settings-pane hidden" data-pane="languages">
               <h2>Langues</h2>
               <div class="setting-row">
+                <div class="setting-label"><div class="setting-name">Langue du navigateur</div><div class="setting-desc muted">Langue des menus et des réglages de NaX.</div></div>
+                <div id="uilang-dd" class="dropdown"></div>
+              </div>
+              <div class="setting-row">
                 <div class="setting-label"><div class="setting-name">Correcteur orthographique</div><div class="setting-desc muted">Souligne les fautes dans les champs de texte.</div></div>
                 <label class="switch"><input id="spell-toggle" type="checkbox"><span class="track"></span></label>
               </div>
@@ -295,7 +309,6 @@
                 <div class="setting-label"><div class="setting-name">Langues préférées</div><div class="setting-desc muted">Utilisées par le correcteur et pour l'affichage des pages.</div></div>
                 <div id="lang-list" class="lang-list"></div>
               </div>
-              <div class="setting-desc muted" style="margin-top:14px">L'interface de NaX est en français.</div>
             </section>
 
             <section class="settings-pane hidden" data-pane="permissions">
@@ -340,6 +353,42 @@
                 <div><h2>Données de navigation</h2><div class="setting-desc muted">Ouvre une catégorie pour voir et supprimer élément par élément. Rien n'est envoyé ailleurs.</div></div>
               </div>
               <div id="bd-list" class="bd-list"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="beta">
+              <h2>Fonctionnalités bêta</h2>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <div class="setting-name">Activer les fonctionnalités bêta</div>
+                  <div class="setting-desc muted">Encore en rodage : elles peuvent changer ou mal se comporter. Coupées, elles sont masquées partout dans NaX.</div>
+                </div>
+                <label class="switch"><input id="beta-toggle" type="checkbox"><span class="track"></span></label>
+              </div>
+              <div class="beta-list">
+                <div class="beta-item">
+                  <span class="beta-ico"><svg><use href="#i-spark"/></svg></span>
+                  <div class="who">
+                    <div class="t">Panneau IA Claude <span class="beta-tag">Bêta</span></div>
+                    <div class="u muted">Confie une recherche à Claude : il explore le web en arrière-plan et ouvre un îlot avec les meilleures pages.</div>
+                    <div class="beta-req"><svg><use href="#i-key"/></svg><span>Nécessite Claude Code installé sur cette machine et un abonnement Claude actif (Pro ou Max).</span></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="shortcuts">
+              <div class="pane-head">
+                <div><h2>Raccourcis clavier</h2><div id="kb-desc" class="setting-desc muted">Tous les raccourcis de NaX. Ils agissent sur la fenêtre active.</div></div>
+                <div class="kb-actions">
+                  <button id="kb-reset-all" class="btn ghost hidden"><svg><use href="#i-undo"/></svg> Tout réinitialiser</button>
+                  <button id="kb-edit" class="btn"><svg><use href="#i-edit"/></svg> Modifier</button>
+                </div>
+              </div>
+              <div class="favm-search kb-search">
+                <svg class="lead"><use href="#i-search"/></svg>
+                <input id="kb-search" type="text" placeholder="Filtrer par action ou touche…" spellcheck="false" autocomplete="off">
+              </div>
+              <div id="kb-list" class="kb-list"></div>
             </section>
 
             <section class="settings-pane hidden" data-pane="dev">
@@ -406,14 +455,24 @@
           <div class="actions"><button type="button" id="auth-cancel">Annuler</button><button type="submit" class="primary">Se connecter</button></div>
         </form>
       </div>
+      <!-- Demande d'un site : autorisation (caméra, micro, position…) ou ouverture d'une autre application -->
+      <div id="perm-prompt" class="overlay hidden">
+        <div class="panel small glow">
+          <h2><svg class="h-ico"><use id="pp-ico" href="#i-shield"/></svg> <span id="pp-title">Autorisation</span></h2>
+          <p id="pp-msg"></p>
+          <p id="pp-detail" class="muted pp-detail hidden"></p>
+          <label id="pp-remember-row" class="dp-audio hidden"><input id="pp-remember" type="checkbox"> <span id="pp-remember-label"></span></label>
+          <div id="pp-actions" class="actions"></div>
+        </div>
+      </div>
       <div id="pw-guide" class="overlay hidden">
         <div class="panel small glow">
           <h2><svg class="h-ico"><use href="#i-shield"/></svg> Exporter depuis Chrome</h2>
           <p class="muted">Chrome ne laisse aucun logiciel lire ses mots de passe directement (sécurité anti-vol). L'export, autorisé par toi, est la voie propre.</p>
           <ol class="steps">
-            <li>Ouvre <code>chrome://password-manager/passwords</code> dans Chrome.</li>
+            <li>Ouvre <code data-no-i18n>chrome://password-manager/passwords</code> dans Chrome.</li>
             <li>Icône Paramètres, puis <b>Exporter les mots de passe</b>.</li>
-            <li>Chrome demande ton code Windows, puis enregistre un fichier <code>.csv</code>.</li>
+            <li>Chrome demande ton code Windows, puis enregistre un fichier .csv.</li>
             <li>Reviens ici et choisis ce fichier.</li>
           </ol>
           <p class="warn"><svg><use href="#i-shield"/></svg> Ce CSV est en clair. Supprime-le une fois l'import fait.</p>
@@ -514,11 +573,12 @@
   </main>
 
   <!-- Colonne 4 : tâches Claude (CLI Claude Code, abonnement) -->
-  <aside id="claude-panel">
+  <aside id="claude-panel" data-beta>
     <div class="cl-head">
       <button id="claude-close" class="icon-btn" title="Replier le panneau"><svg><use href="#i-forward"/></svg></button>
-      <div class="cl-title"><svg><use href="#i-spark"/></svg><span>Claude</span></div>
+      <div class="cl-title"><svg><use href="#i-spark"/></svg><span>Claude</span><span class="beta-tag" title="Fonctionnalité en bêta : elle peut changer ou mal se comporter">Bêta</span></div>
     </div>
+    <div class="cl-notice"><svg><use href="#i-key"/></svg><span>Nécessite <b>Claude Code</b> installé sur cette machine et connecté à un <b>abonnement Claude</b> actif (Pro ou Max).</span></div>
     <div class="cl-compose">
       <div class="cl-field">
         <textarea id="claude-prompt" rows="1" spellcheck="false" placeholder="Confie une recherche à Claude…"></textarea>

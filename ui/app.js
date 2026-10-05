@@ -40,9 +40,9 @@ function setText(node, text) { if (node.textContent !== text) node.textContent =
 function setSrc(img, src) { if (img.getAttribute('src') !== src) img.setAttribute('src', src); }
 function ago(ts) {
   const m = Math.round((Date.now() - ts) / 60000);
-  if (m < 1) return 'à l’instant'; if (m < 60) return `${m} min`;
-  const h = Math.round(m / 60); if (h < 24) return `${h} h`;
-  const d = Math.round(h / 24); return d === 1 ? 'hier' : `${d} j`;
+  if (m < 1) return tr('à l’instant'); if (m < 60) return tr('{m} min', { m });
+  const h = Math.round(m / 60); if (h < 24) return tr('{h} h', { h });
+  const d = Math.round(h / 24); return d === 1 ? tr('hier') : tr('{d} j', { d });
 }
 const isCurrent = (kind, id) => !!state.current && state.current.kind === kind && state.current.id === id;
 
@@ -75,6 +75,12 @@ function render() {
   if (!state) return;
   root.classList.toggle('collapsed', !state.sidebarOpen);
   if (!resizing && state.sidebarWidth) root.style.setProperty('--side-w', state.sidebarWidth + 'px');
+  // Genre de fenêtre : seule la principale porte le rail d'applis et Claude ; une fenêtre privée prend sa teinte propre.
+  const kind = state.winKind || 'main';
+  document.body.classList.toggle('win-main', kind === 'main');
+  document.body.classList.toggle('win-secondary', kind === 'secondary');
+  document.body.classList.toggle('win-private', kind === 'private');
+  document.querySelector('.side-title').dataset.privateLabel = tr('privé');
   renderApps(); renderRailPins(); renderTabs(); renderFavorites(); renderNav(); renderDevRail(); renderSplit(); renderClaudeChrome();
   // En vue divisée, chaque volet a son propre badge de session : pas de pastille globale (évite le double « Privé »).
   const showPill = !!state.navPrivate && !(state.split && state.split.active);
@@ -161,14 +167,14 @@ function favRow(n, depth, parentId, index) {
     titleEl.appendChild(inp);
     setTimeout(() => { inp.focus(); inp.select(); }, 0);
   } else {
-    setText(titleEl, n.title || (isFolder ? 'Dossier' : hostOf(n.url) || n.url));
+    setText(titleEl, n.title || (isFolder ? tr('Dossier') : hostOf(n.url) || n.url));
     titleEl.ondblclick = (e) => { e.stopPropagation(); renamingFav = n.id; renamingFavCtx = 'sidebar'; render(); };
   }
   row.appendChild(titleEl);
   if (isFolder) {
     row.appendChild(el('span', 'fav-count', String((n.children || []).length)));
     // Ouvre le dossier dans la vue agrandie (palette), même style que la recherche.
-    const openBtn = el('button', 'fav-open'); openBtn.title = 'Ouvrir le dossier en grand';
+    const openBtn = el('button', 'fav-open'); openBtn.title = tr('Ouvrir le dossier en grand');
     openBtn.appendChild(icon('i-expand'));
     openBtn.onclick = (e) => { e.stopPropagation(); openFolderInPalette(n.id); };
     row.appendChild(openBtn);
@@ -224,7 +230,7 @@ function renderRailPins() {
     },
     (b, p) => {
       b.dataset.pinId = p.id;
-      b.title = p.kind === 'favfolder' ? p.title + ' — ' + p.count + ' élément' + (p.count > 1 ? 's' : '') : p.title;
+      b.title = p.kind === 'favfolder' ? p.title + ' — ' + trn(p.count, '{n} élément', '{n} éléments') : p.title;
       const sig = [p.kind, p.icon, p.color, p.favicon, p.url, p.title].join('|');
       if (b.dataset.sig === sig) return; // rien n'a changé : on garde l'icône déjà chargée (pas de clignotement)
       b.dataset.sig = sig;
@@ -266,7 +272,7 @@ function createPairRow(u) {
   const lk = el('span', 'pair-link'); lk.appendChild(icon('i-link')); row.appendChild(lk);
   row.appendChild(pairTile(u.secondary.id));
   // une seule croix pour fermer les DEUX onglets de la paire
-  const x = el('button', 'pair-close'); x.title = 'Fermer les deux onglets'; x.appendChild(icon('i-close'));
+  const x = el('button', 'pair-close'); x.title = tr('Fermer les deux onglets'); x.appendChild(icon('i-close'));
   x.onclick = (e) => { e.stopPropagation(); api.tabClosePair(u.primary.id); };
   row.appendChild(x);
   // glisser la paire entière (déplacer / regrouper)
@@ -277,7 +283,7 @@ function pairTile(id) {
   const t = el('div', 'pair-tile'); t.dataset.id = id;
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); t.appendChild(ico);
   t.appendChild(el('span', 'title'));
-  const ses = el('span', 'tab-ses'); ses.title = 'Navigation privée'; ses.appendChild(icon('i-incognito')); t.appendChild(ses);
+  const ses = el('span', 'tab-ses'); ses.title = tr('Navigation privée'); ses.appendChild(icon('i-incognito')); t.appendChild(ses);
   t.onclick = () => { if (suppressClick) return; closeOverlay(); api.tabActivate(id); };
   t.oncontextmenu = (e) => { e.preventDefault(); api.tabContext(id); };
   return t;
@@ -305,7 +311,7 @@ function updatePairTile(tile, t, isActive) {
     if (!img) { img = el('img'); img.alt = ''; img.onerror = () => { img.remove(); if (!ico.querySelector('.dot')) ico.appendChild(el('span', 'dot')); }; ico.innerHTML = ''; ico.appendChild(img); }
     setSrc(img, src);
   } else if (!ico.querySelector('.dot')) { ico.innerHTML = ''; ico.appendChild(el('span', 'dot')); }
-  setText(tile.querySelector('.title'), t.title || hostOf(t.url) || 'Onglet');
+  setText(tile.querySelector('.title'), t.title || hostOf(t.url) || tr('Onglet'));
 }
 
 function createTabRow(t) {
@@ -314,8 +320,8 @@ function createTabRow(t) {
   const ico = el('span', 'ico'); ico.appendChild(el('span', 'dot')); row.appendChild(ico);
   row.appendChild(el('span', 'title'));
   row.appendChild(el('span', 'sub'));
-  const ses = el('span', 'tab-ses'); ses.title = 'Navigation privée'; ses.appendChild(icon('i-incognito')); row.appendChild(ses);
-  const x = el('button', 'x'); x.title = 'Fermer'; x.appendChild(icon('i-close'));
+  const ses = el('span', 'tab-ses'); ses.title = tr('Navigation privée'); ses.appendChild(icon('i-incognito')); row.appendChild(ses);
+  const x = el('button', 'x'); x.title = tr('Fermer'); x.appendChild(icon('i-close'));
   x.onclick = (e) => { e.stopPropagation(); api.tabClose(t.id); };
   row.appendChild(x);
   row.onclick = () => { if (suppressClick) return; closeOverlay(); api.tabActivate(t.id); };
@@ -344,7 +350,7 @@ function updateTabRow(row, t) {
     if (!img) { img = el('img'); img.alt = ''; img.onerror = () => { img.remove(); if (!ico.querySelector('.dot')) ico.appendChild(el('span', 'dot')); }; ico.innerHTML = ''; ico.appendChild(img); }
     setSrc(img, src);
   } else if (!ico.querySelector('.dot')) { ico.innerHTML = ''; ico.appendChild(el('span', 'dot')); }
-  setText(row.querySelector('.title'), t.title || hostOf(t.url) || 'Nouvel onglet');
+  setText(row.querySelector('.title'), t.title || hostOf(t.url) || tr('Nouvel onglet'));
   setText(row.querySelector('.sub'), t.dormant ? ago(t.lastActive) : '');
 }
 
@@ -376,7 +382,7 @@ function renderTabs() {
       }
       const head = gEl.querySelector('.group-title');
       head.style.display = multi ? '' : 'none';
-      if (multi) renderGroupHead(head, g, collapsed);
+      if (multi) renderGroupHead(head, g);
       // une paire divisée (primaire + secondaire) se rend en UNE ligne à deux tuiles côte à côte
       sync(gEl.querySelector('.group-tabs'), tabUnits(g.members), (u) => u.key, createUnit, updateUnit);
     });
@@ -386,7 +392,7 @@ function renderTabs() {
   if (wrap) { wrap.classList.add('empty'); const db = $('dormant'); if (db && db.children.length) db.innerHTML = ''; }
 }
 
-function renderGroupHead(head, g, collapsed) {
+function renderGroupHead(head, g) {
   const renaming = renamingGroup === g.id;
   if (head.dataset.mode !== (renaming ? 'edit' : 'view')) {
     head.innerHTML = ''; head.dataset.mode = renaming ? 'edit' : 'view';
@@ -409,38 +415,29 @@ function renderGroupHead(head, g, collapsed) {
       setTimeout(() => { inp.focus(); inp.select(); }, 0);
       return;
     }
-    const chev = el('button', 'g-chev'); chev.title = 'Réduire / déplier le groupe'; chev.appendChild(icon('i-forward'));
+    const chev = el('button', 'g-chev'); chev.title = tr('Réduire / déplier le groupe'); chev.appendChild(icon('i-forward'));
     chev.onclick = (e) => { e.stopPropagation(); if (!suppressClick) api.groupToggle(g.id); };
     head.appendChild(chev);
     if (g.claude) { // badge « ouvert par Claude » : renvoie à la tâche dans le panneau
-      const spark = el('button', 'g-claude'); spark.title = 'Îlot ouvert par Claude — voir la tâche';
+      const spark = el('button', 'g-claude'); spark.dataset.beta = ''; spark.title = tr('Îlot ouvert par Claude — voir la tâche');
       spark.appendChild(icon('i-spark'));
       spark.onclick = (e) => { e.stopPropagation(); const tid = head.dataset.ctask; if (tid) api.claudeRevealTask(+tid); };
       head.appendChild(spark);
     }
-    const name = el('span', 'name'); name.title = 'Clic pour réduire, double-clic pour renommer, glisser pour déplacer';
+    const name = el('span', 'name'); name.title = tr('Clic pour réduire, double-clic pour renommer, glisser pour déplacer');
     name.ondblclick = (e) => { e.stopPropagation(); renamingGroup = g.id; render(); };
     name.onclick = () => { if (!suppressClick) api.groupToggle(g.id); };
     head.appendChild(name);
-    head.appendChild(el('div', 'g-stack'));
     head.appendChild(el('span', 'n'));
-    const x = el('button', 'icon-btn'); x.title = 'Fermer le groupe'; x.appendChild(icon('i-close'));
+    const x = el('button', 'icon-btn'); x.title = tr('Fermer le groupe'); x.appendChild(icon('i-close'));
     x.onclick = (e) => { e.stopPropagation(); api.groupClose(g.id); }; head.appendChild(x);
     head.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.icon-btn') && !e.target.closest('.g-chev') && !e.target.closest('.g-claude') && head.dataset.mode === 'view') beginGroupDrag(e, g.id); });
   }
   if (!renaming) {
     head.dataset.ctask = g.claudeTaskId != null ? String(g.claudeTaskId) : '';
     const name = head.querySelector('.name');
-    setText(name, g.title || 'Groupe'); name.classList.toggle('custom', !!g.custom);
+    setText(name, g.title || tr('Groupe')); name.classList.toggle('custom', !!g.custom);
     setText(head.querySelector('.n'), String(g.members.length));
-    const stack = head.querySelector('.g-stack');
-    stack.innerHTML = '';
-    if (collapsed) {
-      g.members.slice(0, 4).forEach((t) => {
-        const src = favicon(t); if (!src) return;
-        const im = el('img'); im.src = src; im.alt = ''; im.onerror = () => im.remove(); stack.appendChild(im);
-      });
-    }
   }
 }
 
@@ -449,7 +446,7 @@ function renderNav() {
   $('back').disabled = !n.canGoBack;
   $('forward').disabled = !n.canGoForward;
   $('reload').querySelector('use').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
-  $('reload').title = n.loading ? 'Arrêter' : 'Recharger (Ctrl+R)';
+  $('reload').title = n.loading ? tr('Arrêter') : tr('Recharger') + kbHint('reload');
   navbar.classList.toggle('loading', !!n.loading);
   const isHome = n.url === HOME || /\/ui\/home\.html$/.test(n.url || ''); // page d'accueil NaX : barre vide, comme un nouvel onglet
   omnibox.classList.toggle('secure', !isHome && n.url.startsWith('https://'));
@@ -462,7 +459,7 @@ function renderNav() {
   const onTab = !!(state.current && state.current.kind === 'tab');
   star.disabled = !onTab;
   star.classList.toggle('active', !!state.favActive);
-  star.title = state.favActive ? 'Retirer des favoris (Ctrl+D)' : 'Ajouter aux favoris (Ctrl+D)';
+  star.title = (state.favActive ? tr('Retirer des favoris') : tr('Ajouter aux favoris')) + kbHint('favorite');
 }
 
 // ---------- barre de nav ----------
@@ -492,11 +489,11 @@ function openFavCustom(id) {
 }
 function updateFcPreview() {
   const p = $('fc-prev'); p.innerHTML = ''; p.appendChild(fcIcon ? lucideSvg(fcIcon) : icon('i-folder')); p.style.color = fcColor || 'var(--gold)';
-  const f = favFindC(fcTarget); setText($('fc-prev-name'), f ? (f.node.title || 'Dossier') : '');
+  const f = favFindC(fcTarget); setText($('fc-prev-name'), f ? (f.node.title || tr('Dossier')) : '');
 }
 function renderFcColors() {
   const box = $('fc-colors'); box.innerHTML = '';
-  const mk = (c) => { const b = el('button', 'fc-color' + (((c === fcColor) || (!c && !fcColor)) ? ' sel' : '')); b.style.background = c || 'var(--gold)'; b.title = c || 'Défaut'; b.onclick = () => { fcColor = c; renderFcColors(); updateFcPreview(); }; return b; };
+  const mk = (c) => { const b = el('button', 'fc-color' + (((c === fcColor) || (!c && !fcColor)) ? ' sel' : '')); b.style.background = c || 'var(--gold)'; b.title = c || tr('Défaut'); b.onclick = () => { fcColor = c; renderFcColors(); updateFcPreview(); }; return b; };
   box.appendChild(mk(null));
   FC_COLORS.forEach((c) => box.appendChild(mk(c)));
 }
@@ -538,7 +535,7 @@ function fcWords(name) {
 }
 // Une icône correspond si chaque mot de la requête se retrouve (lui-même ou via un synonyme) dans son nom ou dans les mots-clés de sa catégorie
 function fcMatch(name, cat, terms) {
-  const words = fcWords(name), catWords = FC_NORM(cat.label + ' ' + cat.kw);
+  const words = fcWords(name), catWords = FC_NORM(cat.label + ' ' + tr(cat.label) + ' ' + cat.kw);
   return terms.every((t) => {
     const cands = [t].concat(FC_SYN[t] || []);
     return cands.some((c) => words.includes(c)) || catWords.includes(t);
@@ -553,16 +550,16 @@ function renderFcIcons(q) {
   const box = $('fc-icons'); box.innerHTML = ''; box.scrollTop = 0;
   const lib = window.lucide && window.lucide.icons;
   // option « dossier par défaut »
-  const def = el('button', 'fc-icon' + (!fcIcon ? ' sel' : '')); def.title = 'Dossier (par défaut)'; def.appendChild(icon('i-folder'));
+  const def = el('button', 'fc-icon' + (!fcIcon ? ' sel' : '')); def.title = tr('Dossier (par défaut)'); def.appendChild(icon('i-folder'));
   def.onclick = () => fcSelect(null); box.appendChild(def);
-  if (!lib) { box.appendChild(el('div', 'muted', 'Bibliothèque d’icônes indisponible.')); return; }
+  if (!lib) { box.appendChild(el('div', 'muted', tr('Bibliothèque d’icônes indisponible.'))); return; }
   const terms = FC_NORM(q).split(/\s+/).filter(Boolean);
   const frag = document.createDocumentFragment();
   let count = 0;
   for (const cat of FC_CATS) {
     const names = cat.icons.filter((n) => lib[n] && (!terms.length || fcMatch(n, cat, terms)));
     if (!names.length) continue;
-    frag.appendChild(el('div', 'fc-sec', cat.label));
+    frag.appendChild(el('div', 'fc-sec', tr(cat.label)));
     for (const name of names) {
       const b = el('button', 'fc-icon' + (name === fcIcon ? ' sel' : '')); b.title = name; b.dataset.icon = name;
       b.appendChild(lucideSvg(name));
@@ -570,7 +567,7 @@ function renderFcIcons(q) {
       frag.appendChild(b); count++;
     }
   }
-  if (!count) frag.appendChild(el('div', 'fc-empty muted', 'Aucune icône ne correspond.'));
+  if (!count) frag.appendChild(el('div', 'fc-empty muted', tr('Aucune icône ne correspond.')));
   box.appendChild(frag);
   // ramener l'icône sélectionnée dans la zone visible
   const sel = box.querySelector('.fc-icon.sel[data-icon]'); if (sel) sel.scrollIntoView({ block: 'center' });
@@ -588,11 +585,11 @@ let lastLocal = [], lastIsUrl = false, gTimer = null; const gCache = {};
 
 function omniRect() { const r = omnibox.getBoundingClientRect(); return { x: r.left, y: r.bottom + 4, w: r.width }; }
 function toDisplay(it) {
-  if (it.kind === 'tab') return { kind: 'tab', title: it.title || hostOf(it.url), secondary: stripScheme(it.url), tag: 'Onglet', url: it.url, favicon: it.favicon };
-  if (it.kind === 'favorite') return { kind: 'favorite', title: it.title || stripScheme(it.url), secondary: stripScheme(it.url), tag: 'Favori', url: it.url, favicon: it.favicon };
+  if (it.kind === 'tab') return { kind: 'tab', title: it.title || hostOf(it.url), secondary: stripScheme(it.url), tag: tr('Onglet'), url: it.url, favicon: it.favicon };
+  if (it.kind === 'favorite') return { kind: 'favorite', title: it.title || stripScheme(it.url), secondary: stripScheme(it.url), tag: tr('Favori'), url: it.url, favicon: it.favicon };
   if (it.kind === 'history') return { kind: 'history', title: it.title || stripScheme(it.url), secondary: stripScheme(it.url), url: it.url };
-  if (it.kind === 'url') return { kind: 'url', title: stripScheme(it.url), secondary: 'Ouvrir le site', url: it.url };
-  return { kind: 'search', title: it.query, secondary: 'Rechercher sur ' + engineName() };
+  if (it.kind === 'url') return { kind: 'url', title: stripScheme(it.url), secondary: tr('Ouvrir le site'), url: it.url };
+  return { kind: 'search', title: it.query, secondary: tr('Rechercher sur {engine}', { engine: engineName() }) };
 }
 function engineName() { const es = (state && state.searchEngines) || []; const e = es.find((x) => x.id === (state && state.searchEngine)); return e ? e.name : 'Google'; }
 function renderSuggest() {
@@ -676,6 +673,10 @@ api.onSuggestChoose((idx) => { if (omniItems[idx]) commitOmni(omniItems[idx], fa
 
 $('tab-new').onclick = () => { closeOverlay(); api.tabNew(); };
 $('tab-new-opts').onclick = () => { closeOverlay(); api.newtabMenu(); };
+// Logo NaX = menu de l'application (clic gauche ou droit, Entrée/Espace au clavier)
+$('brand').onclick = () => api.brandMenu();
+$('brand').oncontextmenu = (e) => { e.preventDefault(); api.brandMenu(); };
+$('brand').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); api.brandMenu(); } };
 // Type de session d'un onglet d'après sa partition.
 function sessionKind(t) {
   const p = t && t.partition ? String(t.partition) : '';
@@ -910,7 +911,7 @@ function paintFavPlan(plan) {
 
 // ---------- redimensionnement de la liste ----------
 let resizing = false;
-const RAIL_W = 60, SIDE_MIN = 180, SIDE_MAX = 520;
+const RAIL_W = 60, SIDE_MIN = 150, SIDE_MAX = 520;
 $('resizer').addEventListener('mousedown', (e) => {
   e.preventDefault();
   resizing = true; document.body.classList.add('resizing');
@@ -950,7 +951,7 @@ function renderSplit() {
   if (document.activeElement !== spUrl) spUrl.value = n.url || '';
   const badge = $('sp-badge');
   const priv = state.split.mode === 'private';
-  setText(badge, priv ? 'Privé' : 'Partagé');
+  setText(badge, priv ? tr('Privé') : tr('Partagé'));
   badge.classList.toggle('private', priv);
 }
 $('sp-back').onclick = () => api.splitBack();
@@ -991,6 +992,7 @@ function showOverlay(id, opts) {
   const over = !!(opts && opts.over) && !!openOverlay && openOverlay !== id;
   if (openOverlay === 'auth' && id !== 'auth') settleAuth(null); // un autre panneau remplace la demande : annulée
   if (openOverlay === 'display-pick' && id !== 'display-pick') settleDisplay(null);
+  if (openOverlay === 'perm-prompt' && id !== 'perm-prompt') settlePerm(null);
   if (openOverlay) { clearTimeout(overlayCloseTimer); $(openOverlay).classList.remove('closing'); $(openOverlay).classList.add('hidden'); }
   overlayParent = over ? openOverlay : null;
   openOverlay = id; $(id).classList.remove('hidden'); api.overlay(true);
@@ -1002,6 +1004,8 @@ function closeOverlay() {
   if (node.classList.contains('closing')) return; // fermeture déjà en cours
   if (id === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
   if (id === 'display-pick') settleDisplay(null);
+  if (id === 'perm-prompt') settlePerm(null);
+  if (id === 'settings') { stopKbCapture(); kbEditing = false; }
   node.classList.add('closing');
   clearTimeout(overlayCloseTimer);
   overlayCloseTimer = setTimeout(() => {
@@ -1036,7 +1040,7 @@ function renderFolder() {
   const bi = el('span', 'res-back-ico');
   if (root) bi.appendChild(icon('i-star')); else setFolderIcon(bi, node);
   back.appendChild(bi);
-  back.appendChild(el('span', 'res-back-t', root ? 'Favoris' : (node.title || 'Dossier')));
+  back.appendChild(el('span', 'res-back-t', root ? tr('Favoris') : (node.title || tr('Dossier'))));
   back.onclick = () => { pFolder = null; pInput.value = ''; runSearch(); };
   pRes.appendChild(back);
   const q = pInput.value.trim().toLowerCase();
@@ -1046,17 +1050,17 @@ function renderFolder() {
   else (function walk(ns, path) {
     for (const n of ns) {
       if ((n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q)) kids.push({ n, path });
-      if (n.children) walk(n.children, path ? path + ' › ' + (n.title || 'Dossier') : (n.title || 'Dossier'));
+      if (n.children) walk(n.children, path ? path + ' › ' + (n.title || tr('Dossier')) : (n.title || tr('Dossier')));
     }
   })(kidsAll, '');
-  pRes.appendChild(el('div', 'res-section', q ? 'Résultats' : (root ? 'Tous les favoris' : 'Contenu du dossier')));
+  pRes.appendChild(el('div', 'res-section', q ? tr('Résultats') : (root ? tr('Tous les favoris') : tr('Contenu du dossier'))));
   for (const { n, path } of kids) {
     const it = n.type === 'folder'
       ? { kind: 'favorite', type: 'folder', id: n.id, title: n.title, count: (n.children || []).length, icon: n.icon || null, color: n.color || null, path }
       : { kind: 'favorite', type: 'link', id: n.id, title: n.title, url: n.url, favicon: n.favicon, path };
     pItems.push(it); pRes.appendChild(resRow(it, pItems.length - 1));
   }
-  if (!kids.length) pRes.appendChild(el('div', 'empty-msg', q ? 'Rien ne correspond.' : 'Dossier vide.'));
+  if (!kids.length) pRes.appendChild(el('div', 'empty-msg', q ? tr('Rien ne correspond.') : tr('Dossier vide.')));
   pSel = 0; markSel();
 }
 async function runSearch() {
@@ -1070,12 +1074,12 @@ async function runSearch() {
     pRes.appendChild(el('div', 'res-section', label));
     for (const it of items) { pItems.push(it); pRes.appendChild(resRow(it, pItems.length - 1)); }
   };
-  section('Ouverts', r.open.filter((x) => x.kind === 'open'));
-  section('Favoris', r.favorites || []);
-  section('En veille', r.open.filter((x) => x.kind === 'dormant'));
-  section('Archive', r.archive);
-  section('Historique', r.history);
-  if (q.trim() && !pItems.length) pRes.appendChild(el('div', 'empty-msg', 'Rien ici. Entrée pour chercher sur Google.'));
+  section(tr('Ouverts'), r.open.filter((x) => x.kind === 'open'));
+  section(tr('Favoris'), r.favorites || []);
+  section(tr('En veille'), r.open.filter((x) => x.kind === 'dormant'));
+  section(tr('Archive'), r.archive);
+  section(tr('Historique'), r.history);
+  if (q.trim() && !pItems.length) pRes.appendChild(el('div', 'empty-msg', tr('Rien ici. Entrée pour chercher sur Google.')));
   pSel = 0; markSel();
 }
 function resRow(it, i) {
@@ -1084,10 +1088,10 @@ function resRow(it, i) {
   if (isFolder) { const ic = el('span', 'res-folder'); setFolderIcon(ic, { icon: it.icon, color: it.color }); row.appendChild(ic); }
   else { const img = el('img'); img.src = it.favicon || `https://www.google.com/s2/favicons?domain=${hostOf(it.url)}&sz=32`; img.alt = ''; row.appendChild(img); }
   const t = el('div', 't');
-  t.appendChild(el('div', 'title', it.title || it.url || 'Dossier'));
-  t.appendChild(el('div', 'url', isFolder ? (it.count ? it.count + (it.count > 1 ? ' éléments' : ' élément') : 'Dossier vide') : it.url));
+  t.appendChild(el('div', 'title', it.title || it.url || tr('Dossier')));
+  t.appendChild(el('div', 'url', isFolder ? (it.count ? trn(it.count, '{n} élément', '{n} éléments') : tr('Dossier vide')) : it.url));
   row.appendChild(t);
-  const tag = isFolder ? (it.path || 'dossier') : it.kind === 'open' ? (it.group || '') : it.kind === 'dormant' ? 'en veille' : it.kind === 'favorite' ? (it.path || 'favori') : it.kind === 'archive' ? `fermé ${ago(it.closedAt)}` : `${it.count}×`;
+  const tag = isFolder ? (it.path || tr('dossier')) : it.kind === 'open' ? (it.group || '') : it.kind === 'dormant' ? tr('en veille') : it.kind === 'favorite' ? (it.path || tr('favori')) : it.kind === 'archive' ? tr('fermé {ago}', { ago: ago(it.closedAt) }) : `${it.count}×`;
   if (tag) row.appendChild(el('span', 'tag' + (it.kind === 'dormant' ? ' dormant' : '') + (isFolder ? ' folder' : ''), tag));
   if (isFolder) row.appendChild(icon('i-forward', 'res-chev'));
   row.onclick = (e) => choose(it, e.ctrlKey);
@@ -1125,16 +1129,16 @@ $('archive-btn').onclick = async () => {
   showOverlay('archive');
   const list = await api.archiveList();
   const box = $('archive-list'); box.innerHTML = '';
-  if (!list.length) { box.appendChild(el('div', 'empty-msg', 'Aucune page archivée pour le moment. Les onglets fermés ou trop vieux arrivent ici.')); return; }
+  if (!list.length) { box.appendChild(el('div', 'empty-msg', tr('Aucune page archivée pour le moment. Les onglets fermés ou trop vieux arrivent ici.'))); return; }
   let lastDay = '';
   list.forEach((a, index) => {
-    const day = new Date(a.closedAt).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+    const day = new Date(a.closedAt).toLocaleDateString(I18N.locale, { weekday: 'long', day: 'numeric', month: 'long' });
     if (day !== lastDay) { box.appendChild(el('div', 'day', day)); lastDay = day; }
     const row = el('div', 'res'); row.style.setProperty('--i', Math.min(index, 14));
     const img = el('img'); img.src = a.favicon || `https://www.google.com/s2/favicons?domain=${hostOf(a.url)}&sz=32`; img.alt = ''; row.appendChild(img);
     const t = el('div', 't'); t.appendChild(el('div', 'title', a.title || a.url)); t.appendChild(el('div', 'url', a.url)); row.appendChild(t);
     if (a.groupTitle) row.appendChild(el('span', 'tag', a.groupTitle));
-    const rm = el('button', 'rm'); rm.title = 'Oublier définitivement'; rm.appendChild(icon('i-close'));
+    const rm = el('button', 'rm'); rm.title = tr('Oublier définitivement'); rm.appendChild(icon('i-close'));
     rm.onclick = (e) => { e.stopPropagation(); api.archiveRemove(index); row.remove(); };
     row.appendChild(rm);
     row.onclick = () => { closeOverlay(); api.archiveRestore(index); };
@@ -1149,16 +1153,16 @@ function renderHistory() {
   const box = $('history-list'); box.innerHTML = '';
   const q = $('history-search').value.trim().toLowerCase();
   const items = q ? histItems.filter((h) => ((h.title || '') + ' ' + h.url).toLowerCase().includes(q)) : histItems;
-  if (!items.length) { box.appendChild(el('div', 'empty-msg', q ? 'Aucune page ne correspond.' : 'Aucune page visitée pour le moment.')); return; }
+  if (!items.length) { box.appendChild(el('div', 'empty-msg', q ? tr('Aucune page ne correspond.') : tr('Aucune page visitée pour le moment.'))); return; }
   let lastDay = '';
   items.forEach((h, index) => {
-    const day = h.last ? new Date(h.last).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) : 'Plus ancien';
+    const day = h.last ? new Date(h.last).toLocaleDateString(I18N.locale, { weekday: 'long', day: 'numeric', month: 'long' }) : tr('Plus ancien');
     if (day !== lastDay) { box.appendChild(el('div', 'day', day)); lastDay = day; }
     const row = el('div', 'res'); row.style.setProperty('--i', Math.min(index, 14));
     const img = el('img'); img.src = `https://www.google.com/s2/favicons?domain=${hostOf(h.url)}&sz=32`; img.alt = ''; row.appendChild(img);
     const t = el('div', 't'); t.appendChild(el('div', 'title', h.title || stripScheme(h.url))); t.appendChild(el('div', 'url', stripScheme(h.url))); row.appendChild(t);
-    if (h.last) row.appendChild(el('span', 'meta', new Date(h.last).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })));
-    const rm = el('button', 'rm'); rm.title = 'Supprimer de l’historique'; rm.appendChild(icon('i-close'));
+    if (h.last) row.appendChild(el('span', 'meta', new Date(h.last).toLocaleTimeString(I18N.locale, { hour: '2-digit', minute: '2-digit' })));
+    const rm = el('button', 'rm'); rm.title = tr('Supprimer de l’historique'); rm.appendChild(icon('i-close'));
     rm.onclick = (e) => { e.stopPropagation(); api.historyRemove(h.key); histItems = histItems.filter((x) => x.key !== h.key); row.remove(); };
     row.appendChild(rm);
     row.onclick = () => { closeOverlay(); api.openUrl(h.url); };
@@ -1258,13 +1262,13 @@ function reRow(kind, it, list) {
   row.appendChild(ico);
   row.appendChild(el('span', 're-name', kind === 'app' ? it.name : it.title));
   const nsc = kind === 'app' ? (it.shortcuts || []).length : 0;
-  if (nsc) { const m = el('span', 're-meta has'); m.title = nsc + ' raccourci' + (nsc > 1 ? 's' : '') + ' au survol'; m.appendChild(icon('i-spark')); m.appendChild(document.createTextNode(String(nsc))); row.appendChild(m); }
-  else if (kind === 'pin' && it.kind === 'favfolder') row.appendChild(el('span', 're-meta', it.count + ' élément' + (it.count > 1 ? 's' : '')));
-  const x = el('button', 're-x'); x.title = 'Retirer du rail'; x.appendChild(icon('i-trash'));
+  if (nsc) { const m = el('span', 're-meta has'); m.title = trn(nsc, '{n} raccourci au survol', '{n} raccourcis au survol'); m.appendChild(icon('i-spark')); m.appendChild(document.createTextNode(String(nsc))); row.appendChild(m); }
+  else if (kind === 'pin' && it.kind === 'favfolder') row.appendChild(el('span', 're-meta', trn(it.count, '{n} élément', '{n} éléments')));
+  const x = el('button', 're-x'); x.title = tr('Retirer du rail'); x.appendChild(icon('i-trash'));
   x.onclick = (e) => {
     e.stopPropagation();
     if (kind === 'app') api.appRemove(it.id); else api.railPinToggle(it.favId);
-    toast((kind === 'app' ? it.name : it.title) + ' retiré du rail');
+    toast(tr('{name} retiré du rail', { name: kind === 'app' ? it.name : it.title }));
   };
   row.appendChild(x);
   row.onclick = () => { reSel = { kind, id: it.id }; renderRailEditor(true); };
@@ -1299,11 +1303,11 @@ function renderReList() {
   const fresh = reKnown ? [...ids].filter((id) => !reKnown.has(id)) : [];
   reKnown = ids;
   box.textContent = '';
-  box.appendChild(reSec('Applis', apps.length));
-  if (!apps.length) box.appendChild(el('div', 're-hint', 'Aucune appli. Ajoute-en avec le bouton ci-dessous.'));
+  box.appendChild(reSec(tr('Applis'), apps.length));
+  if (!apps.length) box.appendChild(el('div', 're-hint', tr('Aucune appli. Ajoute-en avec le bouton ci-dessous.')));
   for (const a of apps) box.appendChild(reRow('app', a, apps));
-  box.appendChild(reSec('Favoris épinglés', pins.length));
-  if (!pins.length) box.appendChild(el('div', 're-hint', 'Épingle un favori ou un dossier depuis « Ajouter » : il apparaît sous tes applis.'));
+  box.appendChild(reSec(tr('Favoris épinglés'), pins.length));
+  if (!pins.length) box.appendChild(el('div', 're-hint', tr('Épingle un favori ou un dossier depuis « Ajouter » : il apparaît sous tes applis.')));
   for (const p of pins) box.appendChild(reRow('pin', p, pins));
   box.scrollTop = top;
   // nouvelle ligne : on la montre et elle clignote une fois
@@ -1318,10 +1322,10 @@ function renderReList() {
 // ---- colonne de droite : fiche de la sélection, ou ajout ----
 function scRow(name, url) {
   const row = el('div', 'sc-row');
-  const n = el('input', 'sc-name re-input'); n.placeholder = 'Nom'; n.value = name; n.spellcheck = false;
+  const n = el('input', 'sc-name re-input'); n.placeholder = tr('Nom'); n.value = name; n.spellcheck = false;
   const u = el('input', 'sc-url re-input'); u.placeholder = 'https://…'; u.value = url; u.spellcheck = false;
   [n, u].forEach((i) => { i.addEventListener('keydown', (e) => e.stopPropagation()); i.addEventListener('input', reSaveShortcuts); });
-  const x = el('button', 'icon-btn'); x.title = 'Supprimer ce raccourci'; x.appendChild(icon('i-trash'));
+  const x = el('button', 'icon-btn'); x.title = tr('Supprimer ce raccourci'); x.appendChild(icon('i-trash'));
   x.onclick = () => { row.remove(); reSaveShortcuts(true); };
   row.append(n, u, x);
   return row;
@@ -1355,12 +1359,12 @@ function renderReDetail() {
     if (document.activeElement !== $('re-url')) $('re-url').value = it.url;
     const list = $('re-sc-list'); list.textContent = '';
     for (const s of (it.shortcuts || [])) list.appendChild(scRow(s.name, s.url));
-    if (!list.children.length) list.appendChild(el('div', 're-hint', 'Aucun raccourci. Ajoute des liens (par exemple deux espaces Jira) : ils s’affichent quand tu survoles l’appli dans le rail.'));
+    if (!list.children.length) list.appendChild(el('div', 're-hint', tr('Aucun raccourci. Ajoute des liens (par exemple deux espaces Jira) : ils s’affichent quand tu survoles l’appli dans le rail.')));
   } else {
     $('re-pin-ico').replaceChildren(it.kind === 'favfolder' ? reFolderEl(it) : reIconEl(it.favicon || 'https://www.google.com/s2/favicons?domain=' + hostOf(it.url) + '&sz=64', it.title));
     $('re-pin-name').textContent = it.title;
-    $('re-pin-sub').textContent = it.kind === 'favfolder' ? 'Dossier de favoris · ' + it.count + ' élément' + (it.count > 1 ? 's' : '') : hostOf(it.url);
-    $('re-pin-tip').textContent = it.kind === 'favfolder' ? 'Survole-le dans le rail : ses sous-dossiers se déplient sur place, et le bouton → ouvre tous les liens d’un dossier.' : 'Un clic dans le rail ouvre ce lien.';
+    $('re-pin-sub').textContent = it.kind === 'favfolder' ? trn(it.count, 'Dossier de favoris · {n} élément', 'Dossier de favoris · {n} éléments') : hostOf(it.url);
+    $('re-pin-tip').textContent = it.kind === 'favfolder' ? tr('Survole-le dans le rail : ses sous-dossiers se déplient sur place, et le bouton → ouvre tous les liens d’un dossier.') : tr('Un clic dans le rail ouvre ce lien.');
   }
 }
 // Catalogue : clic = ajouter ; re-clic sur une puce cochée = la retirer. Favoris : épingler / désépingler.
@@ -1373,7 +1377,7 @@ function renderReCatalog() {
   for (const sec of APP_CATALOG) {
     const list = sec.apps.filter((a) => !f || a.name.toLowerCase().includes(f));
     if (!list.length) continue;
-    box.appendChild(el('div', 'aa-cat', sec.cat));
+    box.appendChild(el('div', 'aa-cat', tr(sec.cat)));
     const row = el('div', 'aa-chips');
     for (const a of list) {
       const cur = apps.find((x) => hostOf(x.url) === hostOf(a.url));
@@ -1381,10 +1385,10 @@ function renderReCatalog() {
       chip.appendChild(reIconEl(catIcon(a), a.name));
       chip.appendChild(el('span', 'aa-name', a.name));
       chip.appendChild(chipState());
-      chip.title = cur ? 'Retirer ' + a.name + ' du rail' : 'Ajouter ' + a.name + ' au rail';
+      chip.title = cur ? tr('Retirer {name} du rail', { name: a.name }) : tr('Ajouter {name} au rail', { name: a.name });
       chip.onclick = () => {
-        if (cur) { api.appRemove(cur.id); toast(a.name + ' retirée du rail'); }
-        else { api.appAddPreset({ name: a.name, url: a.url, icon: (a.iconUrl || a.iconDomain) ? catIcon(a) : undefined }); toast(a.name + ' ajoutée au rail'); }
+        if (cur) { api.appRemove(cur.id); toast(tr('{name} retirée du rail', { name: a.name })); }
+        else { api.appAddPreset({ name: a.name, url: a.url, icon: (a.iconUrl || a.iconDomain) ? catIcon(a) : undefined }); toast(tr('{name} ajoutée au rail', { name: a.name })); }
       };
       row.appendChild(chip);
     }
@@ -1396,10 +1400,10 @@ function renderReCatalog() {
   const matches = (n) => (n.title || '').toLowerCase().includes(f) || (n.type === 'link' && (n.url || '').toLowerCase().includes(f));
   const subMatch = (n) => matches(n) || (n.children || []).some(subMatch);
   if (favRoot.some((n) => !f || subMatch(n))) {
-    box.appendChild(el('div', 'aa-cat', 'Tes favoris'));
+    box.appendChild(el('div', 'aa-cat', tr('Tes favoris')));
     const tree = el('div', 'rf-tree');
     let budget = 300;
-    const togglePin = (n, title, on) => { api.railPinToggle(n.id); toast(title + (on ? ' retiré du rail' : ' épinglé au rail')); };
+    const togglePin = (n, title, on) => { api.railPinToggle(n.id); toast(on ? tr('{name} retiré du rail', { name: title }) : tr('{name} épinglé au rail', { name: title })); };
     const walk = (nodes, depth) => {
       for (const n of nodes) {
         if (budget-- <= 0) return;
@@ -1407,7 +1411,7 @@ function renderReCatalog() {
         const isFolder = n.type === 'folder';
         const isOpen = isFolder && (f ? true : reFavOpen.has(n.id)); // une recherche déplie tout ce qui correspond
         const on = pinned.has(n.id);
-        const title = n.title || (n.url ? hostOf(n.url) : 'Sans titre');
+        const title = n.title || (n.url ? hostOf(n.url) : tr('Sans titre'));
         const row = el('div', 'rf-row' + (on ? ' added' : '') + (isFolder ? ' folder' : ''));
         row.style.paddingLeft = (6 + depth * 20) + 'px';
         const chev = el('span', 'rf-chev' + (isOpen ? ' open' : '') + (isFolder ? '' : ' none'));
@@ -1419,7 +1423,7 @@ function renderReCatalog() {
         row.appendChild(el('span', 'rf-name', title));
         if (isFolder) row.appendChild(el('span', 'rf-count', String((n.children || []).length)));
         const pin = el('button', 'rf-pin');
-        pin.title = on ? 'Retirer du rail' : 'Épingler au rail';
+        pin.title = on ? tr('Retirer du rail') : tr('Épingler au rail');
         const st = el('span', 'aa-state');
         st.appendChild(icon('i-plus', 'plus')); st.appendChild(icon('i-check', 'check')); st.appendChild(icon('i-close', 'uncheck'));
         pin.appendChild(st);
@@ -1437,7 +1441,7 @@ function renderReCatalog() {
     walk(favRoot, 0);
     box.appendChild(tree);
   }
-  if (!box.children.length) box.appendChild(el('div', 're-hint', 'Aucune suggestion ne correspond à « ' + reFilter + ' ».'));
+  if (!box.children.length) box.appendChild(el('div', 're-hint', tr('Aucune suggestion ne correspond à « {q} ».', { q: reFilter })));
   box.scrollTop = top;
 }
 
@@ -1468,13 +1472,13 @@ $('re-sc-add').onclick = () => {
   const hint = list.querySelector('.re-hint'); if (hint) hint.remove();
   const r = scRow('', ''); list.appendChild(r); r.querySelector('.sc-name').focus();
 };
-$('re-remove').onclick = () => { const a = reFind(reSel); if (a) { api.appRemove(a.id); toast(a.name + ' retirée du rail'); } };
-$('re-pin-remove').onclick = () => { const p = reFind(reSel); if (p) { api.railPinToggle(p.favId); toast(p.title + ' retiré du rail'); } };
+$('re-remove').onclick = () => { const a = reFind(reSel); if (a) { api.appRemove(a.id); toast(tr('{name} retirée du rail', { name: a.name })); } };
+$('re-pin-remove').onclick = () => { const p = reFind(reSel); if (p) { api.railPinToggle(p.favId); toast(tr('{name} retiré du rail', { name: p.title })); } };
 api.onEditAppShortcuts((id) => openRailEditor({ kind: 'app', id })); // clic droit « Raccourcis au survol… » ou « Personnaliser… » du flyout
 
 const addApp = () => {
   const v = $('addapp-input').value.trim(); if (!v) return;
-  api.appAdd(v); $('addapp-input').value = ''; toast('Appli ajoutée au rail');
+  api.appAdd(v); $('addapp-input').value = ''; toast(tr('Appli ajoutée au rail'));
 };
 $('addapp-ok').onclick = addApp;
 $('addapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addApp(); });
@@ -1491,22 +1495,23 @@ async function renderAboutPane() {
   let s = null; try { s = await api.settingsGet(); } catch {}
   if (!s || !s.version) return;
   const beta = /^0.0./.test(s.version); // 0.0.x = bêta fermée (voir README, « Versions »)
-  const channel = beta ? 'Bêta fermée' : (/^0./.test(s.version) ? 'Bêta' : 'Stable');
+  const channel = beta ? tr('Bêta fermée') : (/^0./.test(s.version) ? tr('Bêta') : tr('Stable'));
   $('about-version').textContent = 'v' + s.version;
   $('about-version-row').textContent = s.version;
   $('about-channel').textContent = channel;
   $('about-engine').textContent = 'Electron ' + s.electron + ' · Chromium ' + s.chrome;
   $('about-update-desc').textContent = s.packaged
-    ? 'NaX cherche une version plus récente au démarrage, puis toutes les 6 h, et te propose de la télécharger d’un clic.'
-    : 'Désactivées en mode développement (l’appli lancée avec npm start).';
+    ? tr('NaX cherche une version plus récente au démarrage, puis toutes les 6 h, et te propose de la télécharger d’un clic.')
+    : tr('Désactivées en mode développement (l’appli lancée avec npm start).');
   aboutText = 'NaX v' + s.version + ' (' + channel + ') — Electron ' + s.electron + ', Chromium ' + s.chrome + ' — ' + (navigator.userAgentData && navigator.userAgentData.platform || navigator.platform);
 }
-$('about-copy').onclick = () => { if (aboutText) { api.mdCopy(aboutText); toast('Infos de version copiées'); } };
+$('about-copy').onclick = () => { if (aboutText) { api.mdCopy(aboutText); toast(tr('Infos de version copiées')); } };
 function selectSettingsPane(pane) {
   document.querySelectorAll('.settings-navitem').forEach((b) => b.classList.toggle('active', b.dataset.pane === pane));
   document.querySelectorAll('.settings-pane').forEach((s) => s.classList.toggle('hidden', s.dataset.pane !== pane));
   if (pane === 'passwords') refreshPasswords();
   if (pane === 'dev') renderDevPane();
+  if (pane === 'beta') renderBetaPane();
   if (pane === 'about') renderAboutPane();
   if (pane === 'search') renderSearchPane();
   if (pane === 'favorites') renderFavPane();
@@ -1516,6 +1521,7 @@ function selectSettingsPane(pane) {
   if (pane === 'downloads') renderDownloadsPane();
   if (pane === 'languages') renderLanguagesPane();
   if (pane === 'permissions') renderPermissionsPane();
+  if (pane === 'shortcuts') renderShortcutsPane(); else { stopKbCapture(); kbEditing = false; }
 }
 const ENGINE_DOMAIN = { google: 'google.com', duckduckgo: 'duckduckgo.com', bing: 'bing.com', qwant: 'qwant.com', ecosia: 'ecosia.org', brave: 'search.brave.com', startpage: 'startpage.com' };
 function engFavicon(id) { const im = el('img', 'dd-fav'); im.alt = ''; im.src = `https://www.google.com/s2/favicons?domain=${ENGINE_DOMAIN[id] || 'google.com'}&sz=32`; im.onerror = () => { im.style.visibility = 'hidden'; }; return im; }
@@ -1572,7 +1578,7 @@ function renderFavPane() {
   const favs = state.favorites || [];
   box.innerHTML = '';
   if (!favs.length) {
-    box.appendChild(el('div', 'favm-empty', 'Aucun favori pour l’instant. Ajoute une page avec l’étoile de la barre d’adresse.'));
+    box.appendChild(el('div', 'favm-empty', tr('Aucun favori pour l’instant. Ajoute une page avec l’étoile de la barre d’adresse.')));
     return;
   }
   const q = favMgrQuery.trim().toLowerCase();
@@ -1606,19 +1612,19 @@ function favMgrRow(n, depth, parentId, index) {
     main.appendChild(inp);
     setTimeout(() => { inp.focus(); inp.select(); }, 0);
   } else {
-    main.appendChild(el('div', 'favm-title', n.title || (isFolder ? 'Dossier' : hostOf(n.url) || n.url)));
+    main.appendChild(el('div', 'favm-title', n.title || (isFolder ? tr('Dossier') : hostOf(n.url) || n.url)));
     const count = (n.children || []).length;
-    main.appendChild(el('div', 'favm-sub', isFolder ? (count ? count + (count > 1 ? ' éléments' : ' élément') : 'vide') : n.url));
+    main.appendChild(el('div', 'favm-sub', isFolder ? (count ? trn(count, '{n} élément', '{n} éléments') : tr('vide')) : n.url));
   }
   row.appendChild(main);
   const acts = el('div', 'favm-actions');
-  if (isFolder) { const openall = actBtn('i-plus', 'Tout ouvrir'); openall.onclick = (e) => { e.stopPropagation(); api.favOpenAll(n.id); }; acts.appendChild(openall); }
-  else { const open = actBtn('i-plus', 'Ouvrir dans un nouvel onglet'); open.onclick = (e) => { e.stopPropagation(); api.favOpenNew(n.id); }; acts.appendChild(open); }
-  const ren = actBtn('i-edit', 'Renommer'); ren.onclick = (e) => { e.stopPropagation(); renamingFav = n.id; renamingFavCtx = 'panel'; renderFavPane(); }; acts.appendChild(ren);
-  if (isFolder) { const cust = el('button', 'favm-act'); cust.title = 'Personnaliser (icône, couleur)'; cust.appendChild(lucideSvg('Palette')); cust.onclick = (e) => { e.stopPropagation(); openFavCustom(n.id); }; acts.appendChild(cust); }
-  const del = actBtn('i-trash', isFolder ? 'Supprimer le dossier et son contenu' : 'Retirer des favoris'); del.classList.add('danger'); del.onclick = (e) => { e.stopPropagation(); api.favRemove(n.id); }; acts.appendChild(del);
+  if (isFolder) { const openall = actBtn('i-plus', tr('Tout ouvrir')); openall.onclick = (e) => { e.stopPropagation(); api.favOpenAll(n.id); }; acts.appendChild(openall); }
+  else { const open = actBtn('i-plus', tr('Ouvrir dans un nouvel onglet')); open.onclick = (e) => { e.stopPropagation(); api.favOpenNew(n.id); }; acts.appendChild(open); }
+  const ren = actBtn('i-edit', tr('Renommer')); ren.onclick = (e) => { e.stopPropagation(); renamingFav = n.id; renamingFavCtx = 'panel'; renderFavPane(); }; acts.appendChild(ren);
+  if (isFolder) { const cust = el('button', 'favm-act'); cust.title = tr('Personnaliser (icône, couleur)'); cust.appendChild(lucideSvg('Palette')); cust.onclick = (e) => { e.stopPropagation(); openFavCustom(n.id); }; acts.appendChild(cust); }
+  const del = actBtn('i-trash', isFolder ? tr('Supprimer le dossier et son contenu') : tr('Retirer des favoris')); del.classList.add('danger'); del.onclick = (e) => { e.stopPropagation(); api.favRemove(n.id); }; acts.appendChild(del);
   row.appendChild(acts);
-  row.title = isFolder ? (n.title || 'Dossier') : n.url;
+  row.title = isFolder ? (n.title || tr('Dossier')) : n.url;
   row.onclick = () => { if (suppressClick || renamingFav === n.id) return; if (isFolder) { if (favMgrCollapsed.has(n.id)) favMgrCollapsed.delete(n.id); else favMgrCollapsed.add(n.id); renderFavPane(); } else api.favOpen(n.id); };
   row.oncontextmenu = (e) => { e.preventDefault(); api.favContext(n.id); };
   row.addEventListener('mousedown', (e) => { if (e.button === 0 && !e.target.closest('.favm-actions') && !e.target.closest('.favm-input') && renamingFav !== n.id) beginFavMgrDrag(e, n.id); });
@@ -1631,11 +1637,11 @@ function renderFavSearch(favs, box, q) {
   const hits = [];
   (function walk(nodes, chain) {
     for (const n of nodes) {
-      if (n.type === 'folder') { if (n.children) walk(n.children, chain.concat(n.title || 'Dossier')); }
+      if (n.type === 'folder') { if (n.children) walk(n.children, chain.concat(n.title || tr('Dossier'))); }
       else if ((n.title || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q)) hits.push({ n, path: chain });
     }
   })(favs, []);
-  if (!hits.length) { box.appendChild(el('div', 'favm-empty', 'Aucun favori ne correspond à « ' + favMgrQuery.trim() + ' ».')); return; }
+  if (!hits.length) { box.appendChild(el('div', 'favm-empty', tr('Aucun favori ne correspond à « {q} ».', { q: favMgrQuery.trim() }))); return; }
   for (const { n, path } of hits) {
     const row = el('div', 'favm-row link result');
     row.appendChild(el('span', 'favm-chev spacer'));
@@ -1647,8 +1653,8 @@ function renderFavSearch(favs, box, q) {
     sub.appendChild(el('span', 'favm-url', n.url)); main.appendChild(sub);
     row.appendChild(main);
     const acts = el('div', 'favm-actions');
-    const open = actBtn('i-plus', 'Ouvrir dans un nouvel onglet'); open.onclick = (e) => { e.stopPropagation(); api.favOpenNew(n.id); }; acts.appendChild(open);
-    const del = actBtn('i-trash', 'Retirer des favoris'); del.classList.add('danger'); del.onclick = (e) => { e.stopPropagation(); api.favRemove(n.id); }; acts.appendChild(del);
+    const open = actBtn('i-plus', tr('Ouvrir dans un nouvel onglet')); open.onclick = (e) => { e.stopPropagation(); api.favOpenNew(n.id); }; acts.appendChild(open);
+    const del = actBtn('i-trash', tr('Retirer des favoris')); del.classList.add('danger'); del.onclick = (e) => { e.stopPropagation(); api.favRemove(n.id); }; acts.appendChild(del);
     row.appendChild(acts);
     row.title = n.url;
     row.onclick = () => { if (suppressClick) return; api.favOpen(n.id); };
@@ -1716,8 +1722,7 @@ $('favm-collapse').onclick = () => { favWalkAll((n) => { if (n.type === 'folder'
 function favWalkAll(fn, nodes = (state && state.favorites) || []) { for (const n of nodes) { fn(n); if (n.children) favWalkAll(fn, n.children); } }
 
 // ---------- données de navigation (paramètres) : navigateur à deux niveaux ----------
-const plural = (n, s, p) => n + ' ' + (n > 1 ? (p || s + 's') : s);
-function fmtBytes(b) { b = +b || 0; if (b < 1024) return b + ' o'; const u = ['Ko', 'Mo', 'Go', 'To']; let i = -1; do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1); return (b < 10 ? b.toFixed(1) : Math.round(b)) + ' ' + u[i]; }
+function fmtBytes(b) { b = +b || 0; if (b < 1024) return tr('{n} o', { n: b }); const u = [tr('Ko'), tr('Mo'), tr('Go'), tr('To')]; let i = -1; do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1); return (b < 10 ? b.toFixed(1) : Math.round(b)) + ' ' + u[i]; }
 const PERM_LABELS = {
   notifications: 'Notifications', geolocation: 'Localisation', media: 'Caméra et micro',
   'display-capture': 'Partage d’écran', midi: 'MIDI', midiSysex: 'MIDI (SysEx)',
@@ -1727,7 +1732,7 @@ const PERM_LABELS = {
   'idle-detection': 'Détection d’inactivité', 'window-management': 'Gestion des fenêtres', hid: 'Périphériques HID',
   serial: 'Port série', usb: 'Périphériques USB', bluetooth: 'Bluetooth',
 };
-const permLabel = (p) => PERM_LABELS[p] || (/^openExternal:/.test(p || '') ? `Ouvrir les liens ${p.slice(13)} dans une autre appli` : (p || 'Autorisation'));
+const permLabel = (p) => PERM_LABELS[p] ? tr(PERM_LABELS[p]) : (/^openExternal:/.test(p || '') ? tr('Ouvrir les liens {scheme} dans une autre appli', { scheme: p.slice(13) }) : (p || tr('Autorisation')));
 const BD_CATS = [
   { key: 'history', name: 'Historique de navigation', icon: 'i-globe' },
   { key: 'cookies', name: 'Cookies et données de sites', icon: 'i-lock' },
@@ -1751,19 +1756,19 @@ async function renderBdCategories() {
   try { bdCookieCount = (await api.cookiesList()).length; } catch { bdCookieCount = 0; }
   try { bdCacheBytes = await api.cacheSize(); } catch { bdCacheBytes = 0; }
   const descOf = (k) => {
-    if (k === 'history') return bdStats.history ? plural(bdStats.history, 'site visité', 'sites visités') : 'Aucun site';
-    if (k === 'cookies') return bdCookieCount ? plural(bdCookieCount, 'site') : 'Aucun site';
-    if (k === 'cache') return bdCacheBytes ? fmtBytes(bdCacheBytes) : 'Vide';
-    if (k === 'archive') return bdStats.archive ? plural(bdStats.archive, 'page fermée', 'pages fermées') : 'Aucune page';
-    if (k === 'perms') return bdStats.perms ? plural(bdStats.perms, 'décision mémorisée', 'décisions mémorisées') : 'Aucune autorisation';
-    if (k === 'downloads') return bdStats.downloads ? plural(bdStats.downloads, 'entrée', 'entrées') : 'Aucune entrée';
+    if (k === 'history') return bdStats.history ? trn(bdStats.history, '{n} site visité', '{n} sites visités') : tr('Aucun site');
+    if (k === 'cookies') return bdCookieCount ? trn(bdCookieCount, '{n} site', '{n} sites') : tr('Aucun site');
+    if (k === 'cache') return bdCacheBytes ? fmtBytes(bdCacheBytes) : tr('Vide');
+    if (k === 'archive') return bdStats.archive ? trn(bdStats.archive, '{n} page fermée', '{n} pages fermées') : tr('Aucune page');
+    if (k === 'perms') return bdStats.perms ? trn(bdStats.perms, '{n} décision mémorisée', '{n} décisions mémorisées') : tr('Aucune autorisation');
+    if (k === 'downloads') return bdStats.downloads ? trn(bdStats.downloads, '{n} entrée', '{n} entrées') : tr('Aucune entrée');
     return '';
   };
   BD_CATS.forEach((c) => {
     const row = el('div', 'bd-row');
     const ic = el('span', 'bd-ico'); ic.appendChild(icon(c.icon)); row.appendChild(ic);
     const main = el('div', 'bd-main');
-    main.appendChild(el('div', 'bd-name', c.name));
+    main.appendChild(el('div', 'bd-name', tr(c.name)));
     main.appendChild(el('div', 'bd-desc', descOf(c.key)));
     row.appendChild(main);
     row.appendChild(icon('i-forward', 'bd-chev'));
@@ -1794,28 +1799,28 @@ async function renderBdDetail(key) {
   const cat = BD_CATS.find((c) => c.key === key);
   const box = $('bd-list'); box.innerHTML = '';
   const head = el('div', 'bd-dhead');
-  const back = el('button', 'bd-back'); back.appendChild(icon('i-back')); back.appendChild(el('span', null, 'Catégories'));
+  const back = el('button', 'bd-back'); back.appendChild(icon('i-back')); back.appendChild(el('span', null, tr('Catégories')));
   back.onclick = () => { bdView = null; bdQuery = ''; renderPrivacyPane(); };
   head.appendChild(back);
-  const title = el('div', 'bd-dtitle'); title.appendChild(icon(cat.icon)); title.appendChild(el('span', null, cat.name)); head.appendChild(title);
-  const clearAll = el('button', 'btn danger sm'); clearAll.appendChild(icon('i-trash')); clearAll.appendChild(el('span', null, 'Tout effacer'));
+  const title = el('div', 'bd-dtitle'); title.appendChild(icon(cat.icon)); title.appendChild(el('span', null, tr(cat.name))); head.appendChild(title);
+  const clearAll = el('button', 'btn danger sm'); clearAll.appendChild(icon('i-trash')); clearAll.appendChild(el('span', null, tr('Tout effacer')));
   head.appendChild(clearAll);
   box.appendChild(head);
 
   if (key === 'cache') {
     const card = el('div', 'bd-cache');
-    card.appendChild(el('div', 'bd-cache-size', bdCacheBytes ? fmtBytes(bdCacheBytes) : 'Vide'));
-    card.appendChild(el('div', 'bd-cache-desc muted', 'Images et fichiers mis en cache pour accélérer le rechargement des sites. Les vider libère de l’espace ; aucun site ne vous déconnecte.'));
+    card.appendChild(el('div', 'bd-cache-size', bdCacheBytes ? fmtBytes(bdCacheBytes) : tr('Vide')));
+    card.appendChild(el('div', 'bd-cache-desc muted', tr('Images et fichiers mis en cache pour accélérer le rechargement des sites. Les vider libère de l’espace ; aucun site ne vous déconnecte.')));
     box.appendChild(card);
     clearAll.onclick = async () => { clearAll.disabled = true; try { bdCacheBytes = await api.cacheClear(); } catch {} renderPrivacyPane(); };
     return;
   }
 
   const sw = el('div', 'bd-search'); sw.appendChild(icon('i-search'));
-  const inp = el('input'); inp.type = 'text'; inp.placeholder = 'Filtrer…'; inp.spellcheck = false; inp.autocomplete = 'off'; inp.value = bdQuery;
+  const inp = el('input'); inp.type = 'text'; inp.placeholder = tr('Filtrer…'); inp.spellcheck = false; inp.autocomplete = 'off'; inp.value = bdQuery;
   sw.appendChild(inp); box.appendChild(sw);
   const listEl = el('div', 'bd-items'); box.appendChild(listEl);
-  const empty = el('div', 'favm-empty', 'Rien à afficher ici.');
+  const empty = el('div', 'favm-empty', tr('Rien à afficher ici.'));
 
   const rows = [];
   const add = (rowEl, text) => { rows.push({ row: rowEl, text: (text || '').toLowerCase() }); listEl.appendChild(rowEl); };
@@ -1829,8 +1834,8 @@ async function renderBdDetail(key) {
     items.forEach((it) => {
       const row = bdItemRow({ icoDomain: hostOf(it.url), title: it.title || hostOf(it.url) || it.url, sub: it.url, meta: it.last ? ago(it.last) : '',
         actions: [
-          bdActBtn('i-plus', 'Ouvrir dans un nouvel onglet', () => { closeOverlay(); api.openUrlNew(it.url); }),
-          bdActBtn('i-trash', 'Supprimer de l’historique', () => { api.historyRemove(it.key); row.remove(); }, true),
+          bdActBtn('i-plus', tr('Ouvrir dans un nouvel onglet'), () => { closeOverlay(); api.openUrlNew(it.url); }),
+          bdActBtn('i-trash', tr('Supprimer de l’historique'), () => { api.historyRemove(it.key); row.remove(); }, true),
         ] });
       add(row, (it.title || '') + ' ' + it.url);
     });
@@ -1838,16 +1843,16 @@ async function renderBdDetail(key) {
   } else if (key === 'cookies') {
     const items = await api.cookiesList().catch(() => []);
     items.forEach((it) => {
-      const row = bdItemRow({ icoDomain: it.domain, title: it.domain, sub: plural(it.count, 'cookie'),
-        actions: [bdActBtn('i-trash', 'Supprimer les cookies de ce site', () => { api.cookiesRemove(it.domain); row.remove(); }, true)] });
+      const row = bdItemRow({ icoDomain: it.domain, title: it.domain, sub: trn(it.count, '{n} cookie', '{n} cookies'),
+        actions: [bdActBtn('i-trash', tr('Supprimer les cookies de ce site'), () => { api.cookiesRemove(it.domain); row.remove(); }, true)] });
       add(row, it.domain);
     });
     clearAll.onclick = async () => { await api.clearBrowsingData({ cookies: true }); reopen(); };
   } else if (key === 'perms') {
     const items = await api.permsList().catch(() => []);
     items.forEach((it) => {
-      const row = bdItemRow({ icoDomain: hostOf(it.origin) || it.origin, title: it.origin, sub: permLabel(it.permission) + ' · ' + (it.allowed ? 'Autorisé' : 'Bloqué'),
-        actions: [bdActBtn('i-trash', 'Oublier cette décision', () => { api.permsRemove(it.key); row.remove(); }, true)] });
+      const row = bdItemRow({ icoDomain: hostOf(it.origin) || it.origin, title: it.origin, sub: permLabel(it.permission) + ' · ' + (it.allowed ? tr('Autorisé') : tr('Bloqué')),
+        actions: [bdActBtn('i-trash', tr('Oublier cette décision'), () => { api.permsRemove(it.key); row.remove(); }, true)] });
       add(row, it.origin + ' ' + it.permission);
     });
     clearAll.onclick = async () => { await api.clearBrowsingData({ perms: true }); reopen(); };
@@ -1856,8 +1861,8 @@ async function renderBdDetail(key) {
     items.forEach((it, i) => {
       const row = bdItemRow({ icoDomain: hostOf(it.url), title: it.title || hostOf(it.url) || it.url, sub: it.url, meta: it.closedAt ? ago(it.closedAt) : '',
         actions: [
-          bdActBtn('i-reload', 'Rouvrir', () => { closeOverlay(); api.archiveRestore(i); }),
-          bdActBtn('i-trash', 'Supprimer de l’archive', () => { api.archiveRemove(i); reopen(); }, true),
+          bdActBtn('i-reload', tr('Rouvrir'), () => { closeOverlay(); api.archiveRestore(i); }),
+          bdActBtn('i-trash', tr('Supprimer de l’archive'), () => { api.archiveRemove(i); reopen(); }, true),
         ] });
       add(row, (it.title || '') + ' ' + it.url);
     });
@@ -1866,10 +1871,10 @@ async function renderBdDetail(key) {
     const items = await api.dlList().catch(() => []);
     items.forEach((it) => {
       const done = it.state === 'completed';
-      const row = bdItemRow({ icoSvg: 'i-download', title: it.filename || 'Téléchargement', sub: done ? fmtBytes(it.received || it.total) : (it.state || ''),
+      const row = bdItemRow({ icoSvg: 'i-download', title: it.filename || tr('Téléchargement'), sub: done ? fmtBytes(it.received || it.total) : (it.state || ''),
         actions: [
-          done ? bdActBtn('i-plus', 'Ouvrir le fichier', () => api.dlOpen(it.id)) : null,
-          bdActBtn('i-trash', 'Retirer de la liste', () => { api.dlRemove(it.id); row.remove(); }, true),
+          done ? bdActBtn('i-plus', tr('Ouvrir le fichier'), () => api.dlOpen(it.id)) : null,
+          bdActBtn('i-trash', tr('Retirer de la liste'), () => { api.dlRemove(it.id); row.remove(); }, true),
         ].filter(Boolean) });
       add(row, it.filename || '');
     });
@@ -1919,23 +1924,23 @@ function makeSelect(container, value, options, onChange) {
 }
 
 // Apparence : zoom par défaut + zoom mémorisé par site
-const ZOOM_OPTS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200].map((z) => ({ value: z, label: z + ' %' }));
+const ZOOM_LEVELS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200];
 async function renderAppearanceZoom() {
   cfg = await api.settingsGet().catch(() => ({})) || {};
-  makeSelect($('zoom-dd'), Math.round((cfg.defaultZoom || 1) * 100), ZOOM_OPTS, async (v) => { await api.settingsSet({ defaultZoom: v / 100 }); renderAppearanceZoom(); });
+  makeSelect($('zoom-dd'), Math.round((cfg.defaultZoom || 1) * 100), ZOOM_LEVELS.map((z) => ({ value: z, label: tr('{n} %', { n: z }) })), async (v) => { await api.settingsSet({ defaultZoom: v / 100 }); renderAppearanceZoom(); });
   const box = $('zoom-sites'); box.innerHTML = '';
   const sites = await api.zoomList().catch(() => []);
   if (!sites.length) return;
   const head = el('div', 'zoom-head');
-  head.appendChild(el('span', 'zoom-head-t', 'Zoom mémorisé par site'));
-  const resetAll = el('button', 'linklike', 'Tout réinitialiser'); resetAll.onclick = async () => { await api.zoomResetAll(); renderAppearanceZoom(); };
+  head.appendChild(el('span', 'zoom-head-t', tr('Zoom mémorisé par site')));
+  const resetAll = el('button', 'linklike', tr('Tout réinitialiser')); resetAll.onclick = async () => { await api.zoomResetAll(); renderAppearanceZoom(); };
   head.appendChild(resetAll); box.appendChild(head);
   sites.forEach((s) => {
     const row = el('div', 'zoom-row');
     const img = el('img', 'zoom-fav'); img.alt = ''; img.src = `https://www.google.com/s2/favicons?domain=${s.host}&sz=32`; img.onerror = () => { img.style.visibility = 'hidden'; }; row.appendChild(img);
     row.appendChild(el('span', 'zoom-host', s.host));
-    row.appendChild(el('span', 'zoom-pct', Math.round(s.factor * 100) + ' %'));
-    const x = el('button', 'bd-act danger'); x.title = 'Réinitialiser ce site'; x.appendChild(icon('i-close'));
+    row.appendChild(el('span', 'zoom-pct', tr('{n} %', { n: Math.round(s.factor * 100) })));
+    const x = el('button', 'bd-act danger'); x.title = tr('Réinitialiser ce site'); x.appendChild(icon('i-close'));
     x.onclick = async () => { await api.zoomReset(s.host); renderAppearanceZoom(); };
     row.appendChild(x); box.appendChild(row);
   });
@@ -1946,15 +1951,15 @@ async function renderStartupPane() {
   renderDefaultBrowser();
   cfg = await api.settingsGet().catch(() => ({})) || {};
   makeSelect($('startup-dd'), cfg.startupMode || 'restore', [
-    { value: 'restore', label: 'Reprendre mes onglets' },
-    { value: 'home', label: 'Ouvrir la page d’accueil' },
+    { value: 'restore', label: tr('Reprendre mes onglets') },
+    { value: 'home', label: tr('Ouvrir la page d’accueil') },
   ], async (v) => { await api.settingsSet({ startupMode: v }); cfg.startupMode = v; });
   $('homepage-input').value = cfg.homepage || '';
   const ntVal = cfg.newTabUrl === '' || cfg.newTabUrl == null ? 'home' : cfg.newTabUrl === 'blank' ? 'blank' : 'custom';
   makeSelect($('newtab-dd'), ntVal, [
-    { value: 'home', label: 'Page d’accueil' },
-    { value: 'blank', label: 'Page vierge' },
-    { value: 'custom', label: 'Adresse personnalisée' },
+    { value: 'home', label: tr('Page d’accueil') },
+    { value: 'blank', label: tr('Page vierge') },
+    { value: 'custom', label: tr('Adresse personnalisée') },
   ], async (v) => {
     if (v === 'home') await api.settingsSet({ newTabUrl: '' });
     else if (v === 'blank') await api.settingsSet({ newTabUrl: 'blank' });
@@ -1973,15 +1978,15 @@ async function renderDefaultBrowser() {
   const st = await api.defaultBrowserStatus().catch(() => ({ supported: false }));
   const btn = $('default-browser-btn'), desc = $('default-browser-desc');
   btn.disabled = !st.supported || st.isDefault;
-  btn.lastChild.textContent = st.isDefault ? ' NaX est par défaut' : ' Définir par défaut';
+  btn.lastChild.textContent = ' ' + (st.isDefault ? tr('NaX est par défaut') : tr('Définir par défaut'));
   desc.textContent = !st.supported
-    ? 'Disponible dans l’application installée (pas en mode développement).'
-    : st.isDefault ? 'Les liens cliqués dans les autres applis s’ouvrent dans NaX.'
-      : 'Ouvrir dans NaX les liens cliqués dans les autres applis (mails, Teams…). Windows te demandera de confirmer.';
+    ? tr('Disponible dans l’application installée (pas en mode développement).')
+    : st.isDefault ? tr('Les liens cliqués dans les autres applis s’ouvrent dans NaX.')
+      : tr('Ouvrir dans NaX les liens cliqués dans les autres applis (mails, Teams…). Windows te demandera de confirmer.');
 }
 $('default-browser-btn').onclick = async () => {
   const r = await api.defaultBrowserSet().catch(() => ({ ok: false }));
-  toast(r.ok ? 'Choisis NaX dans les Paramètres Windows qui viennent de s’ouvrir' : 'Enregistrement auprès de Windows impossible');
+  toast(r.ok ? tr('Choisis NaX dans les Paramètres Windows qui viennent de s’ouvrir') : tr('Enregistrement auprès de Windows impossible'));
 };
 // retour depuis les Paramètres Windows : on relit l'état
 window.addEventListener('focus', () => { if (openOverlay === 'settings' && !document.querySelector('.settings-pane[data-pane="startup"]').classList.contains('hidden')) renderDefaultBrowser(); });
@@ -1991,7 +1996,7 @@ $('newtab-input').addEventListener('change', async (e) => { await api.settingsSe
 async function renderDownloadsPane() {
   cfg = await api.settingsGet().catch(() => ({})) || {};
   const custom = !!cfg.downloadDir;
-  setText($('dl-dir-path'), (cfg.downloadDir || cfg.downloadDirDefault || '') + (custom ? '' : ' (par défaut)'));
+  setText($('dl-dir-path'), (cfg.downloadDir || cfg.downloadDirDefault || '') + (custom ? '' : ' ' + tr('(par défaut)')));
   $('dl-ask').checked = !!cfg.askDownloadPath;
 }
 $('dl-dir-btn').onclick = async () => { const r = await api.pickDownloadDir(); if (r) setText($('dl-dir-path'), r.dir || r.default); };
@@ -2005,6 +2010,9 @@ const LANG_OPTIONS = [
 ];
 async function renderLanguagesPane() {
   cfg = await api.settingsGet().catch(() => ({})) || {};
+  // étiquettes laissées dans leur propre langue (English, Français…)
+  makeSelect($('uilang-dd'), cfg.uiLang || I18N.lang, I18N.languages.map((l) => ({ value: l.code, label: l.name })),
+    async (v) => { cfg.uiLang = v; await api.settingsSet({ uiLang: v }); applyUiLang(v); });
   $('spell-toggle').checked = !!cfg.spellcheckOn;
   const sel = new Set(cfg.spellLangs || ['fr']);
   const avail = new Set(cfg.availLangs || []);
@@ -2012,8 +2020,8 @@ async function renderLanguagesPane() {
   LANG_OPTIONS.forEach((l) => {
     const row = el('div', 'lang-row' + (sel.has(l.code) ? ' on' : ''));
     const chk = el('span', 'bd-check'); chk.appendChild(icon('i-check')); row.appendChild(chk);
-    row.appendChild(el('span', 'lang-name', l.name));
-    if (!avail.has(l.code)) row.appendChild(el('span', 'lang-note', 'correcteur indispo'));
+    row.appendChild(el('span', 'lang-name', tr(l.name)));
+    if (!avail.has(l.code)) row.appendChild(el('span', 'lang-note', tr('correcteur indispo')));
     row.onclick = async () => {
       if (sel.has(l.code)) { if (sel.size <= 1) return; sel.delete(l.code); } else sel.add(l.code);
       row.classList.toggle('on', sel.has(l.code));
@@ -2037,11 +2045,189 @@ async function renderPermissionsPane() {
   const box = $('perm-list'); box.innerHTML = '';
   PERM_ROWS.forEach((p) => {
     const row = el('div', 'setting-row');
-    const label = el('div', 'setting-label'); label.appendChild(el('div', 'setting-name', p.name)); label.appendChild(el('div', 'setting-desc muted', p.desc)); row.appendChild(label);
+    const label = el('div', 'setting-label'); label.appendChild(el('div', 'setting-name', tr(p.name))); label.appendChild(el('div', 'setting-desc muted', tr(p.desc))); row.appendChild(label);
     const dd = el('div', 'dropdown'); row.appendChild(dd); box.appendChild(row);
-    makeSelect(dd, perm[p.key] || p.opts[0][0], p.opts.map(([v, l]) => ({ value: v, label: l })), async (v) => { const patch = { perm: {} }; patch.perm[p.key] = v; await api.settingsSet(patch); });
+    makeSelect(dd, perm[p.key] || p.opts[0][0], p.opts.map(([v, l]) => ({ value: v, label: tr(l) })), async (v) => { const patch = { perm: {} }; patch.perm[p.key] = v; await api.settingsSet(patch); });
   });
 }
+
+// Raccourcis clavier : liste de tous les raccourcis, et mode « Modifier » pour changer leurs touches.
+// Les accélérateurs viennent du process principal (menu d'application) ; ceux de l'interface sont fixes.
+let kbList = [];
+let kbEditing = false;
+let kbCapture = null; // { id, chip } pendant la saisie d'une nouvelle touche
+const KB_FIXED = [
+  { label: 'Fermer le panneau ouvert', keys: ['Escape'] },
+  { label: 'Naviguer dans les suggestions et la recherche', keys: ['Up', 'Down'] },
+  { label: 'Ouvrir le résultat dans un nouvel onglet', keys: ['Ctrl+Enter'] },
+  { label: 'Ouvrir un lien dans un nouvel onglet', keys: ['Ctrl+Clic'] },
+  { label: 'Occurrence précédente (recherche dans la page)', keys: ['Shift+Enter'] },
+  { label: 'Envoyer la demande à Claude', keys: ['Ctrl+Enter'] },
+];
+const KB_NAMES = {
+  cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', ctrl: 'Ctrl', control: 'Ctrl', shift: 'Maj', alt: 'Alt', super: 'Win', meta: 'Win',
+  left: '←', right: '→', up: '↑', down: '↓', pageup: 'Pg préc', pagedown: 'Pg suiv', delete: 'Suppr', escape: 'Échap', esc: 'Échap',
+  home: 'Début', end: 'Fin', insert: 'Inser', backspace: 'Retour', space: 'Espace', enter: 'Entrée', return: 'Entrée', tab: 'Tab', plus: '+', clic: 'Clic',
+};
+function kbParts(accel) { return accel ? String(accel).split('+').map((p) => { const n = KB_NAMES[p.toLowerCase()]; return n ? tr(n) : (p.length === 1 ? p.toUpperCase() : p); }) : []; }
+function kbText(accel) { return kbParts(accel).join('+'); }
+function kbKbds(accel) {
+  const box = el('span', 'kb-kbds');
+  kbParts(accel).forEach((p) => box.appendChild(el('kbd', null, p)));
+  return box;
+}
+// KeyboardEvent → accélérateur Electron. Les lettres suivent la disposition (AZERTY : la touche marquée A donne A),
+// le reste suit la position physique, comme les accélérateurs du menu sous Windows.
+const KB_CODES = {
+  Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+  Space: 'Space', Tab: 'Tab', Enter: 'Enter', NumpadEnter: 'Enter', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+  Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down',
+  NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult', NumpadDivide: 'numdiv', NumpadDecimal: 'numdec',
+};
+function kbKeyOf(e) {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toUpperCase();
+  let m;
+  if ((m = /^Key([A-Z])$/.exec(e.code))) return m[1];
+  if ((m = /^Digit(\d)$/.exec(e.code))) return m[1];
+  if ((m = /^Numpad(\d)$/.exec(e.code))) return 'num' + m[1];
+  if (/^F([1-9]|1\d|2[0-4])$/.test(e.code)) return e.code;
+  return KB_CODES[e.code] || null;
+}
+function kbMods(e) { return [e.ctrlKey && 'CmdOrCtrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean); }
+
+async function renderShortcutsPane() {
+  kbList = await api.shortcutsList().catch(() => []) || [];
+  drawShortcuts();
+}
+function drawShortcuts() {
+  const box = $('kb-list'); box.innerHTML = '';
+  const q = $('kb-search').value.trim().toLowerCase();
+  const match = (label, keys) => !q || label.toLowerCase().includes(q) || keys.some((k) => kbText(k).toLowerCase().includes(q));
+  $('kb-edit').replaceChildren(icon(kbEditing ? 'i-check' : 'i-edit'), document.createTextNode(' ' + (kbEditing ? tr('Terminé') : tr('Modifier'))));
+  $('kb-edit').classList.toggle('ghost', kbEditing);
+  $('kb-reset-all').classList.toggle('hidden', !kbEditing || !kbList.some((s) => s.custom));
+  setText($('kb-desc'), kbEditing
+    ? tr('Clique sur une touche puis appuie sur la nouvelle combinaison. Échap pour annuler.')
+    : tr('Tous les raccourcis de NaX. Ils agissent sur la fenêtre active.'));
+  const groups = [];
+  for (const s of kbList) { let g = groups.find((x) => x.name === s.group); if (!g) groups.push(g = { name: s.group, items: [] }); g.items.push(s); }
+  let shown = 0;
+  for (const g of groups) {
+    const items = g.items.filter((s) => match(s.label, [s.key, ...s.alt]));
+    if (!items.length) continue;
+    box.appendChild(el('div', 'kb-group', g.name));
+    for (const s of items) { box.appendChild(kbRow(s)); shown++; }
+  }
+  const fixed = KB_FIXED.filter((f) => match(tr(f.label), f.keys));
+  if (fixed.length) {
+    const head = el('div', 'kb-group', tr('Dans l’interface'));
+    head.appendChild(el('span', 'kb-group-note', tr('non modifiables')));
+    box.appendChild(head);
+    for (const f of fixed) {
+      const row = el('div', 'kb-row fixed');
+      row.appendChild(el('span', 'kb-label', tr(f.label)));
+      const keys = el('div', 'kb-keys');
+      f.keys.forEach((k, i) => { if (i) keys.appendChild(el('span', 'kb-or', tr('ou'))); keys.appendChild(kbKbds(k)); });
+      row.appendChild(keys);
+      box.appendChild(row); shown++;
+    }
+  }
+  if (!shown) box.appendChild(el('div', 'kb-empty muted', tr('Aucun raccourci ne correspond.')));
+}
+function kbRow(s) {
+  const row = el('div', 'kb-row' + (s.custom ? ' custom' : ''));
+  const label = el('span', 'kb-label', s.label);
+  if (s.custom) { const d = el('span', 'kb-dot'); d.title = tr('Modifié (par défaut : {key})', { key: kbText(s.defaultKey) || tr('aucun') }); label.appendChild(d); }
+  row.appendChild(label);
+  const keys = el('div', 'kb-keys');
+  if (kbEditing) {
+    const chip = el('button', 'kb-chip' + (s.key ? '' : ' empty'));
+    chip.title = tr('Changer la touche');
+    if (s.key) chip.appendChild(kbKbds(s.key)); else chip.appendChild(el('span', null, tr('Aucun')));
+    chip.onclick = () => startKbCapture(s, chip);
+    keys.appendChild(chip);
+    const reset = el('button', 'icon-btn kb-act'); reset.title = tr('Rétablir : {key}', { key: kbText(s.defaultKey) || tr('aucun') }); reset.appendChild(icon('i-undo'));
+    reset.disabled = !s.custom;
+    reset.onclick = async () => { stopKbCapture(); kbList = await api.shortcutsReset(s.id); drawShortcuts(); };
+    const clear = el('button', 'icon-btn kb-act'); clear.title = tr('Désactiver ce raccourci'); clear.appendChild(icon('i-close'));
+    clear.disabled = !s.key;
+    clear.onclick = () => assignShortcut(s, '');
+    keys.appendChild(reset); keys.appendChild(clear);
+  } else if (s.key) {
+    keys.appendChild(kbKbds(s.key));
+    s.alt.forEach((a) => { keys.appendChild(el('span', 'kb-or', tr('ou'))); keys.appendChild(kbKbds(a)); });
+  } else keys.appendChild(el('span', 'kb-none muted', tr('Aucun')));
+  row.appendChild(keys);
+  return row;
+}
+async function assignShortcut(s, accel) {
+  stopKbCapture();
+  const r = await api.shortcutsSet(s.id, accel).catch(() => null);
+  if (!r) return;
+  kbList = r.list;
+  drawShortcuts();
+  if (r.displaced && r.displaced.length) toast(tr('{key} retiré de « {names} »', { key: kbText(accel), names: r.displaced.join(' », « ') }));
+}
+function startKbCapture(s, chip) {
+  stopKbCapture();
+  kbCapture = { id: s.id, chip };
+  api.shortcutsSuspend(true); // sinon le menu intercepte la combinaison avant la page
+  chip.classList.add('capturing');
+  chip.replaceChildren(el('span', 'kb-wait', tr('Appuie sur une combinaison…')));
+  chip.focus();
+}
+function stopKbCapture() {
+  if (!kbCapture) return;
+  kbCapture = null;
+  api.shortcutsSuspend(false);
+  if (openOverlay === 'settings') drawShortcuts();
+}
+window.addEventListener('keydown', (e) => {
+  if (!kbCapture) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const mods = kbMods(e);
+  const key = ['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(e.key) ? null : kbKeyOf(e);
+  if (!key) { // modificateurs seuls : on montre ce qui est tenu, en attendant la touche
+    kbCapture.chip.replaceChildren(mods.length ? kbKbds(mods.join('+') + '+…') : el('span', 'kb-wait', tr('Appuie sur une combinaison…')));
+    return;
+  }
+  if (key === 'Escape' && !mods.length) { stopKbCapture(); return; }
+  const accel = [...mods, key].join('+');
+  const strong = mods.some((m) => m !== 'Shift');
+  if (!strong && !/^F\d+$/.test(key)) {
+    kbCapture.chip.replaceChildren(el('span', 'kb-wait warn', tr('Ajoute Ctrl ou Alt')));
+    return;
+  }
+  const s = kbList.find((x) => x.id === kbCapture.id);
+  if (s) assignShortcut(s, accel);
+}, true);
+window.addEventListener('blur', () => stopKbCapture());
+$('kb-edit').onclick = () => { stopKbCapture(); kbEditing = !kbEditing; drawShortcuts(); };
+$('kb-reset-all').onclick = async () => { stopKbCapture(); kbList = await api.shortcutsReset(null); drawShortcuts(); toast(tr('Raccourcis par défaut rétablis')); };
+$('kb-search').addEventListener('input', () => { stopKbCapture(); drawShortcuts(); });
+$('kb-search').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; drawShortcuts(); } });
+
+// Infobulles et indices qui affichent un raccourci : suivent la personnalisation.
+let kbKeys = {};
+function kbHint(id) { const k = kbKeys[id]; return k ? ' (' + kbText(k) + ')' : ''; }
+// Texte français d'origine des infobulles (lu avant la traduction du DOM statique), sans le raccourci entre parenthèses
+document.querySelectorAll('[data-kb]').forEach((n) => { n.dataset.kbTitle = (n.title || '').replace(/\s*\([^)]*\)$/, ''); });
+function applyShortcutHints(list) {
+  if (list) { kbKeys = {}; for (const s of list) kbKeys[s.id] = s.key; }
+  document.querySelectorAll('[data-kb]').forEach((n) => {
+    if (n.dataset.kbTitle == null) n.dataset.kbTitle = (n.title || '').replace(/\s*\([^)]*\)$/, '');
+    n.title = tr(n.dataset.kbTitle) + kbHint(n.dataset.kb);
+  });
+  const hint = $('omni-hint');
+  hint.textContent = kbParts(kbKeys.palette).join(' ');
+  hint.classList.toggle('hidden', !kbKeys.palette);
+  if (state) renderNav();
+}
+api.onShortcutsChanged((list) => {
+  applyShortcutHints(list);
+  if (openOverlay === 'settings' && !kbCapture) { kbList = list; drawShortcuts(); }
+});
+api.shortcutsList().then(applyShortcutHints).catch(() => {});
 
 document.querySelectorAll('.settings-navitem').forEach((b) => { b.onclick = () => selectSettingsPane(b.dataset.pane); });
 $('settings-btn').onclick = () => openSettings();
@@ -2052,6 +2238,9 @@ function reflectTheme() {
   const th = (state && state.theme) || 'dark';
   document.querySelectorAll('#theme-seg .seg').forEach((b) => b.classList.toggle('active', b.dataset.theme === th));
 }
+// Fonctionnalités bêta (masquées partout quand coupées : voir [data-beta] dans style.css)
+$('beta-toggle').onchange = (e) => api.setBetaFeatures(e.target.checked);
+function renderBetaPane() { $('beta-toggle').checked = !!(state && state.betaFeatures); }
 // Mode développeur
 $('dev-toggle').onchange = (e) => api.setDevMode(e.target.checked);
 function renderDevPane() {
@@ -2059,12 +2248,12 @@ function renderDevPane() {
   const box = $('dev-list'); box.innerHTML = '';
   if (!state.devMode) return;
   const projs = state.devProjects || [];
-  if (!projs.length) { box.appendChild(el('div', 'dev-empty', 'Aucun serveur de dev détecté pour l’instant. Lance un projet (npm run dev…) et il apparaîtra ici et dans le rail.')); return; }
+  if (!projs.length) { box.appendChild(el('div', 'dev-empty', tr('Aucun serveur de dev détecté pour l’instant. Lance un projet (npm run dev…) et il apparaîtra ici et dans le rail.'))); return; }
   for (const p of projs) {
     const row = el('div', 'dev-item');
     row.appendChild(el('span', 'dot'));
     const who = el('div', 'who'); who.appendChild(el('div', 't', p.title)); who.appendChild(el('div', 'u', p.url)); row.appendChild(who);
-    const b = el('button', 'open', 'Ouvrir'); b.onclick = () => { closeOverlay(); api.devOpen(p.url); }; row.appendChild(b);
+    const b = el('button', 'open', tr('Ouvrir')); b.onclick = () => { closeOverlay(); api.devOpen(p.url); }; row.appendChild(b);
     box.appendChild(row);
   }
 }
@@ -2084,12 +2273,12 @@ function renderPasswords() {
   if (!pwItems.length) {
     const e = el('div', 'pw-empty');
     const big = el('div', 'big'); big.appendChild(icon('i-key')); e.appendChild(big);
-    e.appendChild(el('div', null, 'Aucun mot de passe pour l’instant.'));
-    const b = el('button', 'btn'); b.appendChild(icon('i-download')); b.appendChild(el('span', null, 'Importer depuis Chrome'));
+    e.appendChild(el('div', null, tr('Aucun mot de passe pour l’instant.')));
+    const b = el('button', 'btn'); b.appendChild(icon('i-download')); b.appendChild(el('span', null, tr('Importer depuis Chrome')));
     b.onclick = () => showOverlay('pw-guide', { over: true }); e.appendChild(b);
     pwBody.appendChild(e); return;
   }
-  if (!list.length) { pwBody.appendChild(el('div', 'empty-msg', 'Aucun résultat.')); return; }
+  if (!list.length) { pwBody.appendChild(el('div', 'empty-msg', tr('Aucun résultat.'))); return; }
   list.forEach((p, i) => {
     const row = el('div', 'pw-row'); row.style.setProperty('--i', Math.min(i, 16));
     const img = el('img'); img.alt = ''; img.src = `https://www.google.com/s2/favicons?domain=${hostOf(p.url)}&sz=32`;
@@ -2102,18 +2291,18 @@ function renderPasswords() {
     const secret = el('div', 'secret hidden-dots', '•'.repeat(Math.min(p.len || 8, 12)));
     row.appendChild(secret);
     const acts = el('div', 'acts');
-    const eye = el('button', 'pw-act'); eye.title = 'Afficher'; eye.appendChild(icon('i-eye'));
+    const eye = el('button', 'pw-act'); eye.title = tr('Afficher'); eye.appendChild(icon('i-eye'));
     let shown = false;
     eye.onclick = async () => {
       shown = !shown;
       if (shown) { const val = await api.pwReveal(p.id); secret.textContent = val || ''; secret.classList.remove('hidden-dots'); eye.querySelector('use').setAttribute('href', '#i-eye-off'); }
       else { secret.textContent = '•'.repeat(Math.min(p.len || 8, 12)); secret.classList.add('hidden-dots'); eye.querySelector('use').setAttribute('href', '#i-eye'); }
     };
-    const copy = el('button', 'pw-act'); copy.title = 'Copier'; copy.appendChild(icon('i-copy'));
-    copy.onclick = () => { api.pwCopy(p.id); copy.classList.add('copied'); copy.querySelector('use').setAttribute('href', '#i-check'); toast('Mot de passe copié, effacé du presse-papiers dans 30 s'); setTimeout(() => { copy.classList.remove('copied'); copy.querySelector('use').setAttribute('href', '#i-copy'); }, 1400); };
-    const go = el('button', 'pw-act'); go.title = 'Ouvrir le site'; go.appendChild(icon('i-globe'));
+    const copy = el('button', 'pw-act'); copy.title = tr('Copier'); copy.appendChild(icon('i-copy'));
+    copy.onclick = () => { api.pwCopy(p.id); copy.classList.add('copied'); copy.querySelector('use').setAttribute('href', '#i-check'); toast(tr('Mot de passe copié, effacé du presse-papiers dans 30 s')); setTimeout(() => { copy.classList.remove('copied'); copy.querySelector('use').setAttribute('href', '#i-copy'); }, 1400); };
+    const go = el('button', 'pw-act'); go.title = tr('Ouvrir le site'); go.appendChild(icon('i-globe'));
     go.onclick = () => { closeOverlay(); api.pwOpen(p.id); };
-    const del = el('button', 'pw-act danger'); del.title = 'Supprimer'; del.appendChild(icon('i-trash'));
+    const del = el('button', 'pw-act danger'); del.title = tr('Supprimer'); del.appendChild(icon('i-trash'));
     del.onclick = () => { api.pwDelete(p.id); refreshPasswords(); };
     acts.append(eye, copy, go, del);
     row.appendChild(acts);
@@ -2126,9 +2315,9 @@ async function runImport() {
   if (r.error) { toast(r.error); return; }
   await refreshPasswords();
   const parts = [];
-  if (r.imported) parts.push(`${r.imported} ajouté${r.imported > 1 ? 's' : ''}`);
-  if (r.updated) parts.push(`${r.updated} mis à jour`);
-  toast(parts.length ? parts.join(', ') + '. Pense à supprimer le CSV.' : 'Aucun mot de passe trouvé dans ce fichier.');
+  if (r.imported) parts.push(trn(r.imported, '{n} ajouté', '{n} ajoutés'));
+  if (r.updated) parts.push(tr('{n} mis à jour', { n: r.updated }));
+  toast(parts.length ? tr('{parts}. Pense à supprimer le CSV.', { parts: parts.join(', ') }) : tr('Aucun mot de passe trouvé dans ce fichier.'));
 }
 let toastTimer = null;
 function toast(msg) {
@@ -2162,7 +2351,7 @@ function sanitizeHtml(html) {
 function renderMdPreview(md) {
   const box = $('md-preview');
   let html = '';
-  try { html = window.marked ? window.marked.parse(md) : ('<pre>' + md.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>'); } catch { html = '<p>(aperçu indisponible)</p>'; }
+  try { html = window.marked ? window.marked.parse(md) : ('<pre>' + md.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>'); } catch { html = '<p>' + tr('(aperçu indisponible)') + '</p>'; }
   box.innerHTML = '<div class="md-render">' + sanitizeHtml(html) + '</div>';
 }
 function mdShowTab(which) {
@@ -2192,17 +2381,57 @@ api.onExportMd((data) => {
 $('md-tab-preview').onclick = () => mdShowTab('preview');
 $('md-tab-source').onclick = () => mdShowTab('source');
 $('md-close').onclick = closeOverlay;
-$('md-copy').onclick = () => { api.mdCopy(mdContent); toast('Markdown copié'); };
-$('md-download').onclick = async () => { const r = await api.mdDownload({ filename: mdTitle, content: mdContent }); if (r && r.ok) toast('Enregistré'); };
+$('md-copy').onclick = () => { api.mdCopy(mdContent); toast(tr('Markdown copié')); };
+$('md-download').onclick = async () => { const r = await api.mdDownload({ filename: mdTitle, content: mdContent }); if (r && r.ok) toast(tr('Enregistré')); };
 
 // ---------- messages du process principal ----------
-api.onState((s) => { state = s; render(); reflectTheme(); });
+api.onState((s) => {
+  state = s;
+  if (s.uiLang && s.uiLang !== I18N.lang) applyUiLang(s.uiLang);
+  render(); reflectTheme();
+});
+
+// ---------- langue de l'interface ----------
+// Le process principal fixe la langue (state.uiLang). i18n.js retraduit le HTML statique ; tout ce que ce
+// fichier a écrit lui-même est reconstruit ici.
+let uiLangPending = null;
+function applyUiLang(code) {
+  if (!code || code === I18N.lang || code === uiLangPending) return Promise.resolve();
+  uiLangPending = code;
+  hideTip();
+  // infobulles déjà survolées : leur texte est passé de title à data-tip ; on le rend à title pour qu'i18n.js le retraduise
+  document.querySelectorAll('[data-tip]:not([title])').forEach((n) => { n.setAttribute('title', n.dataset.tip); delete n.dataset.tip; });
+  return I18N.setLang(code).then(() => { uiLangPending = null; rerenderAll(); });
+}
+function rerenderAll() {
+  // nœuds réconciliés (onglets, groupes) : certains textes ne sont posés qu'à la création → on repart de zéro
+  $('tabs').textContent = '';
+  applyShortcutHints(null);
+  if (state) render();
+  renderClaudeTasks();
+  if (openOverlay === 'palette') runSearch();
+  else if (openOverlay === 'history') renderHistory();
+  else if (openOverlay === 'archive') $('archive-btn').onclick();
+  else if (openOverlay === 'downloads') renderDownloads();
+  else if (openOverlay === 'addapp') renderRailEditor(true);
+  else if (openOverlay === 'display-pick' && dpReq) renderDisplayPick();
+  if (openOverlay === 'fav-custom' || overlayParent === 'fav-custom') { renderFcColors(); renderFcIcons($('fc-icon-search').value); updateFcPreview(); }
+  if (openOverlay === 'settings' || overlayParent === 'settings') {
+    const cur = document.querySelector('.settings-navitem.active');
+    const pane = cur && cur.dataset.pane;
+    if (pane === 'privacy') renderPrivacyPane(); // garde la catégorie ouverte
+    else if (pane) selectSettingsPane(pane);
+  }
+}
 api.onFocusUrl(() => { closeOverlay(); urlEl.focus(); });
 // raccourcis clavier du menu (Ctrl+H, Ctrl+J, Ctrl+Maj+Suppr) qui ouvrent un panneau de l'interface
 api.onUiCommand((cmd) => {
   if (cmd === 'history') { if (openOverlay === 'history') closeOverlay(); else $('history-btn').click(); }
   else if (cmd === 'downloads') { if (openOverlay === 'downloads') closeOverlay(); else $('downloads-btn').click(); }
+  else if (cmd === 'downloads-open') { if (openOverlay !== 'downloads') $('downloads-btn').click(); } // clic sur la notification de téléchargement
   else if (cmd === 'privacy') openSettings('privacy');
+  else if (cmd === 'settings') { if (openOverlay === 'settings') closeOverlay(); else openSettings(); }
+  else if (cmd === 'about') openSettings('about');
 });
 
 // Authentification HTTP (intranet, routeur, proxy…) : une demande à la fois, posée par le processus principal.
@@ -2215,8 +2444,10 @@ function settleAuth(creds) {
 api.onAuthRequest((req) => {
   if (authReq) settleAuth(null); // ne devrait pas arriver (file côté main) : on ne laisse rien en suspens
   authReq = req;
-  $('auth-msg').textContent = (req.isProxy ? 'Le proxy ' : 'Le site ') + req.host + ' demande un identifiant'
-    + (req.realm ? ` (« ${req.realm} »).` : '.');
+  const av = { host: req.host, realm: req.realm };
+  $('auth-msg').textContent = req.isProxy
+    ? (req.realm ? tr('Le proxy {host} demande un identifiant (« {realm} »).', av) : tr('Le proxy {host} demande un identifiant.', av))
+    : (req.realm ? tr('Le site {host} demande un identifiant (« {realm} »).', av) : tr('Le site {host} demande un identifiant.', av));
   $('auth-user').value = ''; $('auth-pass').value = '';
   showOverlay('auth', { over: true });
   setTimeout(() => $('auth-user').focus(), 0);
@@ -2228,6 +2459,51 @@ $('auth-form').onsubmit = (e) => {
 };
 $('auth-cancel').onclick = () => closeOverlay();
 
+// Demandes d'un site (caméra, micro, position, notifications… ou ouvrir une autre appli) : une à la fois,
+// posées par le processus principal. Échap / clic à côté = demande écartée (refus non mémorisé).
+const PERM_UI = {
+  media: { ico: 'i-camera', title: 'Caméra et micro' },
+  geolocation: { ico: 'i-pin', title: 'Position' },
+  notifications: { ico: 'i-bell', title: 'Notifications' },
+  'midi-sysex': { ico: 'i-settings', title: 'Périphériques MIDI' },
+  'clipboard-read': { ico: 'i-copy', title: 'Presse-papiers' },
+};
+let permReq = null;
+function settlePerm(choice) {
+  if (!permReq) return;
+  const id = permReq.id; permReq = null;
+  api.permReply(choice ? { id, choice, remember: $('pp-remember').checked } : { id });
+}
+api.onPermPrompt((req) => {
+  if (permReq) settlePerm(null);
+  permReq = req;
+  const external = req.kind === 'external';
+  const ui = external ? { ico: 'i-link', title: tr('Ouvrir une application') } : (PERM_UI[req.permission] || { ico: 'i-shield', title: tr('Autorisation') });
+  $('pp-ico').setAttribute('href', '#' + ui.ico);
+  $('pp-title').textContent = tr(ui.title);
+  $('pp-msg').textContent = req.message;
+  $('pp-detail').textContent = req.detail || '';
+  $('pp-detail').classList.toggle('hidden', !req.detail);
+  $('pp-remember').checked = false;
+  $('pp-remember-label').textContent = req.remember || '';
+  $('pp-remember-row').classList.toggle('hidden', !req.remember);
+  const buttons = external
+    ? [['cancel', tr('Annuler')], ['open', tr('Ouvrir'), true]]
+    : [['block', tr('Bloquer')], ['once', tr('Autoriser cette fois')], ['always', tr('Toujours autoriser'), true]];
+  const bar = $('pp-actions'); bar.textContent = '';
+  for (const [choice, label, primary] of buttons) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label;
+    if (primary) b.className = 'primary';
+    b.dataset.choice = choice;
+    b.onclick = () => { settlePerm(choice === 'cancel' ? null : choice); closeOverlay(); };
+    bar.appendChild(b);
+  }
+  showOverlay('perm-prompt', { over: true });
+  // Entrée = « cette fois » (jamais une autorisation permanente par réflexe)
+  setTimeout(() => { const b = bar.querySelector(external ? '[data-choice="open"]' : '[data-choice="once"]'); if (b) b.focus(); }, 0);
+});
+
 // Partage d'écran : la page (Meet, Teams…) a appelé getDisplayMedia ; on choisit un écran ou une fenêtre.
 let dpReq = null, dpSel = null;
 function settleDisplay(choice) {
@@ -2237,7 +2513,7 @@ function settleDisplay(choice) {
 }
 function renderDisplayPick() {
   const body = $('dp-body'); body.innerHTML = '';
-  const groups = [['Écrans', dpReq.sources.filter((x) => x.screen)], ['Fenêtres', dpReq.sources.filter((x) => !x.screen)]];
+  const groups = [[tr('Écrans'), dpReq.sources.filter((x) => x.screen)], [tr('Fenêtres'), dpReq.sources.filter((x) => !x.screen)]];
   for (const [label, list] of groups) {
     if (!list.length) continue;
     body.appendChild(el('div', 'dp-cat', label));
@@ -2247,7 +2523,7 @@ function renderDisplayPick() {
       const th = el('div', 'dp-thumb'); if (src.thumb) th.style.backgroundImage = `url("${src.thumb}")`; tile.appendChild(th);
       const nm = el('div', 'dp-name');
       if (src.icon) { const im = el('img'); im.src = src.icon; im.alt = ''; nm.appendChild(im); }
-      nm.appendChild(el('span', null, src.name || (src.screen ? 'Écran' : 'Fenêtre'))); tile.appendChild(nm);
+      nm.appendChild(el('span', null, src.name || (src.screen ? tr('Écran') : tr('Fenêtre')))); tile.appendChild(nm);
       tile.onclick = () => { dpSel = src.id; $('dp-share').disabled = false; renderDisplayPick(); };
       tile.ondblclick = () => { dpSel = src.id; $('dp-share').click(); };
       grid.appendChild(tile);
@@ -2258,7 +2534,7 @@ function renderDisplayPick() {
 api.onDisplayPick((req) => {
   if (dpReq) settleDisplay(null);
   dpReq = req; dpSel = null;
-  $('dp-host').textContent = (req.host || 'Une page') + ' veut voir le contenu de ton écran.';
+  $('dp-host').textContent = req.host ? tr('{host} veut voir le contenu de ton écran.', { host: req.host }) : tr('Une page veut voir le contenu de ton écran.');
   $('dp-audio-row').classList.toggle('hidden', !req.audio);
   $('dp-audio').checked = false;
   $('dp-share').disabled = true;
@@ -2290,18 +2566,18 @@ api.changelogGet().then((md) => {
   let html = '';
   try { html = window.marked && md ? window.marked.parse(md) : ''; } catch {}
   if (html) box.innerHTML = '<div class="md-render">' + sanitizeHtml(html) + '</div>';
-  else box.textContent = 'Changelog indisponible.';
+  else box.textContent = tr('Changelog indisponible.');
 }).catch(() => {});
 // version de développement (npm start) : logo rouge + pastille DEV
 api.settingsGet().then((s) => { if (s && s.packaged === false && !s.demo) { $('brand').classList.add('dev'); $('dev-pill').classList.remove('hidden'); } }).catch(() => {});
 
 // ---------- téléchargements ----------
 let downloadsList = [];
-function fmtBytes(n) { if (!n) return '0 o'; const u = ['o', 'Ko', 'Mo', 'Go']; const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024))); return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i]; }
+function fmtBytes(n) { if (!n) return tr('{n} o', { n: 0 }); const u = [tr('o'), tr('Ko'), tr('Mo'), tr('Go')]; const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024))); return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i]; }
 function renderDownloads() {
   const box = $('dl-list'); if (!box) return;
   box.innerHTML = '';
-  if (!downloadsList.length) { box.appendChild(el('div', 'empty-msg', 'Aucun téléchargement pour l’instant.')); return; }
+  if (!downloadsList.length) { box.appendChild(el('div', 'empty-msg', tr('Aucun téléchargement pour l’instant.'))); return; }
   for (const d of downloadsList) {
     const row = el('div', 'dl-row');
     const ic = el('div', 'dl-ic'); ic.appendChild(icon(d.state === 'completed' ? 'i-check' : d.state === 'progressing' || d.state === 'paused' ? 'i-download' : 'i-close')); row.appendChild(ic);
@@ -2313,31 +2589,42 @@ function renderDownloads() {
     } else if (d.state === 'completed') {
       mid.appendChild(el('div', 'dl-sub', fmtBytes(d.received)));
     } else {
-      mid.appendChild(el('div', 'dl-sub', d.state === 'cancelled' ? 'Annulé' : 'Échec'));
+      mid.appendChild(el('div', 'dl-sub', d.state === 'cancelled' ? tr('Annulé') : tr('Échec')));
     }
     row.appendChild(mid);
     const acts = el('div', 'dl-acts');
     if (d.state === 'completed') {
-      const open = el('button', 'pw-act'); open.title = 'Ouvrir'; open.appendChild(icon('i-globe')); open.onclick = () => api.dlOpen(d.id); acts.appendChild(open);
-      const fold = el('button', 'pw-act'); fold.title = 'Voir dans le dossier'; fold.appendChild(icon('i-folder')); fold.onclick = () => api.dlFolder(d.id); acts.appendChild(fold);
+      const open = el('button', 'pw-act'); open.title = tr('Ouvrir'); open.appendChild(icon('i-globe')); open.onclick = () => api.dlOpen(d.id); acts.appendChild(open);
+      const fold = el('button', 'pw-act'); fold.title = tr('Voir dans le dossier'); fold.appendChild(icon('i-folder')); fold.onclick = () => api.dlFolder(d.id); acts.appendChild(fold);
     } else if (d.state === 'progressing' || d.state === 'paused') {
-      const cancel = el('button', 'pw-act danger'); cancel.title = 'Annuler'; cancel.appendChild(icon('i-close')); cancel.onclick = () => api.dlCancel(d.id); acts.appendChild(cancel);
+      const cancel = el('button', 'pw-act danger'); cancel.title = tr('Annuler'); cancel.appendChild(icon('i-close')); cancel.onclick = () => api.dlCancel(d.id); acts.appendChild(cancel);
     }
-    const rm = el('button', 'pw-act'); rm.title = 'Retirer de la liste'; rm.appendChild(icon('i-trash')); rm.onclick = () => api.dlRemove(d.id); acts.appendChild(rm);
+    const rm = el('button', 'pw-act'); rm.title = tr('Retirer de la liste'); rm.appendChild(icon('i-trash')); rm.onclick = () => api.dlRemove(d.id); acts.appendChild(rm);
     row.appendChild(acts);
     box.appendChild(row);
   }
 }
+let dlBadgeActive = 0;
 function updateDlBadge() {
-  const active = downloadsList.filter((d) => d.state === 'progressing' || d.state === 'paused').length;
-  setText($('dl-badge'), active ? String(active) : '');
-  $('downloads-btn').classList.toggle('active-dl', active > 0);
+  const act = downloadsList.filter((d) => d.state === 'progressing' || d.state === 'paused');
+  const active = act.length;
+  const badge = $('dl-badge'), btn = $('downloads-btn');
+  setText(badge, active ? String(active) : '');
+  btn.classList.toggle('active-dl', active > 0);
+  // anneau de progression : agrégé sur les téléchargements actifs ; indéterminé dès qu'une taille est inconnue
+  const known = active > 0 && act.every((d) => d.total > 0);
+  const total = act.reduce((n, d) => n + d.total, 0), received = act.reduce((n, d) => n + d.received, 0);
+  btn.classList.toggle('indet', active > 0 && !known);
+  btn.style.setProperty('--dl-p', (known && total ? Math.round(100 * received / total) : 0) + '%');
+  if (active > dlBadgeActive) { badge.classList.remove('bump'); void badge.offsetWidth; badge.classList.add('bump'); } // nouveau téléchargement : la pastille « pop »
+  dlBadgeActive = active;
 }
 $('downloads-btn').onclick = async () => { downloadsList = await api.dlList(); renderDownloads(); showOverlay('downloads'); };
 $('downloads-close').onclick = closeOverlay;
 $('dl-clear').onclick = () => api.dlClear();
+// la notification flottante de progression vit dans ui/tip.html (overlay toujours au-dessus de la page web active,
+// alors que ce document de chrome est couvert par la WebContentsView de l'onglet) ; cf. main.js sendDownloads().
 api.onDownloads((list) => { downloadsList = list || []; updateDlBadge(); if (openOverlay === 'downloads') renderDownloads(); });
-api.onDownloadStarted(() => { toast('Téléchargement démarré'); });
 
 // ---------- tooltips personnalisés (remplacent les infobulles natives) ----------
 let tipTimer = null, tipEl = null;
@@ -2384,6 +2671,8 @@ function clIslandOf(taskId) {
 
 let clIslandsSig = '';
 function renderClaudeChrome() {
+  document.body.classList.toggle('beta-off', !state.betaFeatures);
+  document.documentElement.lang = state.uiLang || 'en';
   const open = !!state.claudeOpen;
   document.body.classList.toggle('claude', open);
   // re-rend les cartes quand un îlot naît, se vide ou change de tâche (l'info vient de state, pas du flux claude-tasks)
@@ -2402,21 +2691,23 @@ function renderClaudeChrome() {
 function clAgo(ts) {
   if (!ts) return '';
   const s = Math.max(0, (Date.now() - ts) / 1000);
-  if (s < 60) return 'à l’instant';
-  if (s < 3600) return 'il y a ' + Math.round(s / 60) + ' min';
-  if (s < 86400) return 'il y a ' + Math.round(s / 3600) + ' h';
-  return new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  if (s < 60) return tr('à l’instant');
+  if (s < 3600) return tr('il y a {n} min', { n: Math.round(s / 60) });
+  if (s < 86400) return tr('il y a {n} h', { n: Math.round(s / 3600) });
+  return new Date(ts).toLocaleDateString(I18N.locale, { day: 'numeric', month: 'short' });
 }
 function clDuration(t) {
   const ms = t.durationMs || (t.finishedAt && t.createdAt ? t.finishedAt - t.createdAt : 0);
   if (!ms) return '';
   const s = Math.round(ms / 1000);
-  return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+  return s < 60 ? tr('{s} s', { s }) : tr('{m} min {s} s', { m: Math.floor(s / 60), s: s % 60 });
 }
 const CL_STATUS = { running: 'En cours', done: 'Terminée', error: 'Erreur', canceled: 'Annulée' };
 
+// les libellés gardent la langue de leur création : on reconnaît le préfixe français et sa traduction
 function clStepIcon(label) {
-  return /^Recherche/.test(label) ? 'i-search' : /^Lecture/.test(label) ? 'i-globe' : 'i-spark';
+  const starts = (fr) => { const pre = (k) => k.split(' — ')[0]; return label.startsWith(pre(fr)) || label.startsWith(pre(tr(fr))); };
+  return starts('Recherche web — {query}') ? 'i-search' : starts('Lecture — {url}') ? 'i-globe' : 'i-spark';
 }
 // Ligne « demande » (prompt initial dans l'historique ou suite demandée)
 function clPromptRow(text) {
@@ -2445,7 +2736,7 @@ function clMdBody(t, text) {
 function clSteps(t) {
   const box = el('div', 'cl-steps');
   const steps = (t.activity || []).slice(-10);
-  if (!steps.length) steps.push({ label: 'Claude démarre…' });
+  if (!steps.length) steps.push({ label: tr('Claude démarre…') });
   steps.forEach((s, i) => {
     const row = el('div', 'cl-step' + (i === steps.length - 1 ? ' last' : ''));
     row.appendChild(icon(clStepIcon(s.label)));
@@ -2457,10 +2748,10 @@ function clSteps(t) {
 // Champ « Demander une suite… » : la tâche reprend avec le contexte de sa session
 function clFollowRow(t) {
   const row = el('div', 'cl-follow');
-  const inp = el('input'); inp.placeholder = 'Demander une suite…'; inp.spellcheck = false;
+  const inp = el('input'); inp.placeholder = tr('Demander une suite…'); inp.spellcheck = false;
   const send = () => { const v = inp.value.trim(); if (!v) return; api.claudeContinue({ id: t.id, prompt: v }); };
   inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') send(); };
-  const go = el('button', 'cl-follow-go'); go.title = 'Envoyer — la tâche reprend avec son contexte';
+  const go = el('button', 'cl-follow-go'); go.title = tr('Envoyer — la tâche reprend avec son contexte');
   go.appendChild(icon('i-forward'));
   go.onclick = (e) => { e.stopPropagation(); send(); };
   row.append(inp, go);
@@ -2480,7 +2771,7 @@ function renderClaudeTasks() {
 
     const head = el('div', 'cl-task-head');
     const title = el('div', 'cl-task-title'); title.textContent = t.title || t.prompt;
-    const x = el('button', 'cl-task-x'); x.dataset.tip = 'Supprimer la tâche';
+    const x = el('button', 'cl-task-x'); x.dataset.tip = tr('Supprimer la tâche');
     x.appendChild(icon('i-close'));
     x.onclick = (e) => { e.stopPropagation(); api.claudeRemove(t.id); };
     head.append(title, x);
@@ -2490,9 +2781,9 @@ function renderClaudeTasks() {
     // « ● Statut · durée · quand »
     const meta = el('div', 'cl-task-meta');
     meta.appendChild(el('span', 'cl-dot ' + t.status));
-    meta.appendChild(el('span', 'cl-status', CL_STATUS[t.status] || CL_STATUS.error));
+    meta.appendChild(el('span', 'cl-status', tr(CL_STATUS[t.status] || CL_STATUS.error)));
     const parts = t.status === 'running' ? [clAgo(t.createdAt)] : [clDuration(t), clAgo(t.finishedAt)];
-    if (t.tabs && t.tabs.length) parts.push(t.tabs.length + ' onglets');
+    if (t.tabs && t.tabs.length) parts.push(trn(t.tabs.length, '{n} onglet', '{n} onglets'));
     const rest = parts.filter(Boolean).join(' · ');
     if (rest) meta.appendChild(el('span', 'cl-when', '· ' + rest));
     card.appendChild(meta);
@@ -2514,7 +2805,7 @@ function renderClaudeTasks() {
         const ex = el('div', 'cl-exch' + (openExch ? ' open' : ''));
         const ehead = el('button', 'cl-exch-head');
         ehead.appendChild(icon('i-forward', 'chev'));
-        ehead.appendChild(el('span', 'txt', h.prompt || 'Demande initiale'));
+        ehead.appendChild(el('span', 'txt', h.prompt || tr('Demande initiale')));
         ehead.onclick = (e) => { e.stopPropagation(); if (openExch) clOpenExch.delete(key); else clOpenExch.add(key); renderClaudeTasks(); };
         ex.appendChild(ehead);
         if (openExch) {
@@ -2537,15 +2828,15 @@ function renderClaudeTasks() {
         actions.appendChild(b);
       };
       if (t.output) {
-        act('i-expand', 'Ouvrir en grand', () => api.claudeOpenMd(t.id));
-        act('i-copy', 'Copier le résultat', () => { api.mdCopy(t.output); toast('Résultat copié'); });
+        act('i-expand', tr('Ouvrir en grand'), () => api.claudeOpenMd(t.id));
+        act('i-copy', tr('Copier le résultat'), () => { api.mdCopy(t.output); toast(tr('Résultat copié')); });
         // îlot relié : le retrouver s'il existe, sinon l'ouvrir avec les sources du résultat
-        if (clIslandOf(t.id)) act('i-spark', 'Voir l’îlot de la tâche', () => api.claudeFocusIsland(t.id), 'accent');
-        else if ((t.tabs && t.tabs.length) || /https?:\/\//.test(t.output)) act('i-globe', 'Rouvrir l’îlot d’onglets', () => api.claudeOpenIsland(t.id), 'accent');
+        if (clIslandOf(t.id)) act('i-spark', tr('Voir l’îlot de la tâche'), () => api.claudeFocusIsland(t.id), 'accent');
+        else if ((t.tabs && t.tabs.length) || /https?:\/\//.test(t.output)) act('i-globe', tr('Rouvrir l’îlot d’onglets'), () => api.claudeOpenIsland(t.id), 'accent');
       }
       actions.appendChild(el('span', 'spacer'));
-      if (t.status === 'running') act('i-stop', 'Arrêter la tâche', () => api.claudeCancel(t.id), 'danger');
-      else act('i-trash', 'Supprimer la tâche', () => api.claudeRemove(t.id), 'danger');
+      if (t.status === 'running') act('i-stop', tr('Arrêter la tâche'), () => api.claudeCancel(t.id), 'danger');
+      else act('i-trash', tr('Supprimer la tâche'), () => api.claudeRemove(t.id), 'danger');
       card.appendChild(actions);
     }
     box.appendChild(card);

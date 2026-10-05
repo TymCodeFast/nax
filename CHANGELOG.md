@@ -3,6 +3,29 @@
 Toutes les évolutions notables de NaX sont listées ici, de la plus récente à la plus ancienne.
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les numéros suivent [semver](https://semver.org/lang/fr/).
 
+## [Non publié]
+
+## [0.2.0] - 2026-10-05
+
+### Ajouté
+- Interface en anglais (par défaut) ou en français : Paramètres → Langues → « Langue du navigateur ». Le changement s'applique tout de suite, sans redémarrer. Ajouter une langue = un fichier dans `ui/locales/` (voir `languages.js`).
+- Paramètres → « Fonctionnalités bêta » : un interrupteur active ou masque toutes les fonctionnalités en bêta (désactivées par défaut).
+- Le panneau IA Claude porte une marque « Bêta » et rappelle qu'il faut Claude Code installé sur la machine avec un abonnement Claude actif.
+- Paramètres → Raccourcis : liste de tous les raccourcis clavier, filtrable. Le bouton « Modifier » permet de changer la touche de chaque raccourci, de le désactiver ou de le rétablir. Les infobulles et le menu du logo suivent les touches choisies.
+- Menu de l'application sur le logo NaX (clic gauche, droit ou Entrée) : nouvel onglet, fenêtres, recherche, historique, téléchargements, paramètres, à propos, quitter. Les raccourcis y sont affichés.
+- Plusieurs fenêtres : « Nouvelle fenêtre » (Ctrl+N) et « Nouvelle fenêtre privée » (Ctrl+Maj+N), depuis le menu du logo, le clic droit sur un lien, le clic droit sur un onglet (« Déplacer vers une nouvelle fenêtre ») et la liste de raccourcis de l'icône dans la barre des tâches Windows.
+- Fenêtre privée : tous ses onglets partagent une session en mémoire, rien n'est écrit sur le disque ni dans l'historique. Teinte violette sur toute l'interface, titre suffixé « (privé) », sans rail d'applis ni panneau Claude.
+- Les fenêtres normales sont restaurées au démarrage avec leur position et leur taille. Fermer une fenêtre parmi d'autres envoie ses onglets dans l'archive.
+- Les demandes d'autorisation (caméra, micro, position, notifications…) proposent « Autoriser cette fois », valable jusqu'à la fermeture du navigateur, en plus de « Toujours autoriser » et « Bloquer ».
+
+### Modifié
+- « Nouvel onglet privé » passe de Ctrl+Maj+N à Ctrl+Maj+P ; Ctrl+Maj+N ouvre désormais une fenêtre privée, comme dans Chrome. Ctrl+Maj+W ferme la fenêtre.
+- Seule la fenêtre principale porte le rail d'applis (session connectée), les serveurs de dev et le panneau Claude. Si elle se ferme, la plus ancienne fenêtre normale restante prend le relais.
+- Les demandes d'autorisation et d'ouverture d'une autre application s'affichent dans une fenêtre de l'app au lieu d'une popup Windows. Échap ou un clic à côté refuse sans mémoriser le choix.
+
+### Corrigé
+- Google Meet (et les sites qui vérifient l'autorisation avant de la demander) ne proposait jamais d'autoriser la caméra et le micro.
+
 ## [0.1.5] - 2026-10-04
 
 ### Ajouté
