@@ -6,6 +6,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; les nu
 ## [Non publié]
 
 ### Ajouté
+- Paramètres → « Fonctionnalités bêta » : un interrupteur active ou masque toutes les fonctionnalités en bêta (désactivées par défaut).
+- Le panneau IA Claude porte une marque « Bêta » et rappelle qu'il faut Claude Code installé sur la machine avec un abonnement Claude actif.
 - Paramètres → Raccourcis : liste de tous les raccourcis clavier, filtrable. Le bouton « Modifier » permet de changer la touche de chaque raccourci, de le désactiver ou de le rétablir. Les infobulles et le menu du logo suivent les touches choisies.
 - Menu de l'application sur le logo NaX (clic gauche, droit ou Entrée) : nouvel onglet, fenêtres, recherche, historique, téléchargements, paramètres, à propos, quitter. Les raccourcis y sont affichés.
 - Plusieurs fenêtres : « Nouvelle fenêtre » (Ctrl+N) et « Nouvelle fenêtre privée » (Ctrl+Maj+N), depuis le menu du logo, le clic droit sur un lien, le clic droit sur un onglet (« Déplacer vers une nouvelle fenêtre ») et la liste de raccourcis de l'icône dans la barre des tâches Windows.

@@ -418,7 +418,7 @@ function renderGroupHead(head, g, collapsed) {
     chev.onclick = (e) => { e.stopPropagation(); if (!suppressClick) api.groupToggle(g.id); };
     head.appendChild(chev);
     if (g.claude) { // badge « ouvert par Claude » : renvoie à la tâche dans le panneau
-      const spark = el('button', 'g-claude'); spark.title = 'Îlot ouvert par Claude — voir la tâche';
+      const spark = el('button', 'g-claude'); spark.dataset.beta = ''; spark.title = 'Îlot ouvert par Claude — voir la tâche';
       spark.appendChild(icon('i-spark'));
       spark.onclick = (e) => { e.stopPropagation(); const tid = head.dataset.ctask; if (tid) api.claudeRevealTask(+tid); };
       head.appendChild(spark);
@@ -1519,6 +1519,7 @@ function selectSettingsPane(pane) {
   document.querySelectorAll('.settings-pane').forEach((s) => s.classList.toggle('hidden', s.dataset.pane !== pane));
   if (pane === 'passwords') refreshPasswords();
   if (pane === 'dev') renderDevPane();
+  if (pane === 'beta') renderBetaPane();
   if (pane === 'about') renderAboutPane();
   if (pane === 'search') renderSearchPane();
   if (pane === 'favorites') renderFavPane();
@@ -2241,6 +2242,9 @@ function reflectTheme() {
   const th = (state && state.theme) || 'dark';
   document.querySelectorAll('#theme-seg .seg').forEach((b) => b.classList.toggle('active', b.dataset.theme === th));
 }
+// Fonctionnalités bêta (masquées partout quand coupées : voir [data-beta] dans style.css)
+$('beta-toggle').onchange = (e) => api.setBetaFeatures(e.target.checked);
+function renderBetaPane() { $('beta-toggle').checked = !!(state && state.betaFeatures); }
 // Mode développeur
 $('dev-toggle').onchange = (e) => api.setDevMode(e.target.checked);
 function renderDevPane() {
@@ -2632,6 +2636,7 @@ function clIslandOf(taskId) {
 
 let clIslandsSig = '';
 function renderClaudeChrome() {
+  document.body.classList.toggle('beta-off', !state.betaFeatures);
   const open = !!state.claudeOpen;
   document.body.classList.toggle('claude', open);
   // re-rend les cartes quand un îlot naît, se vide ou change de tâche (l'info vient de state, pas du flux claude-tasks)

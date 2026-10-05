@@ -140,7 +140,7 @@
         <kbd id="omni-hint" title="Rechercher">Ctrl K</kbd>
       </div>
       <span id="private-pill" class="hidden"><svg><use href="#i-incognito"/></svg><span>Privé</span></span>
-      <button id="claude-btn" class="nav-btn" title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
+      <button id="claude-btn" class="nav-btn" data-beta title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
       <button id="split-btn" class="nav-btn" title="Diviser la vue"><svg><use href="#i-split"/></svg></button>
       <button id="home" class="nav-btn" data-kb="home" title="Accueil (Alt+Début)"><svg><use href="#i-home"/></svg></button>
       <div id="progress"></div>
@@ -225,6 +225,7 @@
             <button class="settings-navitem" data-pane="permissions"><svg><use href="#i-lock"/></svg><span>Autorisations</span></button>
             <button class="settings-navitem" data-pane="privacy"><svg><use href="#i-shield"/></svg><span>Données de navigation</span></button>
             <button class="settings-navitem" data-pane="shortcuts"><svg><use href="#i-keyboard"/></svg><span>Raccourcis</span></button>
+            <button class="settings-navitem" data-pane="beta"><svg><use href="#i-spark"/></svg><span>Fonctionnalités bêta</span></button>
             <button class="settings-navitem" data-pane="dev"><svg><use href="#i-code"/></svg><span>Développeur</span></button>
             <button class="settings-navitem" data-pane="about"><svg><use href="#i-spark"/></svg><span>À propos</span></button>
           </nav>
@@ -347,6 +348,27 @@
                 <div><h2>Données de navigation</h2><div class="setting-desc muted">Ouvre une catégorie pour voir et supprimer élément par élément. Rien n'est envoyé ailleurs.</div></div>
               </div>
               <div id="bd-list" class="bd-list"></div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="beta">
+              <h2>Fonctionnalités bêta</h2>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <div class="setting-name">Activer les fonctionnalités bêta</div>
+                  <div class="setting-desc muted">Encore en rodage : elles peuvent changer ou mal se comporter. Coupées, elles sont masquées partout dans NaX.</div>
+                </div>
+                <label class="switch"><input id="beta-toggle" type="checkbox"><span class="track"></span></label>
+              </div>
+              <div class="beta-list">
+                <div class="beta-item">
+                  <span class="beta-ico"><svg><use href="#i-spark"/></svg></span>
+                  <div class="who">
+                    <div class="t">Panneau IA Claude <span class="beta-tag">Bêta</span></div>
+                    <div class="u muted">Confie une recherche à Claude : il explore le web en arrière-plan et ouvre un îlot avec les meilleures pages.</div>
+                    <div class="beta-req"><svg><use href="#i-key"/></svg><span>Nécessite Claude Code installé sur cette machine et un abonnement Claude actif (Pro ou Max).</span></div>
+                  </div>
+                </div>
+              </div>
             </section>
 
             <section class="settings-pane hidden" data-pane="shortcuts">
@@ -546,11 +568,12 @@
   </main>
 
   <!-- Colonne 4 : tâches Claude (CLI Claude Code, abonnement) -->
-  <aside id="claude-panel">
+  <aside id="claude-panel" data-beta>
     <div class="cl-head">
       <button id="claude-close" class="icon-btn" title="Replier le panneau"><svg><use href="#i-forward"/></svg></button>
-      <div class="cl-title"><svg><use href="#i-spark"/></svg><span>Claude</span></div>
+      <div class="cl-title"><svg><use href="#i-spark"/></svg><span>Claude</span><span class="beta-tag" title="Fonctionnalité en bêta : elle peut changer ou mal se comporter">Bêta</span></div>
     </div>
+    <div class="cl-notice"><svg><use href="#i-key"/></svg><span>Nécessite <b>Claude Code</b> installé sur cette machine et connecté à un <b>abonnement Claude</b> actif (Pro ou Max).</span></div>
     <div class="cl-compose">
       <div class="cl-field">
         <textarea id="claude-prompt" rows="1" spellcheck="false" placeholder="Confie une recherche à Claude…"></textarea>

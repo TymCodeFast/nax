@@ -82,6 +82,7 @@ kbd { font: 500 10.5px "JetBrains Mono", ui-monospace, Consolas, monospace; colo
 /* panneau Claude ouvert : la 4e colonne prend sa largeur (CLAUDE_W côté main.js) */
 body.claude { --claude-w: 400px; }
 body:not(.claude) #claude-panel { display: none; }
+body.beta-off [data-beta] { display: none !important; } /* fonctionnalités bêta coupées dans les réglages */
 
 /* ============ Rail des applis ============ */
 #rail { background: var(--rail); display: flex; flex-direction: column; align-items: center; padding: 10px 0 12px; gap: 8px; position: relative;
@@ -724,6 +725,15 @@ body.split #navbar { padding-right: 12px; flex: none; }
 .switch input:checked + .track::before { transform: translateX(18px); background: #fff; }
 
 /* liste des projets détectés (volet Développeur) */
+.beta-list { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
+.beta-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 11px; background: var(--field); border: 1px solid var(--line); }
+.beta-item .beta-ico { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 9px; color: var(--c1); background: color-mix(in srgb, var(--c1) 14%, transparent); }
+.beta-item .beta-ico svg { width: 16px; height: 16px; }
+.beta-item .who { flex: 1; min-width: 0; }
+.beta-item .t { font-weight: 550; display: flex; align-items: center; gap: 8px; }
+.beta-item .u { font-size: 12.5px; margin-top: 3px; }
+.beta-req { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.beta-req svg { width: 13px; height: 13px; flex: none; margin-top: 2px; color: var(--c1); }
 .dev-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
 .dev-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 11px; background: var(--field); border: 1px solid var(--line); }
 .dev-item .dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,.7); flex: none; }
@@ -975,6 +985,10 @@ body.claude #split-tb-right { padding-right: 12px; }
 .cl-head .icon-btn { -webkit-app-region: no-drag; }
 .cl-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
 .cl-title svg { width: 16px; height: 16px; color: var(--c1); }
+.beta-tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; line-height: 16px; color: var(--c1); background: color-mix(in srgb, var(--c1) 14%, transparent); }
+.cl-notice { flex: none; display: flex; align-items: flex-start; gap: 8px; margin: 0 12px 10px; padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.45; color: var(--muted); background: var(--field); border: 1px solid var(--line); }
+.cl-notice svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--c1); }
+.cl-notice b { color: var(--fg); font-weight: 600; }
 
 /* composer : un seul champ arrondi (langage de l'omnibox), bouton ✦ intégré */
 .cl-compose { flex: none; padding: 2px 12px 12px; -webkit-app-region: no-drag; }
