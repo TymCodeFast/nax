@@ -280,6 +280,7 @@ function load() {
     spellcheckOn = !!s.spellcheckOn;
     if (Array.isArray(s.spellLangs) && s.spellLangs.length) spellLangs = s.spellLangs;
     if (s.permDefaults && typeof s.permDefaults === 'object') permDefaults = { ...permDefaults, ...s.permDefaults };
+    if (s.shortcuts && typeof s.shortcuts === 'object') for (const [k, v] of Object.entries(s.shortcuts)) if (typeof v === 'string') shortcutKeys[k] = v;
     saved = Array.isArray(s.windows) && s.windows.length
       ? s.windows
       : [{ tabs: s.tabs || [], groups: s.groups || [], currentTabId: s.currentTabId || null, sidebarOpen: s.sidebarOpen !== false }];
@@ -321,7 +322,7 @@ function snapshot() {
   const flat = main ? main.snapshotWindow() : { tabs: [], groups: [], currentTabId: null, sidebarOpen: sidebarOpenDefault };
   return {
     nextId, groups: flat.groups, apps, railPins, archive, history, favorites, sidebarOpen: flat.sidebarOpen, sidebarWidth, theme, devMode, betaFeatures, searchEngine,
-    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults,
+    homepage, newTabUrl, startupMode, downloadDir, askDownloadPath, defaultZoom, zoomHosts, spellcheckOn, spellLangs, permDefaults, shortcuts: shortcutKeys,
     perms: Object.fromEntries(permGrants),
     tabs: flat.tabs, // onglets privés non persistés (rien sur le disque)
     currentTabId: flat.currentTabId,
@@ -1891,18 +1892,18 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
   function brandMenu() {
     const cmd = (c) => () => uiFocus('ui-command', c);
     popupMenu([
-      { label: 'Nouvel onglet', hint: 'Ctrl+T', click: () => { newTab(); uiFocus('focus-url'); } },
-      ...(privateWin ? [] : [{ label: 'Nouvel onglet privé', hint: 'Ctrl+Maj+P', click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } }]),
-      { label: 'Nouvelle fenêtre', hint: 'Ctrl+N', click: () => newWindow() },
-      { label: 'Nouvelle fenêtre privée', hint: 'Ctrl+Maj+N', click: () => newWindow({ isPrivate: true }) },
+      { label: 'Nouvel onglet', hint: shortcutHint('new-tab'), click: () => { newTab(); uiFocus('focus-url'); } },
+      ...(privateWin ? [] : [{ label: 'Nouvel onglet privé', hint: shortcutHint('new-private-tab'), click: () => { newTab({ partition: splitPartition('private') }); uiFocus('focus-url'); } }]),
+      { label: 'Nouvelle fenêtre', hint: shortcutHint('new-window'), click: () => newWindow() },
+      { label: 'Nouvelle fenêtre privée', hint: shortcutHint('new-private-window'), click: () => newWindow({ isPrivate: true }) },
       { type: 'separator' },
-      { label: 'Rechercher', hint: 'Ctrl+K', click: () => uiFocus('open-palette') },
-      { label: 'Historique', hint: 'Ctrl+H', click: cmd('history') },
-      { label: 'Téléchargements', hint: 'Ctrl+J', click: cmd('downloads') },
+      { label: 'Rechercher', hint: shortcutHint('palette'), click: () => uiFocus('open-palette') },
+      { label: 'Historique', hint: shortcutHint('history'), click: cmd('history') },
+      { label: 'Téléchargements', hint: shortcutHint('downloads'), click: cmd('downloads') },
       { label: 'Paramètres', click: cmd('settings') },
       { type: 'separator' },
       { label: `À propos de NaX  v${app.getVersion()}`, click: cmd('about') },
-      { label: 'Fermer la fenêtre', hint: 'Ctrl+Maj+W', click: () => { if (win && !win.isDestroyed()) win.close(); } },
+      { label: 'Fermer la fenêtre', hint: shortcutHint('close-window'), click: () => { if (win && !win.isDestroyed()) win.close(); } },
       { label: 'Quitter', click: () => app.quit() },
     ]);
   }
@@ -2276,6 +2277,11 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
     });
     handle('zoom-list', () => Object.entries(zoomHosts).map(([host, factor]) => ({ host, factor })).sort((a, b) => a.host.localeCompare(b.host)));
     handle('zoom-reset', (_e, host) => { delete zoomHosts[host]; for (const wc of allWebContents()) { try { if (hostOf(wc.getURL()) === host) applyZoom(wc); } catch {} } persist(); return true; });
+    // Raccourcis clavier (Paramètres › Raccourcis)
+    handle('shortcuts-list', () => shortcutsPublic());
+    handle('shortcuts-set', (_e, id, accel) => ({ displaced: setShortcut(id, accel), list: shortcutsPublic() }));
+    handle('shortcuts-reset', (_e, id) => { resetShortcuts(id || null); return shortcutsPublic(); });
+    handle('shortcuts-suspend', (_e, on) => { suspendShortcuts(on); return true; });
     handle('zoom-reset-all', () => { zoomHosts = {}; applyZoomToAll(); persist(); return true; });
     on('set-search-engine', (_e, id) => { if (SEARCH_ENGINES.some((e) => e.id === id)) { searchEngine = id; sendState(); } });
     on('dev-open', (_e, url) => { const dup = tabs.find((t) => sameTarget(url, t.url)); if (dup) activateTab(dup.id); else newTab({ url }); });
@@ -2601,59 +2607,119 @@ function makeWindow({ saved = null, isPrivate: privateWin = false, main = false,
 
 // ---------- raccourcis ----------
 // Le menu d'application est partagé par toutes les fenêtres : chaque raccourci agit sur la fenêtre active.
-function buildMenu() {
+// Chaque raccourci a un id stable (clé de personnalisation), une touche principale et d'éventuelles touches
+// secondaires (alt). Paramètres › Raccourcis remplace la touche principale ; un raccourci personnalisé perd ses
+// touches secondaires (sinon l'ancienne touche continuerait d'agir en douce).
+let shortcutKeys = {};          // id -> accélérateur choisi par l'utilisateur ('' = désactivé) ; absent = par défaut
+let shortcutsSuspended = false; // saisie d'une touche en cours dans les Paramètres : menu sans accélérateurs
+function shortcutDefs() {
   const onWin = (fn) => () => { const w = focusedWin(); if (w) fn(w); };
   const withWC = (fn) => onWin((w) => { const wc = w.currentWC(); if (wc) fn(wc, w); });
   const uiCommand = (cmd) => onWin((w) => w.uiFocus('ui-command', cmd));
   const hardReload = withWC((wc) => wc.reloadIgnoringCache());
   const focusUrl = onWin((w) => w.uiFocus('focus-url'));
-  const tpl = [{
-    label: 'NaX',
-    submenu: [
-      { label: 'Nouvel onglet', accelerator: 'CmdOrCtrl+T', click: onWin((w) => { w.newTab(); w.uiFocus('focus-url'); }) },
-      { label: 'Nouvel onglet privé', accelerator: 'CmdOrCtrl+Shift+P', click: onWin((w) => { w.newTab({ partition: splitPartition('private') }); w.uiFocus('focus-url'); }) },
-      { label: 'Nouvelle fenêtre', accelerator: 'CmdOrCtrl+N', click: () => newWindow() },
-      { label: 'Nouvelle fenêtre privée', accelerator: 'CmdOrCtrl+Shift+N', click: () => newWindow({ isPrivate: true }) },
-      { label: "Fermer l'onglet", accelerator: 'CmdOrCtrl+W', click: onWin((w) => w.closeCurrentTab()) },
-      { label: 'Fermer la fenêtre', accelerator: 'CmdOrCtrl+Shift+W', click: onWin((w) => w.close()) },
-      { label: 'Rouvrir le dernier onglet fermé', accelerator: 'CmdOrCtrl+Shift+T', click: onWin((w) => { const a = archive.shift(); if (a) w.newTab({ url: a.url }); }) },
-      { label: 'Adresse', accelerator: 'CmdOrCtrl+L', click: focusUrl },
-      { label: 'Adresse (Alt+D)', accelerator: 'Alt+D', visible: false, click: focusUrl },
-      { label: 'Adresse (F6)', accelerator: 'F6', visible: false, click: focusUrl },
-      { label: 'Rechercher', accelerator: 'CmdOrCtrl+K', click: onWin((w) => w.uiFocus('open-palette')) },
-      { label: 'Ajouter/retirer des favoris', accelerator: 'CmdOrCtrl+D', click: onWin((w) => w.toggleFavoriteCurrent()) },
-      { label: 'Afficher/masquer la liste', accelerator: 'CmdOrCtrl+B', click: onWin((w) => w.toggleSidebar()) },
-      { label: 'Dernier onglet utilisé', accelerator: 'Ctrl+Tab', click: onWin((w) => { const id = w.lastUsedTab(); if (id) w.activateTab(id); }) },
-      { label: 'Onglet précédent', accelerator: 'Ctrl+Shift+Tab', click: onWin((w) => w.cycle(-1)) },
-      { label: 'Onglet suivant (liste)', accelerator: 'Ctrl+PageDown', click: onWin((w) => w.cycle(1)) },
-      { label: 'Onglet précédent (liste)', accelerator: 'Ctrl+PageUp', click: onWin((w) => w.cycle(-1)) },
-      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ label: n === 9 ? 'Dernier onglet' : `Onglet ${n}`, accelerator: `CmdOrCtrl+${n}`, visible: false, click: onWin((w) => w.tabAt(n)) })),
-      { label: 'Recharger', accelerator: 'CmdOrCtrl+R', click: withWC((wc) => wc.reload()) },
-      { label: 'Recharger (F5)', accelerator: 'F5', visible: false, click: withWC((wc) => wc.reload()) },
-      { label: 'Recharger sans le cache', accelerator: 'CmdOrCtrl+Shift+R', click: hardReload },
-      { label: 'Recharger sans le cache (Ctrl+F5)', accelerator: 'CmdOrCtrl+F5', visible: false, click: hardReload },
-      { label: 'Recharger sans le cache (Maj+F5)', accelerator: 'Shift+F5', visible: false, click: hardReload },
-      { label: 'Page d’accueil', accelerator: 'Alt+Home', click: onWin((w) => w.navigateCurrent(homepage)) },
-      { label: 'Historique', accelerator: 'CmdOrCtrl+H', click: uiCommand('history') },
-      { label: 'Téléchargements', accelerator: 'CmdOrCtrl+J', click: uiCommand('downloads') },
-      { label: 'Effacer les données de navigation', accelerator: 'CmdOrCtrl+Shift+Delete', click: uiCommand('privacy') },
-      { label: 'Rechercher dans la page', accelerator: 'CmdOrCtrl+F', click: onWin((w) => w.showFind()) },
-      { label: 'Imprimer…', accelerator: 'CmdOrCtrl+P', click: withWC((wc) => wc.print()) },
-      { label: 'Enregistrer la page sous…', accelerator: 'CmdOrCtrl+S', click: withWC((wc, w) => w.savePageAs(wc)) },
-      { label: 'Afficher le code source', accelerator: 'CmdOrCtrl+U', click: withWC((wc, w) => w.viewSource(wc, w.current && w.current.kind === 'tab' ? w.current.id : null)) },
-      { label: 'Plein écran', accelerator: 'F11', click: onWin((w) => w.toggleFullScreen()) },
-      { label: 'Quitter le plein écran', accelerator: 'Escape', visible: false, click: onWin((w) => { if (w.htmlFullscreen) w.leaveHtmlFullscreen(); }) },
-      { label: 'Précédent', accelerator: 'Alt+Left', click: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
-      { label: 'Suivant', accelerator: 'Alt+Right', click: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
-      { label: 'Zoom +', accelerator: 'CmdOrCtrl+=', click: withWC((wc) => zoomStep(wc, 1)) },
-      { label: 'Zoom -', accelerator: 'CmdOrCtrl+-', click: withWC((wc) => zoomStep(wc, -1)) },
-      { label: 'Zoom par défaut', accelerator: 'CmdOrCtrl+0', click: withWC((wc) => zoomReset(wc)) },
-      { label: 'Outils de dev (page)', accelerator: 'F12', click: withWC((wc) => wc.toggleDevTools()) },
-      { label: 'Outils de dev (interface)', accelerator: 'CmdOrCtrl+Shift+I', click: onWin((w) => w.chrome.webContents.toggleDevTools()) },
-      { role: 'quit', label: 'Quitter' },
-    ],
-  }];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(tpl));
+  const TABS = 'Onglets et fenêtres', NAV = 'Navigation', PAGE = 'Page', VIEW = 'Affichage', TOOLS = 'Outils';
+  return [
+    { id: 'new-tab', group: TABS, label: 'Nouvel onglet', key: 'CmdOrCtrl+T', run: onWin((w) => { w.newTab(); w.uiFocus('focus-url'); }) },
+    { id: 'new-private-tab', group: TABS, label: 'Nouvel onglet privé', key: 'CmdOrCtrl+Shift+P', run: onWin((w) => { w.newTab({ partition: splitPartition('private') }); w.uiFocus('focus-url'); }) },
+    { id: 'new-window', group: TABS, label: 'Nouvelle fenêtre', key: 'CmdOrCtrl+N', run: () => newWindow() },
+    { id: 'new-private-window', group: TABS, label: 'Nouvelle fenêtre privée', key: 'CmdOrCtrl+Shift+N', run: () => newWindow({ isPrivate: true }) },
+    { id: 'close-tab', group: TABS, label: "Fermer l'onglet", key: 'CmdOrCtrl+W', run: onWin((w) => w.closeCurrentTab()) },
+    { id: 'close-window', group: TABS, label: 'Fermer la fenêtre', key: 'CmdOrCtrl+Shift+W', run: onWin((w) => w.close()) },
+    { id: 'reopen-tab', group: TABS, label: 'Rouvrir le dernier onglet fermé', key: 'CmdOrCtrl+Shift+T', run: onWin((w) => { const a = archive.shift(); if (a) w.newTab({ url: a.url }); }) },
+    { id: 'last-used-tab', group: TABS, label: 'Dernier onglet utilisé', key: 'Ctrl+Tab', run: onWin((w) => { const id = w.lastUsedTab(); if (id) w.activateTab(id); }) },
+    { id: 'prev-tab', group: TABS, label: 'Onglet précédent', key: 'Ctrl+Shift+Tab', run: onWin((w) => w.cycle(-1)) },
+    { id: 'next-tab-list', group: TABS, label: 'Onglet suivant (liste)', key: 'Ctrl+PageDown', run: onWin((w) => w.cycle(1)) },
+    { id: 'prev-tab-list', group: TABS, label: 'Onglet précédent (liste)', key: 'Ctrl+PageUp', run: onWin((w) => w.cycle(-1)) },
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ id: `tab-${n}`, group: TABS, label: n === 9 ? 'Dernier onglet' : `Onglet ${n}`, key: `CmdOrCtrl+${n}`, hidden: true, run: onWin((w) => w.tabAt(n)) })),
+    { id: 'focus-url', group: NAV, label: 'Barre d’adresse', key: 'CmdOrCtrl+L', alt: ['Alt+D', 'F6'], run: focusUrl },
+    { id: 'palette', group: NAV, label: 'Rechercher', key: 'CmdOrCtrl+K', run: onWin((w) => w.uiFocus('open-palette')) },
+    { id: 'back', group: NAV, label: 'Précédent', key: 'Alt+Left', run: withWC((wc) => wc.navigationHistory.canGoBack() && wc.navigationHistory.goBack()) },
+    { id: 'forward', group: NAV, label: 'Suivant', key: 'Alt+Right', run: withWC((wc) => wc.navigationHistory.canGoForward() && wc.navigationHistory.goForward()) },
+    { id: 'reload', group: NAV, label: 'Recharger', key: 'CmdOrCtrl+R', alt: ['F5'], run: withWC((wc) => wc.reload()) },
+    { id: 'hard-reload', group: NAV, label: 'Recharger sans le cache', key: 'CmdOrCtrl+Shift+R', alt: ['CmdOrCtrl+F5', 'Shift+F5'], run: hardReload },
+    { id: 'home', group: NAV, label: 'Page d’accueil', key: 'Alt+Home', run: onWin((w) => w.navigateCurrent(homepage)) },
+    { id: 'favorite', group: PAGE, label: 'Ajouter/retirer des favoris', key: 'CmdOrCtrl+D', run: onWin((w) => w.toggleFavoriteCurrent()) },
+    { id: 'find', group: PAGE, label: 'Rechercher dans la page', key: 'CmdOrCtrl+F', run: onWin((w) => w.showFind()) },
+    { id: 'print', group: PAGE, label: 'Imprimer…', key: 'CmdOrCtrl+P', run: withWC((wc) => wc.print()) },
+    { id: 'save-page', group: PAGE, label: 'Enregistrer la page sous…', key: 'CmdOrCtrl+S', run: withWC((wc, w) => w.savePageAs(wc)) },
+    { id: 'view-source', group: PAGE, label: 'Afficher le code source', key: 'CmdOrCtrl+U', run: withWC((wc, w) => w.viewSource(wc, w.current && w.current.kind === 'tab' ? w.current.id : null)) },
+    { id: 'sidebar', group: VIEW, label: 'Afficher/masquer la liste', key: 'CmdOrCtrl+B', run: onWin((w) => w.toggleSidebar()) },
+    { id: 'fullscreen', group: VIEW, label: 'Plein écran', key: 'F11', run: onWin((w) => w.toggleFullScreen()) },
+    { id: 'leave-fullscreen', group: VIEW, label: 'Quitter le plein écran d’une vidéo', key: 'Escape', hidden: true, run: onWin((w) => { if (w.htmlFullscreen) w.leaveHtmlFullscreen(); }) },
+    { id: 'zoom-in', group: VIEW, label: 'Zoom +', key: 'CmdOrCtrl+=', run: withWC((wc) => zoomStep(wc, 1)) },
+    { id: 'zoom-out', group: VIEW, label: 'Zoom -', key: 'CmdOrCtrl+-', run: withWC((wc) => zoomStep(wc, -1)) },
+    { id: 'zoom-reset', group: VIEW, label: 'Zoom par défaut', key: 'CmdOrCtrl+0', run: withWC((wc) => zoomReset(wc)) },
+    { id: 'history', group: TOOLS, label: 'Historique', key: 'CmdOrCtrl+H', run: uiCommand('history') },
+    { id: 'downloads', group: TOOLS, label: 'Téléchargements', key: 'CmdOrCtrl+J', run: uiCommand('downloads') },
+    { id: 'clear-data', group: TOOLS, label: 'Effacer les données de navigation', key: 'CmdOrCtrl+Shift+Delete', run: uiCommand('privacy') },
+    { id: 'devtools-page', group: TOOLS, label: 'Outils de dev (page)', key: 'F12', run: withWC((wc) => wc.toggleDevTools()) },
+    { id: 'devtools-ui', group: TOOLS, label: 'Outils de dev (interface)', key: 'CmdOrCtrl+Shift+I', run: onWin((w) => w.chrome.webContents.toggleDevTools()) },
+  ];
+}
+// forme canonique d'un accélérateur, pour comparer (« CmdOrCtrl+Shift+t » == « Ctrl+Shift+T » sous Windows)
+function normAccel(a) {
+  if (!a) return '';
+  const parts = String(a).split('+').map((x) => x.trim().toLowerCase());
+  const key = parts.pop() || '';
+  const mods = new Set(parts.filter(Boolean).map((m) => (m === 'cmdorctrl' || m === 'commandorcontrol' || m === 'control' ? 'ctrl' : m)));
+  return [...['ctrl', 'alt', 'shift', 'super'].filter((m) => mods.has(m)), key === 'plus' ? '=' : key].join('+');
+}
+// Raccourcis effectifs : touche principale (personnalisée ou par défaut) et touches secondaires encore libres.
+function shortcutTable() {
+  const rows = shortcutDefs().map((d) => {
+    const custom = Object.prototype.hasOwnProperty.call(shortcutKeys, d.id);
+    return { ...d, custom, defaultKey: d.key, defaultAlt: d.alt || [], key: custom ? shortcutKeys[d.id] : d.key, alt: custom ? [] : (d.alt || []) };
+  });
+  const primaries = new Set(rows.map((r) => normAccel(r.key)).filter(Boolean));
+  for (const r of rows) r.alt = r.alt.filter((a) => !primaries.has(normAccel(a)));
+  return rows;
+}
+// touche d'un raccourci telle qu'affichée dans les menus (« Ctrl+Maj+P »), '' si désactivé
+const HINT_NAMES = { cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', control: 'Ctrl', shift: 'Maj', super: 'Win', left: '←', right: '→', up: '↑', down: '↓', pageup: 'Pg préc', pagedown: 'Pg suiv', delete: 'Suppr', escape: 'Échap', home: 'Début', end: 'Fin', insert: 'Inser', backspace: 'Retour', space: 'Espace', enter: 'Entrée' };
+function shortcutHint(id) {
+  const r = shortcutTable().find((x) => x.id === id);
+  return r && r.key ? r.key.split('+').map((p) => HINT_NAMES[p.toLowerCase()] || (p.length === 1 ? p.toUpperCase() : p)).join('+') : '';
+}
+function shortcutsPublic() {
+  return shortcutTable().map(({ id, group, label, key, alt, defaultKey, defaultAlt, custom }) => ({ id, group, label, key, alt, defaultKey, defaultAlt, custom }));
+}
+// Attribue une touche ('' = désactiver). Un autre raccourci qui l'utilisait en touche principale est désactivé :
+// renvoie leurs libellés, pour prévenir l'utilisateur.
+function setShortcut(id, accel) {
+  const rows = shortcutTable();
+  const row = rows.find((r) => r.id === id);
+  if (!row) return [];
+  const want = typeof accel === 'string' ? accel.trim() : '';
+  const n = normAccel(want);
+  const displaced = [];
+  if (n) for (const r of rows) if (r.id !== id && normAccel(r.key) === n) { shortcutKeys[r.id] = ''; displaced.push(r.label); }
+  if (n && n === normAccel(row.defaultKey)) delete shortcutKeys[id]; // retour à la touche d'origine = plus personnalisé
+  else shortcutKeys[id] = want;
+  shortcutsChanged();
+  return displaced;
+}
+// Réinitialise un raccourci (ou tous). Si sa touche d'origine est prise par un autre raccourci personnalisé,
+// celui-ci la garde et le raccourci réinitialisé reste désactivé, plutôt que de créer un doublon.
+function resetShortcuts(id) {
+  if (!id) shortcutKeys = {};
+  else {
+    delete shortcutKeys[id];
+    const rows = shortcutTable(), row = rows.find((r) => r.id === id);
+    if (row && rows.some((r) => r.id !== id && r.custom && normAccel(r.key) === normAccel(row.key))) shortcutKeys[id] = '';
+  }
+  shortcutsChanged();
+}
+function shortcutsChanged() { buildMenu(); persist(); broadcast('shortcuts-changed', shortcutsPublic()); }
+function suspendShortcuts(on) { on = !!on; if (on === shortcutsSuspended) return; shortcutsSuspended = on; buildMenu(); }
+function buildMenu() {
+  const items = [];
+  for (const r of shortcutTable()) {
+    items.push({ label: r.label, accelerator: (!shortcutsSuspended && r.key) || undefined, visible: !r.hidden, click: r.run });
+    if (!shortcutsSuspended) for (const a of r.alt) items.push({ label: `${r.label} (${a})`, accelerator: a, visible: false, click: r.run });
+  }
+  items.push({ role: 'quit', label: 'Quitter' });
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'NaX', submenu: items }]));
 }
 
 // ---------- Claude : moteur de tâches ----------

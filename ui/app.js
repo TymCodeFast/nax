@@ -454,7 +454,7 @@ function renderNav() {
   $('back').disabled = !n.canGoBack;
   $('forward').disabled = !n.canGoForward;
   $('reload').querySelector('use').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
-  $('reload').title = n.loading ? 'Arrêter' : 'Recharger (Ctrl+R)';
+  $('reload').title = n.loading ? 'Arrêter' : 'Recharger' + kbHint('reload');
   navbar.classList.toggle('loading', !!n.loading);
   const isHome = n.url === HOME || /\/ui\/home\.html$/.test(n.url || ''); // page d'accueil NaX : barre vide, comme un nouvel onglet
   omnibox.classList.toggle('secure', !isHome && n.url.startsWith('https://'));
@@ -467,7 +467,7 @@ function renderNav() {
   const onTab = !!(state.current && state.current.kind === 'tab');
   star.disabled = !onTab;
   star.classList.toggle('active', !!state.favActive);
-  star.title = state.favActive ? 'Retirer des favoris (Ctrl+D)' : 'Ajouter aux favoris (Ctrl+D)';
+  star.title = (state.favActive ? 'Retirer des favoris' : 'Ajouter aux favoris') + kbHint('favorite');
 }
 
 // ---------- barre de nav ----------
@@ -1013,6 +1013,7 @@ function closeOverlay() {
   if (id === 'auth') settleAuth(null); // Échap, clic à côté : la demande est annulée, pas laissée en suspens
   if (id === 'display-pick') settleDisplay(null);
   if (id === 'perm-prompt') settlePerm(null);
+  if (id === 'settings') { stopKbCapture(); kbEditing = false; }
   node.classList.add('closing');
   clearTimeout(overlayCloseTimer);
   overlayCloseTimer = setTimeout(() => {
@@ -1528,6 +1529,7 @@ function selectSettingsPane(pane) {
   if (pane === 'downloads') renderDownloadsPane();
   if (pane === 'languages') renderLanguagesPane();
   if (pane === 'permissions') renderPermissionsPane();
+  if (pane === 'shortcuts') renderShortcutsPane(); else { stopKbCapture(); kbEditing = false; }
 }
 const ENGINE_DOMAIN = { google: 'google.com', duckduckgo: 'duckduckgo.com', bing: 'bing.com', qwant: 'qwant.com', ecosia: 'ecosia.org', brave: 'search.brave.com', startpage: 'startpage.com' };
 function engFavicon(id) { const im = el('img', 'dd-fav'); im.alt = ''; im.src = `https://www.google.com/s2/favicons?domain=${ENGINE_DOMAIN[id] || 'google.com'}&sz=32`; im.onerror = () => { im.style.visibility = 'hidden'; }; return im; }
@@ -2054,6 +2056,182 @@ async function renderPermissionsPane() {
     makeSelect(dd, perm[p.key] || p.opts[0][0], p.opts.map(([v, l]) => ({ value: v, label: l })), async (v) => { const patch = { perm: {} }; patch.perm[p.key] = v; await api.settingsSet(patch); });
   });
 }
+
+// Raccourcis clavier : liste de tous les raccourcis, et mode « Modifier » pour changer leurs touches.
+// Les accélérateurs viennent du process principal (menu d'application) ; ceux de l'interface sont fixes.
+let kbList = [];
+let kbEditing = false;
+let kbCapture = null; // { id, chip } pendant la saisie d'une nouvelle touche
+const KB_FIXED = [
+  { label: 'Fermer le panneau ouvert', keys: ['Escape'] },
+  { label: 'Naviguer dans les suggestions et la recherche', keys: ['Up', 'Down'] },
+  { label: 'Ouvrir le résultat dans un nouvel onglet', keys: ['Ctrl+Enter'] },
+  { label: 'Ouvrir un lien dans un nouvel onglet', keys: ['Ctrl+Clic'] },
+  { label: 'Occurrence précédente (recherche dans la page)', keys: ['Shift+Enter'] },
+  { label: 'Envoyer la demande à Claude', keys: ['Ctrl+Enter'] },
+];
+const KB_NAMES = {
+  cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl', ctrl: 'Ctrl', control: 'Ctrl', shift: 'Maj', alt: 'Alt', super: 'Win', meta: 'Win',
+  left: '←', right: '→', up: '↑', down: '↓', pageup: 'Pg préc', pagedown: 'Pg suiv', delete: 'Suppr', escape: 'Échap', esc: 'Échap',
+  home: 'Début', end: 'Fin', insert: 'Inser', backspace: 'Retour', space: 'Espace', enter: 'Entrée', return: 'Entrée', tab: 'Tab', plus: '+', clic: 'Clic',
+};
+function kbParts(accel) { return accel ? String(accel).split('+').map((p) => KB_NAMES[p.toLowerCase()] || (p.length === 1 ? p.toUpperCase() : p)) : []; }
+function kbText(accel) { return kbParts(accel).join('+'); }
+function kbKbds(accel) {
+  const box = el('span', 'kb-kbds');
+  kbParts(accel).forEach((p) => box.appendChild(el('kbd', null, p)));
+  return box;
+}
+// KeyboardEvent → accélérateur Electron. Les lettres suivent la disposition (AZERTY : la touche marquée A donne A),
+// le reste suit la position physique, comme les accélérateurs du menu sous Windows.
+const KB_CODES = {
+  Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backquote: '`',
+  Space: 'Space', Tab: 'Tab', Enter: 'Enter', NumpadEnter: 'Enter', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+  Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown', ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down',
+  NumpadAdd: 'numadd', NumpadSubtract: 'numsub', NumpadMultiply: 'nummult', NumpadDivide: 'numdiv', NumpadDecimal: 'numdec',
+};
+function kbKeyOf(e) {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toUpperCase();
+  let m;
+  if ((m = /^Key([A-Z])$/.exec(e.code))) return m[1];
+  if ((m = /^Digit(\d)$/.exec(e.code))) return m[1];
+  if ((m = /^Numpad(\d)$/.exec(e.code))) return 'num' + m[1];
+  if (/^F([1-9]|1\d|2[0-4])$/.test(e.code)) return e.code;
+  return KB_CODES[e.code] || null;
+}
+function kbMods(e) { return [e.ctrlKey && 'CmdOrCtrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean); }
+
+async function renderShortcutsPane() {
+  kbList = await api.shortcutsList().catch(() => []) || [];
+  drawShortcuts();
+}
+function drawShortcuts() {
+  const box = $('kb-list'); box.innerHTML = '';
+  const q = $('kb-search').value.trim().toLowerCase();
+  const match = (label, keys) => !q || label.toLowerCase().includes(q) || keys.some((k) => kbText(k).toLowerCase().includes(q));
+  $('kb-edit').replaceChildren(icon(kbEditing ? 'i-check' : 'i-edit'), document.createTextNode(kbEditing ? ' Terminé' : ' Modifier'));
+  $('kb-edit').classList.toggle('ghost', kbEditing);
+  $('kb-reset-all').classList.toggle('hidden', !kbEditing || !kbList.some((s) => s.custom));
+  setText($('kb-desc'), kbEditing
+    ? 'Clique sur une touche puis appuie sur la nouvelle combinaison. Échap pour annuler.'
+    : 'Tous les raccourcis de NaX. Ils agissent sur la fenêtre active.');
+  const groups = [];
+  for (const s of kbList) { let g = groups.find((x) => x.name === s.group); if (!g) groups.push(g = { name: s.group, items: [] }); g.items.push(s); }
+  let shown = 0;
+  for (const g of groups) {
+    const items = g.items.filter((s) => match(s.label, [s.key, ...s.alt]));
+    if (!items.length) continue;
+    box.appendChild(el('div', 'kb-group', g.name));
+    for (const s of items) { box.appendChild(kbRow(s)); shown++; }
+  }
+  const fixed = KB_FIXED.filter((f) => match(f.label, f.keys));
+  if (fixed.length) {
+    const head = el('div', 'kb-group', 'Dans l’interface');
+    head.appendChild(el('span', 'kb-group-note', 'non modifiables'));
+    box.appendChild(head);
+    for (const f of fixed) {
+      const row = el('div', 'kb-row fixed');
+      row.appendChild(el('span', 'kb-label', f.label));
+      const keys = el('div', 'kb-keys');
+      f.keys.forEach((k, i) => { if (i) keys.appendChild(el('span', 'kb-or', 'ou')); keys.appendChild(kbKbds(k)); });
+      row.appendChild(keys);
+      box.appendChild(row); shown++;
+    }
+  }
+  if (!shown) box.appendChild(el('div', 'kb-empty muted', 'Aucun raccourci ne correspond.'));
+}
+function kbRow(s) {
+  const row = el('div', 'kb-row' + (s.custom ? ' custom' : ''));
+  const label = el('span', 'kb-label', s.label);
+  if (s.custom) { const d = el('span', 'kb-dot'); d.title = 'Modifié (par défaut : ' + (kbText(s.defaultKey) || 'aucun') + ')'; label.appendChild(d); }
+  row.appendChild(label);
+  const keys = el('div', 'kb-keys');
+  if (kbEditing) {
+    const chip = el('button', 'kb-chip' + (s.key ? '' : ' empty'));
+    chip.title = 'Changer la touche';
+    if (s.key) chip.appendChild(kbKbds(s.key)); else chip.appendChild(el('span', null, 'Aucun'));
+    chip.onclick = () => startKbCapture(s, chip);
+    keys.appendChild(chip);
+    const reset = el('button', 'icon-btn kb-act'); reset.title = 'Rétablir : ' + (kbText(s.defaultKey) || 'aucun'); reset.appendChild(icon('i-undo'));
+    reset.disabled = !s.custom;
+    reset.onclick = async () => { stopKbCapture(); kbList = await api.shortcutsReset(s.id); drawShortcuts(); };
+    const clear = el('button', 'icon-btn kb-act'); clear.title = 'Désactiver ce raccourci'; clear.appendChild(icon('i-close'));
+    clear.disabled = !s.key;
+    clear.onclick = () => assignShortcut(s, '');
+    keys.appendChild(reset); keys.appendChild(clear);
+  } else if (s.key) {
+    keys.appendChild(kbKbds(s.key));
+    s.alt.forEach((a) => { keys.appendChild(el('span', 'kb-or', 'ou')); keys.appendChild(kbKbds(a)); });
+  } else keys.appendChild(el('span', 'kb-none muted', 'Aucun'));
+  row.appendChild(keys);
+  return row;
+}
+async function assignShortcut(s, accel) {
+  stopKbCapture();
+  const r = await api.shortcutsSet(s.id, accel).catch(() => null);
+  if (!r) return;
+  kbList = r.list;
+  drawShortcuts();
+  if (r.displaced && r.displaced.length) toast(kbText(accel) + ' retiré de « ' + r.displaced.join(' », « ') + ' »');
+}
+function startKbCapture(s, chip) {
+  stopKbCapture();
+  kbCapture = { id: s.id, chip };
+  api.shortcutsSuspend(true); // sinon le menu intercepte la combinaison avant la page
+  chip.classList.add('capturing');
+  chip.replaceChildren(el('span', 'kb-wait', 'Appuie sur une combinaison…'));
+  chip.focus();
+}
+function stopKbCapture() {
+  if (!kbCapture) return;
+  kbCapture = null;
+  api.shortcutsSuspend(false);
+  if (openOverlay === 'settings') drawShortcuts();
+}
+window.addEventListener('keydown', (e) => {
+  if (!kbCapture) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const mods = kbMods(e);
+  const key = ['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(e.key) ? null : kbKeyOf(e);
+  if (!key) { // modificateurs seuls : on montre ce qui est tenu, en attendant la touche
+    kbCapture.chip.replaceChildren(mods.length ? kbKbds(mods.join('+') + '+…') : el('span', 'kb-wait', 'Appuie sur une combinaison…'));
+    return;
+  }
+  if (key === 'Escape' && !mods.length) { stopKbCapture(); return; }
+  const accel = [...mods, key].join('+');
+  const strong = mods.some((m) => m !== 'Shift');
+  if (!strong && !/^F\d+$/.test(key)) {
+    kbCapture.chip.replaceChildren(el('span', 'kb-wait warn', 'Ajoute Ctrl ou Alt'));
+    return;
+  }
+  const s = kbList.find((x) => x.id === kbCapture.id);
+  if (s) assignShortcut(s, accel);
+}, true);
+window.addEventListener('blur', () => stopKbCapture());
+$('kb-edit').onclick = () => { stopKbCapture(); kbEditing = !kbEditing; drawShortcuts(); };
+$('kb-reset-all').onclick = async () => { stopKbCapture(); kbList = await api.shortcutsReset(null); drawShortcuts(); toast('Raccourcis par défaut rétablis'); };
+$('kb-search').addEventListener('input', () => { stopKbCapture(); drawShortcuts(); });
+$('kb-search').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; drawShortcuts(); } });
+
+// Infobulles et indices qui affichent un raccourci : suivent la personnalisation.
+let kbKeys = {};
+function kbHint(id) { const k = kbKeys[id]; return k ? ' (' + kbText(k) + ')' : ''; }
+function applyShortcutHints(list) {
+  kbKeys = {}; for (const s of list || []) kbKeys[s.id] = s.key;
+  document.querySelectorAll('[data-kb]').forEach((n) => {
+    if (n.dataset.kbTitle == null) n.dataset.kbTitle = (n.title || '').replace(/\s*\([^)]*\)$/, '');
+    n.title = n.dataset.kbTitle + kbHint(n.dataset.kb);
+  });
+  const hint = $('omni-hint');
+  hint.textContent = kbParts(kbKeys.palette).join(' ');
+  hint.classList.toggle('hidden', !kbKeys.palette);
+  if (state) renderNav();
+}
+api.onShortcutsChanged((list) => {
+  applyShortcutHints(list);
+  if (openOverlay === 'settings' && !kbCapture) { kbList = list; drawShortcuts(); }
+});
+api.shortcutsList().then(applyShortcutHints).catch(() => {});
 
 document.querySelectorAll('.settings-navitem').forEach((b) => { b.onclick = () => selectSettingsPane(b.dataset.pane); });
 $('settings-btn').onclick = () => openSettings();

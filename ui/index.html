@@ -51,6 +51,8 @@
   <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 12v4M10 14h4"/></symbol>
   <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/></symbol>
   <symbol id="i-code" viewBox="0 0 24 24"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M6.5 14h.01M17 14h.01M10 14h4"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
   <symbol id="i-nax" viewBox="32 32 448 448">
     <!-- même monogramme que assets/icon.svg : N blanc, diagonale du X en accent -->
     <rect x="150" y="148" width="52" height="216" fill="#f4f6fa"/>
@@ -75,7 +77,7 @@
     <div class="rail-bottom">
       <button id="app-add" class="rail-btn" title="Ajouter une appli"><svg><use href="#i-plus"/></svg></button>
       <button id="settings-btn" class="rail-btn" title="Paramètres"><svg><use href="#i-settings"/></svg></button>
-      <button id="sidebar-toggle" class="rail-btn" title="Afficher/masquer la liste (Ctrl+B)"><svg><use href="#i-panel"/></svg></button>
+      <button id="sidebar-toggle" class="rail-btn" data-kb="sidebar" title="Afficher/masquer la liste (Ctrl+B)"><svg><use href="#i-panel"/></svg></button>
     </div>
   </nav>
 
@@ -85,7 +87,7 @@
       <span class="side-title">Onglets</span>
       <div class="side-head-actions">
         <button id="tab-new-opts" class="icon-btn" title="Nouvel onglet avec choix de session"><svg><use href="#i-incognito"/></svg><svg class="caret"><use href="#i-chevron"/></svg></button>
-        <button id="tab-new" class="icon-btn" title="Nouvel onglet (Ctrl+T)"><svg><use href="#i-plus"/></svg></button>
+        <button id="tab-new" class="icon-btn" data-kb="new-tab" title="Nouvel onglet (Ctrl+T)"><svg><use href="#i-plus"/></svg></button>
       </div>
     </div>
     <div id="tabs"></div>
@@ -113,7 +115,7 @@
     </div>
     <div class="sidebar-bottom">
       <div class="sidebar-tools">
-        <button id="palette-btn" class="tool-btn" title="Rechercher (Ctrl+K)"><svg><use href="#i-search"/></svg></button>
+        <button id="palette-btn" class="tool-btn" data-kb="palette" title="Rechercher (Ctrl+K)"><svg><use href="#i-search"/></svg></button>
         <button id="archive-btn" class="tool-btn" title="Archive"><svg><use href="#i-archive"/></svg><span id="archive-count" class="badge"></span></button>
         <button id="downloads-btn" class="tool-btn" title="Téléchargements"><svg><use href="#i-download"/></svg><span id="dl-badge" class="badge"></span></button>
         <button id="history-btn" class="tool-btn" title="Historique"><svg><use href="#i-history"/></svg></button>
@@ -126,8 +128,8 @@
   <main id="main">
     <div id="navbar">
       <div class="nav-group">
-        <button id="back" class="nav-btn" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
-        <button id="forward" class="nav-btn" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
+        <button id="back" class="nav-btn" data-kb="back" title="Précédent (Alt+←)" disabled><svg><use href="#i-back"/></svg></button>
+        <button id="forward" class="nav-btn" data-kb="forward" title="Suivant (Alt+→)" disabled><svg><use href="#i-forward"/></svg></button>
         <button id="reload" class="nav-btn" title="Recharger (Ctrl+R)"><svg><use href="#i-reload"/></svg></button>
       </div>
       <div id="omnibox">
@@ -140,7 +142,7 @@
       <span id="private-pill" class="hidden"><svg><use href="#i-incognito"/></svg><span>Privé</span></span>
       <button id="claude-btn" class="nav-btn" data-beta title="Tâches Claude"><svg><use href="#i-spark"/></svg><span id="claude-badge" class="nav-badge hidden"></span></button>
       <button id="split-btn" class="nav-btn" title="Diviser la vue"><svg><use href="#i-split"/></svg></button>
-      <button id="home" class="nav-btn" title="Accueil (Google)"><svg><use href="#i-home"/></svg></button>
+      <button id="home" class="nav-btn" data-kb="home" title="Accueil (Alt+Début)"><svg><use href="#i-home"/></svg></button>
       <div id="progress"></div>
     </div>
     <div id="split-tb-right" class="split-tb hidden">
@@ -222,6 +224,7 @@
             <button class="settings-navitem" data-pane="languages"><svg><use href="#i-globe"/></svg><span>Langues</span></button>
             <button class="settings-navitem" data-pane="permissions"><svg><use href="#i-lock"/></svg><span>Autorisations</span></button>
             <button class="settings-navitem" data-pane="privacy"><svg><use href="#i-shield"/></svg><span>Données de navigation</span></button>
+            <button class="settings-navitem" data-pane="shortcuts"><svg><use href="#i-keyboard"/></svg><span>Raccourcis</span></button>
             <button class="settings-navitem" data-pane="beta"><svg><use href="#i-spark"/></svg><span>Fonctionnalités bêta</span></button>
             <button class="settings-navitem" data-pane="dev"><svg><use href="#i-code"/></svg><span>Développeur</span></button>
             <button class="settings-navitem" data-pane="about"><svg><use href="#i-spark"/></svg><span>À propos</span></button>
@@ -366,6 +369,21 @@
                   </div>
                 </div>
               </div>
+            </section>
+
+            <section class="settings-pane hidden" data-pane="shortcuts">
+              <div class="pane-head">
+                <div><h2>Raccourcis clavier</h2><div id="kb-desc" class="setting-desc muted">Tous les raccourcis de NaX. Ils agissent sur la fenêtre active.</div></div>
+                <div class="kb-actions">
+                  <button id="kb-reset-all" class="btn ghost hidden"><svg><use href="#i-undo"/></svg> Tout réinitialiser</button>
+                  <button id="kb-edit" class="btn"><svg><use href="#i-edit"/></svg> Modifier</button>
+                </div>
+              </div>
+              <div class="favm-search kb-search">
+                <svg class="lead"><use href="#i-search"/></svg>
+                <input id="kb-search" type="text" placeholder="Filtrer par action ou touche…" spellcheck="false" autocomplete="off">
+              </div>
+              <div id="kb-list" class="kb-list"></div>
             </section>
 
             <section class="settings-pane hidden" data-pane="dev">
